@@ -45,6 +45,22 @@ pub fn legacy_items() -> &'static LegacyItems {
     &LEGACY_ITEMS
 }
 
+#[derive(Deserialize)]
+pub struct LegacyBlocks {
+    pub aliases: BTreeMap<String, String>,
+    pub inverse: BTreeMap<String, String>,
+    pub source_names: Vec<String>,
+}
+
+static LEGACY_BLOCKS: LazyLock<LegacyBlocks> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../assets/legacy-blocks.json"))
+        .expect("旧版方块纹理映射无效")
+});
+
+pub fn legacy_blocks() -> &'static LegacyBlocks {
+    &LEGACY_BLOCKS
+}
+
 type Rules = Vec<(Regex, String)>;
 
 static BLOCK_RULES: LazyLock<Rules> = LazyLock::new(|| compile_rules(&tables().block_rules));
@@ -114,6 +130,19 @@ fn post_legacy(name: &str) -> String {
 
 pub fn flatten_texture_name(stem: &str, kind: &str) -> String {
     let name = pre_legacy(&stem.to_lowercase());
+    if kind == "block"
+        && let Some(mapped) = legacy_blocks().aliases.get(&stem.to_lowercase())
+    {
+        return mapped.clone();
+    }
+    if kind == "block"
+        && legacy_blocks()
+            .aliases
+            .values()
+            .any(|mapped| mapped == &stem.to_lowercase())
+    {
+        return stem.into();
+    }
     if kind == "item" {
         let original = stem.to_lowercase();
         if let Some(mapped) = legacy_items().items.get(&original) {
@@ -149,6 +178,11 @@ pub fn flatten_texture_name(stem: &str, kind: &str) -> String {
 
 pub fn legacy_texture_name(stem: &str, kind: &str) -> Option<String> {
     let name = stem.to_lowercase();
+    if kind == "block"
+        && let Some(mapped) = legacy_blocks().inverse.get(&name)
+    {
+        return Some(mapped.clone());
+    }
     if kind == "item" {
         if let Some((old, _)) = legacy_items().items.iter().find(|(_, new)| **new == name) {
             return Some(old.clone());

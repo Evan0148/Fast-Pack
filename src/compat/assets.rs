@@ -1645,6 +1645,7 @@ pub fn migrate(root: &Path, source: u32, target: u32) -> Result<AssetReport> {
     patterns(root, source, target, &mut report)?;
     entities(root, source, target, &mut report)?;
     item_resources(root, source, target, &mut report)?;
+    super::item_bindings::migrate(root, source, target, &mut report)?;
     models(root, source, target, &mut report)?;
     gui(root, source, target, &mut report)?;
     glint(root, source, target, &mut report)?;

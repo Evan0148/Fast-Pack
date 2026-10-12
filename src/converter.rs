@@ -7,7 +7,7 @@ use chrono::Local;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::path::{Component, Path, PathBuf};
 use tempfile::{TempDir, tempdir};
@@ -494,6 +494,88 @@ fn normalize_lowercase(root: &Path) -> Result<usize> {
     Ok(count)
 }
 
+fn texture_references(value: &Value, namespace: &str, references: &mut HashSet<String>) {
+    match value {
+        Value::String(text) => {
+            let (namespace, path) = text.split_once(':').unwrap_or((namespace, text));
+            if ["block/", "blocks/", "item/", "items/"]
+                .iter()
+                .any(|prefix| path.starts_with(prefix))
+            {
+                references.insert(format!("{namespace}:{}", path.trim_end_matches(".png")));
+            }
+        }
+        Value::Object(values) => {
+            for value in values.values() {
+                texture_references(value, namespace, references);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                texture_references(value, namespace, references);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn prefer_legacy_texture(
+    relative: &Path,
+    destination: &Path,
+    namespace: &str,
+    kind: &str,
+    source_format: u32,
+    references: &HashSet<String>,
+) -> bool {
+    if namespace != "minecraft"
+        || source_format >= 4
+        || relative
+            .parent()
+            .is_some_and(|parent| !parent.as_os_str().is_empty())
+    {
+        return false;
+    }
+    let name = relative.file_name().unwrap_or_default().to_string_lossy();
+    let Some(stem) = name
+        .strip_suffix(".png.mcmeta")
+        .or_else(|| name.strip_suffix(".png"))
+    else {
+        return false;
+    };
+    let known = if kind == "block" {
+        crate::tables::legacy_blocks()
+            .source_names
+            .iter()
+            .any(|name| name == stem)
+    } else {
+        crate::tables::legacy_items().items.contains_key(stem)
+    };
+    if !known {
+        return false;
+    }
+    let name = destination
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
+    let stem = name
+        .strip_suffix(".png.mcmeta")
+        .or_else(|| name.strip_suffix(".png"))
+        .unwrap_or(&name);
+    !references.contains(&format!("{namespace}:{kind}/{stem}"))
+        && !references.contains(&format!("{namespace}:{kind}s/{stem}"))
+}
+
+fn backup_texture(root: &Path, path: &Path) -> Result<()> {
+    let destination = root
+        .join("fastpack/original-assets")
+        .join(path.strip_prefix(root)?);
+    if !destination.exists() {
+        fs::create_dir_all(destination.parent().unwrap())?;
+        fs::copy(path, destination)?;
+    }
+    Ok(())
+}
+
 fn migrate_textures(
     root: &Path,
     reverse: bool,
@@ -503,6 +585,22 @@ fn migrate_textures(
     let assets = root.join("assets");
     if !assets.is_dir() {
         return Ok(HashMap::new());
+    }
+    let mut references = HashSet::new();
+    for path in walk_files(&assets)? {
+        if path.extension().is_none_or(|extension| extension != "json") {
+            continue;
+        }
+        let namespace = path
+            .strip_prefix(&assets)?
+            .components()
+            .next()
+            .unwrap()
+            .as_os_str()
+            .to_string_lossy();
+        if let Ok(value) = serde_json::from_slice::<Value>(&fs::read(&path)?) {
+            texture_references(&value, &namespace, &mut references);
+        }
     }
     let pairs = if reverse {
         [("block", "blocks"), ("item", "items")]
@@ -524,12 +622,27 @@ fn migrate_textures(
             }
             fs::create_dir_all(&target)?;
             for path in walk_files(&source)? {
-                let destination = target.join(path.strip_prefix(&source)?);
+                let relative = path.strip_prefix(&source)?;
+                let destination = target.join(relative);
                 if destination.exists() {
-                    report
-                        .skipped_conflict
-                        .push(destination.display().to_string());
-                    continue;
+                    if !reverse
+                        && prefer_legacy_texture(
+                            relative,
+                            &destination,
+                            &namespace_name,
+                            new,
+                            report.src_format,
+                            &references,
+                        )
+                    {
+                        backup_texture(root, &destination)?;
+                        fs::remove_file(&destination)?;
+                    } else {
+                        report
+                            .skipped_conflict
+                            .push(destination.display().to_string());
+                        continue;
+                    }
                 }
                 fs::create_dir_all(destination.parent().unwrap())?;
                 fs::rename(path, destination)?;
@@ -586,8 +699,22 @@ fn migrate_textures(
                     );
                     let target = path.with_file_name(format!("{new}{suffix}"));
                     if target.exists() {
-                        report.skipped_conflict.push(target.display().to_string());
-                        continue;
+                        if !reverse
+                            && prefer_legacy_texture(
+                                path.strip_prefix(&directory)?,
+                                &target,
+                                &namespace_name,
+                                kind,
+                                report.src_format,
+                                &references,
+                            )
+                        {
+                            backup_texture(root, &target)?;
+                            fs::remove_file(&target)?;
+                        } else {
+                            report.skipped_conflict.push(target.display().to_string());
+                            continue;
+                        }
                     }
                     let relative = path
                         .strip_prefix(&directory)?
@@ -615,11 +742,7 @@ fn update_json_refs(
     reverse: bool,
     renames: &HashMap<String, String>,
 ) -> Result<usize> {
-    let sources = if reverse {
-        ["block", "item"]
-    } else {
-        ["blocks", "items"]
-    };
+    let sources = ["blocks?", "items?"];
     let targets = if reverse {
         ["blocks", "items"]
     } else {
@@ -627,7 +750,7 @@ fn update_json_refs(
     };
     let patterns = sources.map(|source| {
         Regex::new(&format!(
-            r"^([A-Za-z0-9_.-]+:)?{source}/([A-Za-z0-9_./-]+)$"
+            r"^([A-Za-z0-9_.-]+:)?({source})/([A-Za-z0-9_./-]+)$"
         ))
         .unwrap()
     });
@@ -652,6 +775,59 @@ fn update_json_refs(
     Ok(count)
 }
 
+fn canonical_texture_aliases(
+    root: &Path,
+    target: u32,
+    report: &mut ConversionReport,
+) -> Result<HashMap<String, String>> {
+    let mut renames = HashMap::new();
+    if target < 4 {
+        return Ok(renames);
+    }
+    let directory = root.join("assets/minecraft/textures/block");
+    if !directory.is_dir() {
+        return Ok(renames);
+    }
+    for path in walk_files(&directory)? {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let (stem, suffix) = if let Some(stem) = name.strip_suffix(".png.mcmeta") {
+            (stem, ".png.mcmeta")
+        } else if let Some(stem) = name.strip_suffix(".png") {
+            (stem, ".png")
+        } else {
+            continue;
+        };
+        let Some(mapped) = crate::tables::legacy_blocks().aliases.get(stem) else {
+            continue;
+        };
+        let destination = path.with_file_name(format!("{mapped}{suffix}"));
+        if destination.exists() {
+            continue;
+        }
+        let relative = path.strip_prefix(root)?;
+        let backup = root.join("fastpack/original-assets").join(relative);
+        if !backup.exists() {
+            fs::create_dir_all(backup.parent().unwrap())?;
+            fs::copy(&path, backup)?;
+        }
+        let old_path = path
+            .strip_prefix(&directory)?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let old_path = old_path.strip_suffix(suffix).unwrap_or(&old_path);
+        let new_path = Path::new(old_path)
+            .with_file_name(mapped)
+            .to_string_lossy()
+            .replace('\\', "/");
+        fs::rename(&path, &destination)?;
+        renames.insert(format!("minecraft:block/{old_path}"), new_path);
+        report.textures_renamed.push(format!(
+            "textures/block/{old_path}{suffix} → {mapped}{suffix}"
+        ));
+    }
+    Ok(renames)
+}
+
 fn rewrite_texture_values(
     value: &mut Value,
     patterns: &[Regex; 2],
@@ -671,7 +847,8 @@ fn rewrite_texture_values(
                     } else {
                         namespace_name
                     };
-                    let name = &capture[2];
+                    let folder = &capture[2];
+                    let name = &capture[3];
                     let (resource, suffix) = if let Some(value) = name.strip_suffix(".png") {
                         (value, ".png")
                     } else {
@@ -680,6 +857,9 @@ fn rewrite_texture_values(
                     let key = format!("{domain}:{kind}/{}", resource.to_lowercase());
                     let mapped = renames.get(&key).cloned().unwrap_or_else(|| {
                         if domain != "minecraft" {
+                            return resource.into();
+                        }
+                        if reverse == folder.ends_with('s') {
                             return resource.into();
                         }
                         let path = Path::new(resource);
@@ -1041,6 +1221,10 @@ pub fn convert_pack(
         if options.convert_lang {
             convert_languages(&root, downgrade, &mut report)?;
         }
+    }
+    let aliases = canonical_texture_aliases(&root, options.tgt_format, &mut report)?;
+    if !aliases.is_empty() {
+        report.json_updated += update_json_refs(&root, false, &aliases)?;
     }
     progress("后续版本微调", 78);
     post_renames(&root, &mut report)?;
