@@ -183,6 +183,8 @@ $env:ICED_BACKEND = 'tiny-skia'
   </tr>
 </table>
 
+关注wind
+
 ## 开发交流群
 
 **QQ 群：663420633**  
@@ -205,4 +207,3 @@ $env:ICED_BACKEND = 'tiny-skia'
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=LongCold-ColdEternity-Team/Fast-Pack&type=Date)](https://star-history.com/#LongCold-ColdEternity-Team/Fast-Pack&Date)
-关注wind
