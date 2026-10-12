@@ -26,6 +26,7 @@ pub struct ConversionOptions {
     pub extra_renames: Vec<(String, String)>,
     pub target_version: Option<String>,
     pub glint_color: Option<[u8; 3]>,
+    pub restore_vanilla_glint: bool,
 }
 
 impl Default for ConversionOptions {
@@ -40,6 +41,7 @@ impl Default for ConversionOptions {
             extra_renames: Vec::new(),
             target_version: None,
             glint_color: None,
+            restore_vanilla_glint: false,
         }
     }
 }
@@ -1244,7 +1246,9 @@ pub fn convert_pack(
         crate::compat::SkyRuntime::Auto,
         crate::compat::ShaderPolicy::Adaptive,
     )?;
-    if options.glint_color.is_some() || report.compatibility.selected_variant.is_some() {
+    if options.restore_vanilla_glint && options.glint_color.is_none() {
+        crate::compat::glint::restore_vanilla(&root, options.tgt_format, &mut report.assets)?;
+    } else if options.glint_color.is_some() || report.compatibility.selected_variant.is_some() {
         crate::compat::glint::migrate(
             &root,
             options.tgt_format,

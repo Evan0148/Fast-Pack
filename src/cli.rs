@@ -29,6 +29,12 @@ struct Arguments {
     desc: Option<String>,
     #[arg(long, value_parser = crate::compat::glint::parse_color, value_name = "RRGGBB", help = "自定义附魔闪烁颜色，例如 #FFFFFF；省略则保留原包效果")]
     glint_color: Option<[u8; 3]>,
+    #[arg(
+        long,
+        conflicts_with = "glint_color",
+        help = "恢复原版紫色附魔光效，保留原有图案与动画"
+    )]
+    vanilla_glint: bool,
     #[arg(long, help = "仅输出最终结果")]
     quiet: bool,
     #[arg(long, help = "仅识别材质包并输出 JSON")]
@@ -88,6 +94,7 @@ pub fn run() -> Result<()> {
         target_version: Some(args.target_version.clone()),
         description: args.desc,
         glint_color: args.glint_color,
+        restore_vanilla_glint: args.vanilla_glint,
         as_zip,
         lowercase: !args.no_lowercase,
         convert_lang: !args.no_lang,

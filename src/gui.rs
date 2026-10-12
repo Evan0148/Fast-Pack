@@ -261,6 +261,11 @@ impl App {
         let auto_save = preferences.auto_save;
         let auto_save_path = preferences.auto_save_path;
         let saved_export_directory = preferences.export_directory;
+        let active_glint_color = if preferences.custom_glint {
+            preferences.glint_color
+        } else {
+            fast_pack::compat::glint::VANILLA_COLOR
+        };
         let export_directory_input = saved_export_directory
             .as_ref()
             .filter(|_| auto_save_path)
@@ -307,13 +312,12 @@ impl App {
             preserve_case: false,
             custom_glint: preferences.custom_glint,
             glint_color: preferences.glint_color,
-            glint_hsv: rgb_hsv(preferences.glint_color, 0.0),
-            glint_hex: fast_pack::compat::glint::color_hex(preferences.glint_color),
+            glint_hsv: rgb_hsv(active_glint_color, 0.0),
+            glint_hex: fast_pack::compat::glint::color_hex(active_glint_color),
             glint_edited: None,
             glint_picker: false,
             glint_picker_motion: Tween::new(0.0, 220),
-            glint_color_motion: preferences
-                .glint_color
+            glint_color_motion: active_glint_color
                 .map(|channel| Tween::new(channel as f32 / 255.0, 180)),
             glint_preview_started: now,
             extra: Vec::new(),
@@ -559,14 +563,25 @@ impl App {
         }
         self.logs.push(value);
     }
-    fn set_glint_color(&mut self, color: [u8; 3]) {
-        self.custom_glint = true;
-        self.glint_color = color;
+    fn active_glint_color(&self) -> [u8; 3] {
+        if self.custom_glint {
+            self.glint_color
+        } else {
+            fast_pack::compat::glint::VANILLA_COLOR
+        }
+    }
+    fn sync_glint_color(&mut self) {
+        let color = self.active_glint_color();
         self.glint_hsv = rgb_hsv(color, self.glint_hsv[0]);
         self.glint_hex = fast_pack::compat::glint::color_hex(color);
         for (motion, channel) in self.glint_color_motion.iter_mut().zip(color) {
             motion.set(channel as f32 / 255.0, self.now, self.reduced);
         }
+    }
+    fn set_glint_color(&mut self, color: [u8; 3]) {
+        self.custom_glint = true;
+        self.glint_color = color;
+        self.sync_glint_color();
         self.glint_edited = Some(self.now);
     }
     fn commit_glint_color(&mut self) {
@@ -577,7 +592,7 @@ impl App {
     fn close_glint_picker(&mut self) {
         self.glint_picker = false;
         self.glint_picker_motion.set(0.0, self.now, self.reduced);
-        self.glint_hex = fast_pack::compat::glint::color_hex(self.glint_color);
+        self.glint_hex = fast_pack::compat::glint::color_hex(self.active_glint_color());
         self.commit_glint_color();
     }
     fn fail(&mut self, value: String) {
@@ -634,6 +649,7 @@ impl App {
             convert_lang: !self.preserve_lang,
             extra_renames: self.extra.clone(),
             glint_color: self.custom_glint.then_some(self.glint_color),
+            restore_vanilla_glint: !self.custom_glint,
         };
         self.phase = Phase::Running;
         self.error = None;
@@ -934,6 +950,7 @@ impl App {
             }
             Message::CustomGlint(value) if !self.busy() => {
                 self.custom_glint = value;
+                self.sync_glint_color();
                 self.glint_edited = None;
                 self.save_preferences();
             }
@@ -1628,11 +1645,8 @@ impl App {
 
     fn glint_controls(&self) -> Element<'_, Message> {
         let c = self.colors();
-        let color = Color::from_rgb8(
-            self.glint_color[0],
-            self.glint_color[1],
-            self.glint_color[2],
-        );
+        let active = self.active_glint_color();
+        let color = Color::from_rgb8(active[0], active[1], active[2]);
         let swatch = container(space().width(16).height(16)).style(move |_| container::Style {
             background: Some(color.into()),
             border: Border {
@@ -1652,15 +1666,15 @@ impl App {
             self.label(if self.custom_glint {
                 fast_pack::compat::glint::color_hex(self.glint_color)
             } else {
-                "保留原包效果".into()
+                "原版紫色".into()
             }),
-            space().width(Length::Fill),
             self.action(
                 33,
                 "调色",
                 (!self.busy()).then_some(Message::GlintPicker),
                 false
-            )
+            ),
+            space().width(Length::Fill)
         ]
         .spacing(10)
         .align_y(Alignment::Center)
@@ -1671,7 +1685,7 @@ impl App {
         let c = self.colors();
         let presets = [
             ("白色", [255, 255, 255]),
-            ("经典紫", [128, 64, 204]),
+            ("经典紫", fast_pack::compat::glint::VANILLA_COLOR),
             ("冰蓝", [91, 217, 255]),
             ("薄荷绿", [105, 239, 172]),
             ("金色", [255, 201, 92]),
@@ -1679,7 +1693,7 @@ impl App {
             ("红色", [255, 86, 100]),
         ];
         let palette = row(presets.into_iter().map(|(name, color)| {
-            let selected = self.glint_color == color;
+            let selected = self.active_glint_color() == color;
             let swatch = container(space().width(26).height(26)).style(move |_| container::Style {
                 background: Some(Color::from_rgb8(color[0], color[1], color[2]).into()),
                 border: Border {
@@ -1729,7 +1743,9 @@ impl App {
         .spacing(12);
         controls = controls.push(self.label(format!(
             "RGB  {} · {} · {}",
-            self.glint_color[0], self.glint_color[1], self.glint_color[2]
+            self.active_glint_color()[0],
+            self.active_glint_color()[1],
+            self.active_glint_color()[2]
         )));
         let valid = fast_pack::compat::glint::parse_color(&self.glint_hex).is_ok();
         controls = controls.push(
@@ -1774,7 +1790,7 @@ impl App {
                         self.action(34, "完成", Some(Message::CloseGlintPicker), true)
                     ]
                     .align_y(Alignment::Center),
-                    self.label("选择喜欢的颜色，保留原包光效图案与游戏流动动画。"),
+                    self.label("选择喜欢的颜色；取消勾选自定义颜色恢复原版紫色。"),
                     palette,
                     row![
                         column![

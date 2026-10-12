@@ -13,6 +13,7 @@ const MODERN: [&str; 3] = [
     "enchanted_glint_armor",
 ];
 const LEGACY_TINT: [f32; 3] = [128.0 / 255.0, 64.0 / 255.0, 204.0 / 255.0];
+pub const VANILLA_COLOR: [u8; 3] = [128, 64, 204];
 
 pub fn parse_color(value: &str) -> Result<[u8; 3]> {
     let value = value.trim();
@@ -182,6 +183,17 @@ fn select<'a>(
             .find_map(|name| textures.get(name))
             .or_else(|| textures.get(LEGACY))
     }
+}
+
+pub(crate) fn restore_vanilla(root: &Path, target: u32, report: &mut AssetReport) -> Result<()> {
+    let mut restored = AssetReport::default();
+    migrate(root, target, target, Some(VANILLA_COLOR), &mut restored)?;
+    report
+        .converted
+        .push("附魔光效：恢复原版紫色，保留图案、透明度与游戏流动动画".into());
+    report.generated.extend(restored.generated);
+    report.warnings.extend(restored.warnings);
+    Ok(())
 }
 
 pub(crate) fn migrate(

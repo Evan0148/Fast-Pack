@@ -39,7 +39,7 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.1.9.exe`。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.1.10.exe`。
 2. 双击下载的程序，把材质包 ZIP 或文件夹拖入窗口。
 3. 选择目标版本与导出目录，点击“开始转换”。资源适配默认自动执行。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
@@ -58,11 +58,11 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 ### 自定义附魔闪烁颜色
 
-展开 **“更多转换选项”**，开启 **“自定义附魔颜色”**，点击 **“调色”**。可以直接选白色等预设，输入 `#RRGGBB` / `#RGB`，或拖动调色卡。右侧竖向色谱选择色相，左侧方形区域横向调整饱和度、纵向调整明暗；点击预设、输入有效色值或拖动调色卡会自动启用自定义颜色。
+展开 **“更多转换选项”**，开启 **“自定义附魔颜色”**，点击颜色右侧紧邻的 **“调色”** 按钮。可以直接选白色等预设，输入 `#RRGGBB` / `#RGB`，或拖动调色卡。右侧竖向色谱选择色相，左侧方形区域横向调整饱和度、纵向调整明暗；点击预设、输入有效色值或拖动调色卡会自动启用自定义颜色。
 
-颜色和自定义开关默认自动记住，后续转换与重启继续使用。关闭自定义颜色后，转换保留输入包的光效效果，已经选好的颜色仍被记住。设置存放在同一个 `%LOCALAPPDATA%\Fast Pack\settings.json` 中；拖动调色短暂停止后自动保存，关闭面板、开始转换或关闭程序时也会提交待保存的颜色。
+颜色和自定义开关默认自动记住，后续转换与重启继续使用。取消勾选自定义颜色后，色块、调色卡与动画预览同步恢复原版紫色，下一次转换也会将输入包的附魔光效统一恢复紫色。之前选择的自定义颜色仍被记住，重新勾选即可恢复。设置存放在同一个 `%LOCALAPPDATA%\Fast Pack\settings.json` 中；拖动调色短暂停止后自动保存，关闭面板、开始转换或关闭程序时也会提交待保存的颜色。
 
-1.8.9–1.14 的附魔图案通常为灰度图，颜色由游戏渲染器额外乘入；1.15 起颜色烘焙进贴图。默认转换会补上或补偿这层染色，修复旧图直接复制到新版后变白的问题，并保留新版包有意设计的白色效果。1.19.4 起同步生成物品、实体和盔甲资源名称，兼容后续版本的路径变化。
+1.8.9–1.14 的附魔图案通常为灰度图，颜色由游戏渲染器额外乘入；1.15 起颜色烘焙进贴图。底层兼容转换会补上或补偿这层染色，修复旧图直接复制到新版后变白的问题。桌面版未勾选自定义颜色时，最终输出统一使用原版紫色；需要白色等效果时开启自定义颜色选择相应色值。1.19.4 起同步生成物品、实体和盔甲资源名称，兼容后续版本的路径变化。
 
 自定义颜色会统一光效色相并保留图案的相对明暗与 alpha，继续使用游戏自带的流动闪烁动画。原包没有附魔图时，自动生成可平铺图案，无需玩家补文件。面板中的像素剑为颜色示意；游戏的实际亮度还取决于渲染版本、客户端设置和包内自定义渲染逻辑，旧版染色补偿可能降低亮度。
 
@@ -78,7 +78,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.1.9.exe`、`fast-pack-cli-v1.1.9.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.1.10.exe`、`fast-pack-cli-v1.1.10.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -139,23 +139,24 @@ flowchart LR
 
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.1.9 为例，命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.1.10 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli-v1.1.9.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.1.9.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.1.9.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.1.9.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.1.9.exe old.zip --probe
-.\fast-pack-cli-v1.1.9.exe --versions
-.\fast-pack-cli-v1.1.9.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.1.9.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.1.9.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.1.10.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.1.10.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.1.10.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.1.10.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.1.10.exe old.zip --probe
+.\fast-pack-cli-v1.1.10.exe --versions
+.\fast-pack-cli-v1.1.10.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.1.10.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.1.10.exe old.zip --to 1.20.1 --vanilla-glint
+.\fast-pack-cli-v1.1.10.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--from auto` 默认自动识别源版本。`--report-json` 仅在指定时将详情另存到提供的路径，不会把 `转换报告.txt` 塞入输出 ZIP。自定义映射采用 JSON 对象，例如 `{"custom_texture":"replacement_texture"}`。
 
-`--glint-color` 接受带或不带 `#` 的 3 位 / 6 位 HEX 色值。省略时保留输入包的光效效果并自动适配目标版本；命令行参数不会改写桌面版已保存的颜色。
+`--glint-color` 接受带或不带 `#` 的 3 位 / 6 位 HEX 色值。省略时保留输入包的光效效果并自动适配目标版本；`--vanilla-glint` 将附魔光效恢复原版紫色，与 `--glint-color` 互斥；两个选项都省略时继续自动适配输入包颜色。命令行参数不会改写桌面版已保存的颜色。
 
 GUI 对已有输出提供覆盖确认；CLI 会替换明确指定的已有输出。输出不得与源路径相同，也不得覆盖源目录或其上级目录。
 
