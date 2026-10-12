@@ -571,8 +571,253 @@ fn nine_slice(source: &RgbaImage, width: u32, height: u32, border: u32) -> RgbaI
     out
 }
 
+fn item_resources(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Result<()> {
+    let folder = if target >= 4 { "item" } else { "items" };
+    let textures = root.join(format!("assets/minecraft/textures/{folder}"));
+    if !textures.is_dir() {
+        return Ok(());
+    }
+    if source < 4 && target >= 4 {
+        for (old, aliases) in &crate::tables::legacy_items().aliases {
+            let name = crate::flatten_texture_name(old, "item");
+            let image = textures.join(format!("{name}.png"));
+            if !image.exists() {
+                continue;
+            }
+            for alias in aliases {
+                let destination = textures.join(format!("{alias}.png"));
+                if destination.exists() {
+                    continue;
+                }
+                fs::copy(&image, &destination)?;
+                let metadata = image.with_extension("png.mcmeta");
+                if metadata.exists() {
+                    fs::copy(metadata, destination.with_extension("png.mcmeta"))?;
+                }
+                report
+                    .converted
+                    .push(format!("染料/材料：{name} → {alias} 共用原贴图"));
+            }
+        }
+    }
+    if source < 2 && target >= 2 {
+        for (name, count) in [("clock", 64u32), ("compass", 32)] {
+            let path = textures.join(format!("{name}.png"));
+            if !path.exists() {
+                continue;
+            }
+            let image = open(&path)?;
+            let width = image.width();
+            if width == 0 || !image.height().is_multiple_of(width) {
+                report
+                    .warnings
+                    .push(format!("{name} 图集比例无法识别，已保留原图"));
+                continue;
+            }
+            let frames = image.height() / width;
+            for index in 0..count {
+                let destination = textures.join(format!("{name}_{index:02}.png"));
+                if destination.exists() {
+                    continue;
+                }
+                let frame = index * frames / count;
+                let cropped = imageops::crop_imm(&image, 0, frame * width, width, width).to_image();
+                save(root, &destination, &cropped)?;
+            }
+            report
+                .converted
+                .push(format!("{name}：旧动态贴图自动拆为 {count} 个模型帧"));
+        }
+    }
+    Ok(())
+}
+
+fn clear_inventory_region(
+    image: &mut RgbaImage,
+    old: &RgbaImage,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) {
+    for row in y..y + height {
+        let left = old.get_pixel(x - 1, row);
+        let right = old.get_pixel(x + width, row);
+        for column in 0..width {
+            let color = std::array::from_fn(|channel| {
+                ((u32::from(left[channel]) * (width - column) + u32::from(right[channel]) * column)
+                    / width) as u8
+            });
+            image.put_pixel(x + column, row, Rgba(color));
+        }
+    }
+}
+
+pub fn inventory_layout(old: &RgbaImage, reverse: bool) -> Result<RgbaImage> {
+    let scale = old.width() / 256;
+    ensure!(
+        scale > 0 && old.width().is_multiple_of(256) && old.height() >= 166 * scale,
+        "背包贴图比例无效"
+    );
+    let (sx, sy, dx, dy) = if reverse {
+        (96, 16, 86, 24)
+    } else {
+        (86, 24, 96, 16)
+    };
+    let mut image = old.clone();
+    clear_inventory_region(
+        &mut image,
+        old,
+        sx * scale,
+        sy * scale,
+        76 * scale,
+        38 * scale,
+    );
+    let crafting =
+        imageops::crop_imm(old, sx * scale, sy * scale, 76 * scale, 38 * scale).to_image();
+    imageops::replace(
+        &mut image,
+        &crafting,
+        i64::from(dx * scale),
+        i64::from(dy * scale),
+    );
+    if reverse {
+        clear_inventory_region(
+            &mut image,
+            old,
+            76 * scale,
+            61 * scale,
+            18 * scale,
+            18 * scale,
+        );
+    } else {
+        for row in 7 * scale..81 * scale {
+            for column in 76 * scale..79 * scale {
+                image.put_pixel(column, row, *old.get_pixel(79 * scale, row));
+            }
+        }
+        let slot =
+            imageops::crop_imm(old, 7 * scale, 83 * scale, 18 * scale, 18 * scale).to_image();
+        imageops::replace(
+            &mut image,
+            &slot,
+            76 * i64::from(scale),
+            61 * i64::from(scale),
+        );
+    }
+    let player = imageops::crop_imm(
+        old,
+        25 * scale,
+        7 * scale,
+        if reverse { 51 * scale } else { 54 * scale },
+        74 * scale,
+    )
+    .to_image();
+    let player = imageops::resize(
+        &player,
+        if reverse { 54 * scale } else { 51 * scale },
+        74 * scale,
+        imageops::FilterType::Nearest,
+    );
+    imageops::replace(
+        &mut image,
+        &player,
+        25 * i64::from(scale),
+        7 * i64::from(scale),
+    );
+    Ok(image)
+}
+
+fn recipe_controls(root: &Path, image: &mut RgbaImage) -> Result<()> {
+    let scale = image.width() / 256;
+    let book_path = root.join("assets/minecraft/textures/item/book.png");
+    let book = if book_path.exists() {
+        Some(open(&book_path)?)
+    } else {
+        None
+    };
+    let atlas_path = root.join("assets/minecraft/textures/gui/recipe_button.png");
+    let mut atlas = RgbaImage::new(image.width(), image.height());
+    for state in 0..3 {
+        let slot =
+            imageops::crop_imm(image, 7 * scale, 83 * scale, 18 * scale, 18 * scale).to_image();
+        let mut button = nine_slice(&slot, 20 * scale, 18 * scale, scale.max(1));
+        if let Some(book) = &book {
+            let size = book.width().min(book.height());
+            let frame = imageops::crop_imm(book, 0, 0, size, size).to_image();
+            let icon = imageops::resize(
+                &frame,
+                14 * scale,
+                14 * scale,
+                imageops::FilterType::Nearest,
+            );
+            imageops::overlay(
+                &mut button,
+                &icon,
+                3 * i64::from(scale),
+                2 * i64::from(scale),
+            );
+        } else {
+            for y in 3 * scale..15 * scale {
+                for x in 4 * scale..16 * scale {
+                    let edge = x < 5 * scale || x >= 15 * scale || y < 4 * scale || y >= 14 * scale;
+                    button.put_pixel(
+                        x,
+                        y,
+                        Rgba(if edge {
+                            [235, 238, 221, 255]
+                        } else if state == 1 {
+                            [32, 92, 65, 255]
+                        } else {
+                            [54, 128, 68, 255]
+                        }),
+                    );
+                }
+            }
+        }
+        imageops::replace(
+            image,
+            &button,
+            178 * i64::from(scale),
+            i64::from(state * 19 * scale),
+        );
+        imageops::replace(&mut atlas, &button, 0, i64::from(state * 19 * scale));
+    }
+    if !atlas_path.exists() {
+        save(root, &atlas_path, &atlas)?;
+    }
+    Ok(())
+}
+
 fn gui(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Result<()> {
     let textures = root.join("assets/minecraft/textures");
+    if source < 2 && target >= 2 || source >= 2 && target < 2 {
+        let path = textures.join("gui/container/inventory.png");
+        if path.exists() {
+            let mut old = open(&path)?;
+            if old.width() < 256 && old.width() > 0 {
+                old = imageops::resize(
+                    &old,
+                    256,
+                    old.height() * 256 / old.width(),
+                    imageops::FilterType::Nearest,
+                );
+            }
+            let mut converted = inventory_layout(&old, target < 2)?;
+            if target >= 3 {
+                recipe_controls(root, &mut converted)?;
+            }
+            save(root, &path, &converted)?;
+            report.converted.push(
+                if target < 2 {
+                    "背包：合成栏反向重定位，清理副手槽"
+                } else {
+                    "背包：合成格、箭头与结果格右移 10px、上移 8px，并生成副手槽和配方书按钮"
+                }
+                .into(),
+            );
+        }
+    }
     if source < 8 && target >= 8 {
         let path = textures.join("gui/container/inventory.png");
         if path.exists() {
@@ -932,6 +1177,31 @@ fn old_model_name(name: &str) -> String {
     .into()
 }
 
+fn item_model_name(name: &str) -> String {
+    crate::tables::legacy_items()
+        .models
+        .get(name)
+        .cloned()
+        .unwrap_or_else(|| model_name(name))
+}
+
+fn item_definition(root: &Path, name: &str, target: u32) -> Result<()> {
+    if target < 46 {
+        return Ok(());
+    }
+    let path = root.join(format!("assets/minecraft/items/{name}.json"));
+    if !path.exists() {
+        fs::create_dir_all(path.parent().unwrap())?;
+        fs::write(
+            path,
+            serde_json::to_vec_pretty(
+                &json!({"model":{"type":"minecraft:model","model":format!("minecraft:item/{name}")}}),
+            )?,
+        )?;
+    }
+    Ok(())
+}
+
 fn old_model_refs(value: &mut Value, blockstate: bool) -> bool {
     let original = value.clone();
     match value {
@@ -979,7 +1249,11 @@ fn model_refs(value: &mut Value, default_folder: &str) -> bool {
                     let (folder, name) = path.split_once('/').unwrap_or((default_folder, path));
                     if matches!(folder, "block" | "item") {
                         let mapped = if namespace == "minecraft" {
-                            model_name(name)
+                            if folder == "item" {
+                                item_model_name(name)
+                            } else {
+                                model_name(name)
+                            }
                         } else {
                             name.into()
                         };
@@ -1031,6 +1305,32 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
             continue;
         };
         let mut changed = rewrite_model(&mut value, source, target);
+        if source < 2 && target >= 2 && relative.starts_with("assets/minecraft/models/item/") {
+            let name = path.file_stem().unwrap_or_default().to_string_lossy();
+            if let Some(overrides) = crate::tables::legacy_items().overrides.get(name.as_ref()) {
+                if value.get("overrides").is_none() {
+                    value["overrides"] = json!(overrides);
+                    changed = true;
+                }
+                if matches!(name.as_ref(), "clock" | "compass") {
+                    if let Some(layer) = value
+                        .get_mut("textures")
+                        .and_then(|textures| textures.get_mut("layer0"))
+                    {
+                        *layer = json!(format!(
+                            "{}{}",
+                            if target >= 4 { "item/" } else { "items/" },
+                            if name == "clock" {
+                                "clock_00"
+                            } else {
+                                "compass_16"
+                            }
+                        ));
+                        changed = true;
+                    }
+                }
+            }
+        }
         if source < 4 && target >= 4 {
             changed |= model_refs(
                 &mut value,
@@ -1119,7 +1419,11 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
         }
         if source < 4 && target >= 4 && relative.starts_with("assets/minecraft/models/") {
             let old = path.file_stem().unwrap_or_default().to_string_lossy();
-            let name = model_name(&old);
+            let name = if relative.contains("/models/item/") {
+                item_model_name(&old)
+            } else {
+                model_name(&old)
+            };
             if name != old {
                 let destination = path.with_file_name(format!("{name}.json"));
                 if !destination.exists() {
@@ -1192,7 +1496,7 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
                 .unwrap()
                 .trim_end_matches(".json");
             let name = if namespace == "minecraft" && source < 4 {
-                model_name(name)
+                item_model_name(name)
             } else {
                 name.to_string()
             };
@@ -1229,6 +1533,42 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
         }
         fs::write(path, serde_json::to_vec_pretty(&value)?)?;
         count += 1;
+    }
+    if source < 4 && target >= 4 {
+        let directory = root.join("assets/minecraft/models/item");
+        for (old, aliases) in &crate::tables::legacy_items().aliases {
+            let name = crate::flatten_texture_name(old, "item");
+            let original = directory.join(format!("{name}.json"));
+            if !original.exists() {
+                continue;
+            }
+            for alias in aliases {
+                let path = directory.join(format!("{alias}.json"));
+                if !path.exists() {
+                    fs::copy(&original, &path)?;
+                    item_definition(root, alias, target)?;
+                    count += 1;
+                }
+            }
+        }
+        let bed = root.join("assets/minecraft/textures/item/red_bed.png");
+        let model = directory.join("red_bed.json");
+        if bed.exists()
+            && !model.exists()
+            && !root.join("assets/minecraft/textures/entity/bed").exists()
+        {
+            fs::create_dir_all(&directory)?;
+            fs::write(
+                model,
+                serde_json::to_vec_pretty(
+                    &json!({"parent":"minecraft:item/generated","textures":{"layer0":"minecraft:item/red_bed"}}),
+                )?,
+            )?;
+            item_definition(root, "red_bed", target)?;
+            report
+                .generated
+                .push("床物品：为旧版二维贴图生成对应物品模型，保留原图标".into());
+        }
     }
     if count > 0 {
         report.converted.push(format!(
@@ -1338,6 +1678,7 @@ pub fn migrate(root: &Path, source: u32, target: u32) -> Result<AssetReport> {
     chests(root, source, target, &mut report)?;
     patterns(root, source, target, &mut report)?;
     entities(root, source, target, &mut report)?;
+    item_resources(root, source, target, &mut report)?;
     models(root, source, target, &mut report)?;
     gui(root, source, target, &mut report)?;
     glint(root, source, target, &mut report)?;

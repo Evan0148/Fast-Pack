@@ -500,93 +500,110 @@ fn migrate_textures(
     options: &ConversionOptions,
     report: &mut ConversionReport,
 ) -> Result<HashMap<String, String>> {
-    let texture = root.join("assets/minecraft/textures");
+    let assets = root.join("assets");
+    if !assets.is_dir() {
+        return Ok(HashMap::new());
+    }
     let pairs = if reverse {
         [("block", "blocks"), ("item", "items")]
     } else {
         [("blocks", "block"), ("items", "item")]
     };
-    for (old, new) in pairs {
-        let source = texture.join(old);
-        let target = texture.join(new);
-        if !source.is_dir() {
-            continue;
-        }
-        fs::create_dir_all(&target)?;
-        for path in directory_entries(&source)? {
-            let destination = target.join(path.file_name().unwrap_or_default());
-            if destination.exists() {
-                report
-                    .skipped_conflict
-                    .push(destination.display().to_string());
-                continue;
-            }
-            fs::rename(path, destination)?;
-        }
-        let _ = fs::remove_dir(source);
-        report
-            .dirs_moved
-            .push(format!("textures/{old} -> textures/{new}"));
-    }
     let mut renames = HashMap::new();
-    let folders = if reverse {
-        [("blocks", "block"), ("items", "item")]
-    } else {
-        [("block", "block"), ("item", "item")]
-    };
-    for (folder, kind) in folders {
-        let directory = texture.join(folder);
-        if !directory.exists() {
+    for namespace in directory_entries(&assets)? {
+        if !namespace.is_dir() {
             continue;
         }
-        for path in directory_entries(&directory)? {
-            if !path.is_file() {
+        let namespace_name = namespace.file_name().unwrap_or_default().to_string_lossy();
+        let texture = namespace.join("textures");
+        for (old, new) in pairs {
+            let source = texture.join(old);
+            let target = texture.join(new);
+            if !source.is_dir() {
                 continue;
             }
-            let name = path.file_name().unwrap_or_default().to_string_lossy();
-            let (stem, suffix) = if let Some(stem) = name.strip_suffix(".png.mcmeta") {
-                (stem, ".png.mcmeta")
-            } else if let Some(stem) = name.strip_suffix(".png") {
-                (stem, ".png")
-            } else {
+            fs::create_dir_all(&target)?;
+            for path in walk_files(&source)? {
+                let destination = target.join(path.strip_prefix(&source)?);
+                if destination.exists() {
+                    report
+                        .skipped_conflict
+                        .push(destination.display().to_string());
+                    continue;
+                }
+                fs::create_dir_all(destination.parent().unwrap())?;
+                fs::rename(path, destination)?;
+            }
+            let _ = fs::remove_dir(source);
+            report
+                .dirs_moved
+                .push(format!("textures/{old} -> textures/{new}"));
+        }
+        let folders = if reverse {
+            [("blocks", "block"), ("items", "item")]
+        } else {
+            [("block", "block"), ("item", "item")]
+        };
+        for (folder, kind) in folders {
+            let directory = texture.join(folder);
+            if !directory.exists() {
                 continue;
-            };
-            let renamed = if reverse {
-                options
-                    .extra_renames
-                    .iter()
-                    .rev()
-                    .find(|(old, new)| new == stem && !old.is_empty())
-                    .map(|(old, _)| old.clone())
-                    .or_else(|| legacy_texture_name(stem, kind))
-            } else {
-                options
-                    .extra_renames
-                    .iter()
-                    .find(|(old, new)| old == stem && !new.is_empty())
-                    .map(|(_, new)| new.clone())
-                    .or_else(|| Some(flatten_texture_name(stem, kind)))
-            };
-            if let Some(new) = renamed.filter(|new| !new.is_empty()) {
-                if new == stem {
+            }
+            for path in walk_files(&directory)? {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                let (stem, suffix) = if let Some(stem) = name.strip_suffix(".png.mcmeta") {
+                    (stem, ".png.mcmeta")
+                } else if let Some(stem) = name.strip_suffix(".png") {
+                    (stem, ".png")
+                } else {
                     continue;
+                };
+                let renamed = if namespace_name != "minecraft" {
+                    Some(stem.into())
+                } else if reverse {
+                    options
+                        .extra_renames
+                        .iter()
+                        .rev()
+                        .find(|(old, new)| new == stem && !old.is_empty())
+                        .map(|(old, _)| old.clone())
+                        .or_else(|| legacy_texture_name(stem, kind))
+                } else {
+                    options
+                        .extra_renames
+                        .iter()
+                        .find(|(old, new)| old == stem && !new.is_empty())
+                        .map(|(_, new)| new.clone())
+                        .or_else(|| Some(flatten_texture_name(stem, kind)))
+                };
+                if let Some(new) = renamed.filter(|new| !new.is_empty()) {
+                    if new == stem {
+                        continue;
+                    }
+                    ensure!(
+                        !new.contains(['/', '\\', ':']) && new != "..",
+                        "自定义纹理名称不合法: {new}"
+                    );
+                    let target = path.with_file_name(format!("{new}{suffix}"));
+                    if target.exists() {
+                        report.skipped_conflict.push(target.display().to_string());
+                        continue;
+                    }
+                    let relative = path
+                        .strip_prefix(&directory)?
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    let old_path = relative.strip_suffix(suffix).unwrap_or(&relative);
+                    let parent = Path::new(old_path).parent().unwrap_or(Path::new(""));
+                    let new_path = parent.join(&new).to_string_lossy().replace('\\', "/");
+                    fs::rename(&path, target)?;
+                    renames.insert(format!("{namespace_name}:{kind}/{old_path}"), new_path);
+                    report
+                        .textures_renamed
+                        .push(format!("textures/{folder}/{name} -> {new}{suffix}"));
+                } else if !reverse || !tables().deferred_unmapped.iter().any(|item| item == stem) {
+                    report.unmapped.push(format!("textures/{folder}/{name}"));
                 }
-                ensure!(
-                    !new.contains(['/', '\\', ':']) && new != "..",
-                    "自定义纹理名称不合法: {new}"
-                );
-                let target = directory.join(format!("{new}{suffix}"));
-                if target.exists() {
-                    report.skipped_conflict.push(target.display().to_string());
-                    continue;
-                }
-                fs::rename(&path, target)?;
-                renames.insert(stem.into(), new.clone());
-                report
-                    .textures_renamed
-                    .push(format!("textures/{folder}/{name} -> {new}{suffix}"));
-            } else if !reverse || !tables().deferred_unmapped.iter().any(|item| item == stem) {
-                report.unmapped.push(format!("textures/{folder}/{name}"));
             }
         }
     }
@@ -609,7 +626,10 @@ fn update_json_refs(
         ["block", "item"]
     };
     let patterns = sources.map(|source| {
-        Regex::new(&format!(r"^(minecraft:)?{source}/([A-Za-z0-9_]+)(.*)$")).unwrap()
+        Regex::new(&format!(
+            r"^([A-Za-z0-9_.-]+:)?{source}/([A-Za-z0-9_./-]+)$"
+        ))
+        .unwrap()
     });
     let mut count = 0;
     for path in walk_files(root)? {
@@ -623,7 +643,7 @@ fn update_json_refs(
             continue;
         };
         let original = value.clone();
-        rewrite_texture_values(&mut value, &patterns, &targets, reverse, renames);
+        rewrite_texture_values(&mut value, &patterns, &targets, reverse, renames, false);
         if value != original {
             fs::write(path, serde_json::to_vec_pretty(&value)?)?;
             count += 1;
@@ -638,32 +658,50 @@ fn rewrite_texture_values(
     targets: &[&str; 2],
     reverse: bool,
     renames: &HashMap<String, String>,
+    texture_dictionary: bool,
 ) {
     match value {
         Value::String(text) => {
             for ((pattern, target), kind) in patterns.iter().zip(targets).zip(["block", "item"]) {
                 if let Some(capture) = pattern.captures(text) {
                     let namespace = capture.get(1).map(|value| value.as_str()).unwrap_or("");
+                    let namespace_name = namespace.trim_end_matches(':');
+                    let domain = if namespace_name.is_empty() {
+                        "minecraft"
+                    } else {
+                        namespace_name
+                    };
                     let name = &capture[2];
-                    let suffix = &capture[3];
-                    let mapped = renames
-                        .get(&name.to_lowercase())
-                        .cloned()
-                        .unwrap_or_else(|| {
-                            if reverse {
-                                legacy_texture_name(
-                                    match name {
-                                        "dirt_path" => "grass_path",
-                                        "short_grass" => "grass",
-                                        _ => name,
-                                    },
-                                    kind,
-                                )
-                                .unwrap_or_else(|| name.into())
-                            } else {
-                                flatten_texture_name(name, kind)
-                            }
-                        });
+                    let (resource, suffix) = if let Some(value) = name.strip_suffix(".png") {
+                        (value, ".png")
+                    } else {
+                        (name, "")
+                    };
+                    let key = format!("{domain}:{kind}/{}", resource.to_lowercase());
+                    let mapped = renames.get(&key).cloned().unwrap_or_else(|| {
+                        if domain != "minecraft" {
+                            return resource.into();
+                        }
+                        let path = Path::new(resource);
+                        let leaf = path.file_name().unwrap_or_default().to_string_lossy();
+                        let name = leaf.as_ref();
+                        let mapped = if reverse {
+                            legacy_texture_name(
+                                match name {
+                                    "dirt_path" => "grass_path",
+                                    "short_grass" => "grass",
+                                    _ => name,
+                                },
+                                kind,
+                            )
+                            .unwrap_or_else(|| name.into())
+                        } else {
+                            flatten_texture_name(name, kind)
+                        };
+                        path.with_file_name(mapped)
+                            .to_string_lossy()
+                            .replace('\\', "/")
+                    });
                     *text = format!("{namespace}{target}/{mapped}{suffix}");
                     break;
                 }
@@ -671,14 +709,28 @@ fn rewrite_texture_values(
         }
         Value::Object(values) => {
             for (key, value) in values {
-                if !matches!(key.as_str(), "parent" | "model") {
-                    rewrite_texture_values(value, patterns, targets, reverse, renames);
+                if texture_dictionary || !matches!(key.as_str(), "parent" | "model") {
+                    rewrite_texture_values(
+                        value,
+                        patterns,
+                        targets,
+                        reverse,
+                        renames,
+                        texture_dictionary || key == "textures",
+                    );
                 }
             }
         }
         Value::Array(values) => {
             for value in values {
-                rewrite_texture_values(value, patterns, targets, reverse, renames);
+                rewrite_texture_values(
+                    value,
+                    patterns,
+                    targets,
+                    reverse,
+                    renames,
+                    texture_dictionary,
+                );
             }
         }
         _ => {}

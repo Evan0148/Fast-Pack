@@ -169,7 +169,7 @@ const MODERN: &[(&str, &str)] = &[
         r###"{"animation":{"frametime":2}}"###,
     ),
     (
-        r###"assets/minecraft/textures/block/nested/stonebrick.png"###,
+        r###"assets/minecraft/textures/block/nested/stone_bricks.png"###,
         r###"nested preserved"###,
     ),
     (
