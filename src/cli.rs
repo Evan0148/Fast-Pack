@@ -27,6 +27,8 @@ struct Arguments {
     folder: bool,
     #[arg(long, help = "材质包描述，默认沿用原包")]
     desc: Option<String>,
+    #[arg(long, value_parser = crate::compat::glint::parse_color, value_name = "RRGGBB", help = "自定义附魔闪烁颜色，例如 #FFFFFF；省略则保留原包效果")]
+    glint_color: Option<[u8; 3]>,
     #[arg(long, help = "仅输出最终结果")]
     quiet: bool,
     #[arg(long, help = "仅识别材质包并输出 JSON")]
@@ -85,6 +87,7 @@ pub fn run() -> Result<()> {
         tgt_format: pack_format_of(&args.target_version)?,
         target_version: Some(args.target_version.clone()),
         description: args.desc,
+        glint_color: args.glint_color,
         as_zip,
         lowercase: !args.no_lowercase,
         convert_lang: !args.no_lang,

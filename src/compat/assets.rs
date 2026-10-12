@@ -26,7 +26,7 @@ struct Sprite {
     height: u32,
 }
 
-fn backup(root: &Path, path: &Path) -> Result<()> {
+pub(super) fn backup(root: &Path, path: &Path) -> Result<()> {
     let relative = path.strip_prefix(root)?;
     let destination = root.join("fastpack/original-assets").join(relative);
     if !destination.exists() {
@@ -36,7 +36,7 @@ fn backup(root: &Path, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn save(root: &Path, path: &Path, image: &RgbaImage) -> Result<()> {
+pub(super) fn save(root: &Path, path: &Path, image: &RgbaImage) -> Result<()> {
     if path.exists() {
         backup(root, path)?;
     }
@@ -971,79 +971,6 @@ fn gui(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Resul
     Ok(())
 }
 
-fn glint(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Result<()> {
-    let textures = root.join("assets/minecraft/textures/misc");
-    if source < 13 && target >= 13 {
-        let old = textures.join("enchanted_item_glint.png");
-        if old.exists() {
-            for name in [
-                "enchanted_glint_entity",
-                "enchanted_glint_item",
-                "enchanted_glint_armor",
-            ] {
-                let target = textures.join(format!("{name}.png"));
-                if !target.exists() {
-                    fs::copy(&old, &target)?;
-                }
-                let metadata = old.with_extension("png.mcmeta");
-                if metadata.exists() {
-                    fs::copy(metadata, target.with_extension("png.mcmeta"))?;
-                }
-            }
-            report
-                .converted
-                .push("附魔光效：自动生成物品、实体与盔甲三种版本资源".into());
-        }
-    }
-    if target < 13 && source >= 13 {
-        let old = textures.join("enchanted_item_glint.png");
-        if !old.exists()
-            && let Some(path) = [
-                "enchanted_glint_item",
-                "enchanted_glint_entity",
-                "enchanted_glint_armor",
-            ]
-            .into_iter()
-            .map(|name| textures.join(format!("{name}.png")))
-            .find(|path| path.exists())
-        {
-            fs::copy(&path, &old)?;
-            let metadata = path.with_extension("png.mcmeta");
-            if metadata.exists() {
-                fs::copy(metadata, old.with_extension("png.mcmeta"))?;
-            }
-            report
-                .converted
-                .push("附魔光效：自动还原旧版统一纹理".into());
-        }
-    }
-    if target >= 13 {
-        let item = textures.join("enchanted_glint_item.png");
-        let entity = textures.join("enchanted_glint_entity.png");
-        let armor = textures.join("enchanted_glint_armor.png");
-        for destination in [&item, &entity, &armor] {
-            if destination.exists() {
-                continue;
-            }
-            if let Some(source) = [&entity, &armor, &item]
-                .into_iter()
-                .find(|path| path.exists())
-            {
-                fs::copy(source, destination)?;
-                let metadata = source.with_extension("png.mcmeta");
-                if metadata.exists() {
-                    fs::copy(metadata, destination.with_extension("png.mcmeta"))?;
-                }
-                report.converted.push(format!(
-                    "附魔光效：自动补齐 {}",
-                    destination.file_name().unwrap().to_string_lossy()
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
 fn rewrite_model(value: &mut Value, source: u32, target: u32, relative: &str) -> bool {
     let old = value.clone();
     super::item_display::migrate(value, source, target, relative);
@@ -1640,6 +1567,15 @@ fn fonts(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Res
 }
 
 pub fn migrate(root: &Path, source: u32, target: u32) -> Result<AssetReport> {
+    migrate_with_glint(root, source, target, None)
+}
+
+pub fn migrate_with_glint(
+    root: &Path,
+    source: u32,
+    target: u32,
+    glint_color: Option<[u8; 3]>,
+) -> Result<AssetReport> {
     let mut report = AssetReport::default();
     chests(root, source, target, &mut report)?;
     patterns(root, source, target, &mut report)?;
@@ -1648,7 +1584,7 @@ pub fn migrate(root: &Path, source: u32, target: u32) -> Result<AssetReport> {
     super::item_bindings::migrate(root, source, target, &mut report)?;
     models(root, source, target, &mut report)?;
     gui(root, source, target, &mut report)?;
-    glint(root, source, target, &mut report)?;
+    super::glint::migrate(root, source, target, glint_color, &mut report)?;
     fonts(root, source, target, &mut report)?;
     Ok(report)
 }

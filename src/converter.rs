@@ -25,6 +25,7 @@ pub struct ConversionOptions {
     pub convert_lang: bool,
     pub extra_renames: Vec<(String, String)>,
     pub target_version: Option<String>,
+    pub glint_color: Option<[u8; 3]>,
 }
 
 impl Default for ConversionOptions {
@@ -38,6 +39,7 @@ impl Default for ConversionOptions {
             convert_lang: true,
             extra_renames: Vec::new(),
             target_version: None,
+            glint_color: None,
         }
     }
 }
@@ -1242,6 +1244,15 @@ pub fn convert_pack(
         crate::compat::SkyRuntime::Auto,
         crate::compat::ShaderPolicy::Adaptive,
     )?;
+    if options.glint_color.is_some() || report.compatibility.selected_variant.is_some() {
+        crate::compat::glint::migrate(
+            &root,
+            options.tgt_format,
+            options.tgt_format,
+            options.glint_color,
+            &mut report.assets,
+        )?;
+    }
     report.compatibility.warnings.extend(sky_notes);
     report.compatibility.warnings.sort();
     report.compatibility.warnings.dedup();

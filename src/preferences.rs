@@ -19,6 +19,8 @@ pub struct Preferences {
     pub auto_save_path: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub export_directory: Option<PathBuf>,
+    pub custom_glint: bool,
+    pub glint_color: [u8; 3],
 }
 
 impl Default for Preferences {
@@ -28,6 +30,8 @@ impl Default for Preferences {
             target_version: None,
             auto_save_path: true,
             export_directory: None,
+            custom_glint: false,
+            glint_color: [255, 255, 255],
         }
     }
 }

@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod atlas;
+pub mod glint;
 mod item_bindings;
 mod item_display;
 pub mod properties;

@@ -7,7 +7,7 @@ use fast_pack::{
 };
 use iced::widget::{
     self, button, checkbox, column, container, mouse_area, pick_list, progress_bar, row,
-    scrollable, space, text, text_input, tooltip,
+    scrollable, slider, space, text, text_input, tooltip,
 };
 use iced::{
     Alignment, Background, Border, Color, Element, Font, Length, Padding, Shadow, Size,
@@ -39,6 +39,12 @@ enum Message {
     Description(String),
     PreserveLang(bool),
     PreserveCase(bool),
+    CustomGlint(bool),
+    GlintPicker,
+    CloseGlintPicker,
+    GlintPreset([u8; 3]),
+    GlintChannel(usize, u8),
+    GlintHex(String),
     Advanced,
     Details,
     LearnMore,
@@ -147,6 +153,14 @@ struct App {
     as_zip: bool,
     preserve_lang: bool,
     preserve_case: bool,
+    custom_glint: bool,
+    glint_color: [u8; 3],
+    glint_hex: String,
+    glint_edited: Option<Instant>,
+    glint_picker: bool,
+    glint_picker_motion: Tween,
+    glint_color_motion: [Tween; 3],
+    glint_preview_started: Instant,
     extra: Vec<(String, String)>,
     report: Option<String>,
     logs: Vec<String>,
@@ -247,6 +261,16 @@ impl App {
             as_zip: true,
             preserve_lang: false,
             preserve_case: false,
+            custom_glint: preferences.custom_glint,
+            glint_color: preferences.glint_color,
+            glint_hex: fast_pack::compat::glint::color_hex(preferences.glint_color),
+            glint_edited: None,
+            glint_picker: false,
+            glint_picker_motion: Tween::new(0.0, 220),
+            glint_color_motion: preferences
+                .glint_color
+                .map(|channel| Tween::new(channel as f32 / 255.0, 180)),
+            glint_preview_started: now,
             extra: Vec::new(),
             report: None,
             logs: Vec::new(),
@@ -309,10 +333,15 @@ impl App {
             &self.theme_motion,
             &self.auto_save_motion,
             &self.auto_save_path_motion,
+            &self.glint_picker_motion,
         ]
         .into_iter()
         .any(|value| value.active(self.now))
             || self.hover.values().any(|value| value.active(self.now))
+            || self
+                .glint_color_motion
+                .iter()
+                .any(|value| value.active(self.now))
     }
     fn subscription(&self) -> Subscription<Message> {
         let events =
@@ -343,10 +372,16 @@ impl App {
             || self.mapping_pending
             || self.preferences_pending > 0
             || self.directory_edited.is_some()
+            || self.glint_edited.is_some()
+            || self.glint_picker && !self.reduced
             || self.capture.is_some()
             || self.smoke
         {
-            let duration = if self.animation_active() { 16 } else { 40 };
+            let duration = if self.animation_active() || self.glint_picker && !self.reduced {
+                16
+            } else {
+                40
+            };
             let mut subscriptions = vec![
                 events,
                 iced::time::every(Duration::from_millis(duration)).map(Message::Tick),
@@ -462,6 +497,8 @@ impl App {
                     target_version: self.saved_target.clone(),
                     auto_save_path: self.auto_save_path,
                     export_directory: self.saved_export_directory.clone(),
+                    custom_glint: self.custom_glint,
+                    glint_color: self.glint_color,
                 })
                 .is_ok()
             {
@@ -477,6 +514,26 @@ impl App {
         }
         self.logs.push(value);
     }
+    fn set_glint_color(&mut self, color: [u8; 3]) {
+        self.custom_glint = true;
+        self.glint_color = color;
+        self.glint_hex = fast_pack::compat::glint::color_hex(color);
+        for (motion, channel) in self.glint_color_motion.iter_mut().zip(color) {
+            motion.set(channel as f32 / 255.0, self.now, self.reduced);
+        }
+        self.glint_edited = Some(self.now);
+    }
+    fn commit_glint_color(&mut self) {
+        if self.glint_edited.take().is_some() {
+            self.save_preferences();
+        }
+    }
+    fn close_glint_picker(&mut self) {
+        self.glint_picker = false;
+        self.glint_picker_motion.set(0.0, self.now, self.reduced);
+        self.glint_hex = fast_pack::compat::glint::color_hex(self.glint_color);
+        self.commit_glint_color();
+    }
     fn fail(&mut self, value: String) {
         self.error = Some(value.clone());
         self.phase = Phase::Failed;
@@ -488,6 +545,7 @@ impl App {
         if self.busy() || self.phase == Phase::Identifying {
             return;
         }
+        self.close_glint_picker();
         if let Err(error) = self.parsed_export_directory() {
             self.error = Some(error.to_string());
             return;
@@ -529,6 +587,7 @@ impl App {
             lowercase: !self.preserve_case,
             convert_lang: !self.preserve_lang,
             extra_renames: self.extra.clone(),
+            glint_color: self.custom_glint.then_some(self.glint_color),
         };
         self.phase = Phase::Running;
         self.error = None;
@@ -557,6 +616,11 @@ impl App {
             Message::Frame(now) => self.now = now,
             Message::Tick(now) => {
                 self.now = now;
+                if self.glint_edited.is_some_and(|edited| {
+                    now.saturating_duration_since(edited) >= Duration::from_millis(350)
+                }) {
+                    self.commit_glint_color();
+                }
                 if self.directory_edited.is_some_and(|edited| {
                     now.saturating_duration_since(edited) >= Duration::from_millis(350)
                 }) {
@@ -726,6 +790,7 @@ impl App {
                         .set(0.0, self.now, self.reduced);
                 }
                 window::Event::CloseRequested => {
+                    self.commit_glint_color();
                     self.directory_edited = None;
                     self.remember_export_directory();
                     if self.busy() || self.preferences_pending > 0 {
@@ -820,6 +885,29 @@ impl App {
                     self.update_output();
                 }
                 self.save_preferences();
+            }
+            Message::CustomGlint(value) if !self.busy() => {
+                self.custom_glint = value;
+                self.glint_edited = None;
+                self.save_preferences();
+            }
+            Message::GlintPicker if !self.busy() => {
+                self.glint_picker = true;
+                self.glint_picker_motion.set(1.0, self.now, self.reduced);
+                self.glint_preview_started = self.now;
+            }
+            Message::CloseGlintPicker => self.close_glint_picker(),
+            Message::GlintPreset(color) if !self.busy() => self.set_glint_color(color),
+            Message::GlintChannel(index, value) if !self.busy() && index < 3 => {
+                let mut color = self.glint_color;
+                color[index] = value;
+                self.set_glint_color(color);
+            }
+            Message::GlintHex(value) if !self.busy() => {
+                if let Ok(color) = fast_pack::compat::glint::parse_color(&value) {
+                    self.set_glint_color(color);
+                }
+                self.glint_hex = value;
             }
             Message::Output(output) if !self.busy() => {
                 self.export_directory_input = output;
@@ -935,7 +1023,11 @@ impl App {
                 self.confirm_overwrite = false;
                 self.start();
             }
-            Message::CancelOverwrite => self.confirm_overwrite = false,
+            Message::CancelOverwrite => {
+                self.confirm_overwrite = false;
+                self.learn_more = false;
+                self.close_glint_picker();
+            }
             Message::NewPack => {
                 self.generation += 1;
                 self.sky_preview = None;
@@ -1011,6 +1103,10 @@ impl App {
                     self.theme_motion.snap();
                     self.auto_save_motion.snap();
                     self.auto_save_path_motion.snap();
+                    self.glint_picker_motion.snap();
+                    for motion in &mut self.glint_color_motion {
+                        motion.snap();
+                    }
                     for value in self.hover.values_mut() {
                         value.snap();
                     }
@@ -1475,6 +1571,180 @@ impl App {
         self.panel(content)
     }
 
+    fn glint_controls(&self) -> Element<'_, Message> {
+        let c = self.colors();
+        let color = Color::from_rgb8(
+            self.glint_color[0],
+            self.glint_color[1],
+            self.glint_color[2],
+        );
+        let swatch = container(space().width(16).height(16)).style(move |_| container::Style {
+            background: Some(color.into()),
+            border: Border {
+                radius: 5.0.into(),
+                width: 1.0,
+                color: c.line,
+            },
+            ..Default::default()
+        });
+        row![
+            checkbox(self.custom_glint)
+                .label("自定义附魔颜色")
+                .size(17)
+                .text_size(13)
+                .on_toggle_maybe((!self.busy()).then_some(Message::CustomGlint)),
+            swatch,
+            self.label(if self.custom_glint {
+                fast_pack::compat::glint::color_hex(self.glint_color)
+            } else {
+                "保留原包效果".into()
+            }),
+            space().width(Length::Fill),
+            self.action(
+                33,
+                "调色",
+                (!self.busy()).then_some(Message::GlintPicker),
+                false
+            )
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .into()
+    }
+
+    fn glint_dialog(&self) -> Element<'_, Message> {
+        let c = self.colors();
+        let presets = [
+            ("白色", [255, 255, 255]),
+            ("经典紫", [128, 64, 204]),
+            ("冰蓝", [91, 217, 255]),
+            ("薄荷绿", [105, 239, 172]),
+            ("金色", [255, 201, 92]),
+            ("粉色", [255, 134, 204]),
+            ("红色", [255, 86, 100]),
+        ];
+        let palette = row(presets.into_iter().map(|(name, color)| {
+            let selected = self.glint_color == color;
+            let swatch = container(space().width(26).height(26)).style(move |_| container::Style {
+                background: Some(Color::from_rgb8(color[0], color[1], color[2]).into()),
+                border: Border {
+                    radius: 8.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            let choice = button(swatch)
+                .padding(5)
+                .on_press(Message::GlintPreset(color))
+                .style(move |_, status| button::Style {
+                    background: Some(
+                        if selected {
+                            mix(c.field, c.accent, 0.12)
+                        } else {
+                            c.field
+                        }
+                        .into(),
+                    ),
+                    border: Border {
+                        radius: 12.0.into(),
+                        width: if selected || status == button::Status::Hovered {
+                            2.0
+                        } else {
+                            1.0
+                        },
+                        color: if selected || status == button::Status::Hovered {
+                            c.accent
+                        } else {
+                            c.line
+                        },
+                    },
+                    ..Default::default()
+                });
+            tooltip(choice, text(name).size(12), tooltip::Position::Top).into()
+        }))
+        .spacing(12);
+        let mut controls = column![
+            self.label("自定义色值"),
+            text_input("#FFFFFF", &self.glint_hex)
+                .on_input(Message::GlintHex)
+                .padding(10)
+                .size(15)
+                .style(|_, status| self.input_style(status))
+        ]
+        .spacing(12);
+        for (index, label) in ["红", "绿", "蓝"].into_iter().enumerate() {
+            controls = controls.push(
+                row![
+                    self.label(label).width(20),
+                    slider(0..=255, self.glint_color[index], move |value| {
+                        Message::GlintChannel(index, value)
+                    }),
+                    self.label(self.glint_color[index].to_string()).width(30)
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center),
+            );
+        }
+        let valid = fast_pack::compat::glint::parse_color(&self.glint_hex).is_ok();
+        controls = controls.push(
+            text(if valid {
+                "颜色与开关自动保存"
+            } else {
+                "输入 3 位或 6 位 HEX 色值"
+            })
+            .size(12)
+            .color(if valid { c.muted } else { c.danger }),
+        );
+        let color = Color {
+            r: self.glint_color_motion[0].value(self.now),
+            g: self.glint_color_motion[1].value(self.now),
+            b: self.glint_color_motion[2].value(self.now),
+            a: 1.0,
+        };
+        let preview = column![
+            widget::canvas(GlintPreview {
+                color,
+                colors: c,
+                elapsed: if self.reduced {
+                    0.0
+                } else {
+                    self.now
+                        .saturating_duration_since(self.glint_preview_started)
+                        .as_secs_f32()
+                },
+            })
+            .width(156)
+            .height(152),
+            self.label("颜色示意")
+        ]
+        .spacing(8)
+        .align_x(Alignment::Center);
+        container(
+            self.panel(
+                column![
+                    row![
+                        self.title("附魔闪烁颜色", 22),
+                        space().width(Length::Fill),
+                        self.action(34, "完成", Some(Message::CloseGlintPicker), true)
+                    ]
+                    .align_y(Alignment::Center),
+                    self.label("选择喜欢的颜色，保留原包光效图案与游戏流动动画。"),
+                    palette,
+                    row![preview, controls.width(Length::Fill)]
+                        .spacing(26)
+                        .align_y(Alignment::Center),
+                    checkbox(self.custom_glint)
+                        .label("转换时应用自定义颜色")
+                        .text_size(13)
+                        .on_toggle(Message::CustomGlint)
+                ]
+                .spacing(18),
+            ),
+        )
+        .width(self.width.min(640.0) - 56.0)
+        .into()
+    }
+
     fn advanced_view(&self) -> Element<'_, Message> {
         let amount = self.advanced_motion.value(self.now);
         if amount < 0.001 {
@@ -1512,6 +1782,7 @@ impl App {
             self.label("材质包描述"),
             input,
             options,
+            self.glint_controls(),
             row![
                 self.action(
                     8,
@@ -1526,7 +1797,7 @@ impl App {
         ]
         .spacing(14);
         container(self.panel(content))
-            .height((if self.width < 940.0 { 350.0 } else { 272.0 }) * amount)
+            .height((if self.width < 940.0 { 412.0 } else { 334.0 }) * amount)
             .clip(true)
             .into()
     }
@@ -1799,7 +2070,21 @@ impl App {
             ..Default::default()
         })
         .into();
-        if self.learn_more {
+        if self.glint_picker || self.glint_picker_motion.value(self.now) > 0.001 {
+            let amount = self.glint_picker_motion.value(self.now);
+            let overlay = container(self.glint_dialog())
+                .padding(Padding {
+                    top: (1.0 - amount) * 24.0,
+                    ..Padding::ZERO
+                })
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+                .style(move |_| container::Style {
+                    background: Some(Color::from_rgba(0.0, 0.0, 0.0, 0.55 * amount).into()),
+                    ..Default::default()
+                });
+            widget::stack![base, widget::opaque(overlay)].into()
+        } else if self.learn_more {
             let c = self.colors();
             let names = ["ColdEternity Team", "Long_Cold", "Wind_"];
             let developers = row(names.into_iter().enumerate().map(|(index, name)| {
@@ -1868,6 +2153,62 @@ impl App {
         } else {
             base
         }
+    }
+}
+
+struct GlintPreview {
+    color: Color,
+    colors: Colors,
+    elapsed: f32,
+}
+
+impl widget::canvas::Program<Message> for GlintPreview {
+    type State = ();
+
+    fn draw(
+        &self,
+        _: &(),
+        renderer: &iced::Renderer,
+        _: &Theme,
+        bounds: iced::Rectangle,
+        _: iced::mouse::Cursor,
+    ) -> Vec<widget::canvas::Geometry> {
+        use widget::canvas::{Frame, Path};
+        let mut frame = Frame::new(renderer, bounds.size());
+        frame.fill(
+            &Path::rounded_rectangle(iced::Point::ORIGIN, bounds.size(), 12.0.into()),
+            self.colors.field,
+        );
+        let unit = bounds.width.min(bounds.height) / 24.0;
+        for y in 0_i32..20 {
+            for x in 0_i32..20 {
+                let diagonal = x + y;
+                let blade =
+                    (8..=18).contains(&x) && (1..=11).contains(&y) && (18..=20).contains(&diagonal);
+                let guard =
+                    (5..=11).contains(&x) && (9..=15).contains(&y) && (-5..=-3).contains(&(x - y));
+                let handle =
+                    (3..=7).contains(&x) && (13..=17).contains(&y) && (19..=20).contains(&diagonal);
+                let pommel = (2..=4).contains(&x) && (16..=18).contains(&y);
+                if !(blade || guard || handle || pommel) {
+                    continue;
+                }
+                let phase = x as f32 * 0.48 + y as f32 * 0.24 - self.elapsed * 2.8;
+                let shine = ((phase.sin() + 1.0) * 0.5).powi(3);
+                let base = if handle || pommel {
+                    rgb(0x667785)
+                } else {
+                    rgb(0xa4b9c7)
+                };
+                let color = mix(base, self.color, 0.35 + shine * 0.65);
+                frame.fill_rectangle(
+                    iced::Point::new((x + 2) as f32 * unit, (y + 2) as f32 * unit),
+                    Size::new(unit + 0.2, unit + 0.2),
+                    color,
+                );
+            }
+        }
+        vec![frame.into_geometry()]
     }
 }
 
