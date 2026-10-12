@@ -131,6 +131,7 @@ struct App {
     sky_layers: usize,
     source_version: String,
     target: String,
+    target_selected: bool,
     output: String,
     description: String,
     as_zip: bool,
@@ -179,6 +180,12 @@ impl App {
         let dark = std::env::var("FAST_PACK_CAPTURE_THEME").as_deref() != Ok("light");
         let capture_stage =
             std::env::var("FAST_PACK_CAPTURE_STAGE").unwrap_or_else(|_| "empty".into());
+        let saved_target = if !cfg!(test) && !smoke && capture.is_none() {
+            crate::preferences::load_target()
+        } else {
+            None
+        };
+        let target_selected = saved_target.is_some();
         let mut app = Self {
             phase: Phase::Empty,
             source: None,
@@ -186,7 +193,8 @@ impl App {
             sky_preview: None,
             sky_layers: 0,
             source_version: "自动检测".into(),
-            target: "26.2".into(),
+            target: saved_target.unwrap_or_else(|| fast_pack::LATEST_VERSION.into()),
+            target_selected,
             output: String::new(),
             description: String::new(),
             as_zip: true,
@@ -346,6 +354,16 @@ impl App {
                 .to_string();
         }
     }
+    fn remember_target(&mut self) {
+        self.target_selected = true;
+        if !cfg!(test)
+            && !self.smoke
+            && self.capture.is_none()
+            && let Err(error) = crate::preferences::save_target(&self.target)
+        {
+            self.log(format!("目标版本未能保存：{error:#}"));
+        }
+    }
     fn log(&mut self, value: String) {
         if self.logs.len() >= 500 {
             self.logs.drain(..100);
@@ -432,7 +450,9 @@ impl App {
                     match event {
                         WorkEvent::Probed(id, info) if id == self.generation => {
                             if info.ok {
-                                self.target = info.suggested_target.clone();
+                                if !self.target_selected {
+                                    self.target = info.suggested_target.clone();
+                                }
                                 self.source_version = info
                                     .version_label
                                     .as_ref()
@@ -612,7 +632,15 @@ impl App {
             }
             Message::InputPicked(Some(path)) => self.load(path),
             Message::Target(target) if !self.busy() => {
+                if !tables()
+                    .pack_formats
+                    .iter()
+                    .any(|(label, _)| label == &target)
+                {
+                    return Task::none();
+                }
                 self.target = target;
+                self.remember_target();
                 self.update_output();
                 self.report = None;
                 self.error = None;
@@ -650,6 +678,7 @@ impl App {
                 }) {
                     self.source_version = self.target.clone();
                     self.target = source;
+                    self.remember_target();
                     self.update_output();
                 } else {
                     self.error = Some("请先指定具体源版本".into());

@@ -4,6 +4,8 @@
 mod gui;
 #[cfg(windows)]
 mod motion;
+#[cfg(windows)]
+mod preferences;
 
 fn main() {
     #[cfg(windows)]
