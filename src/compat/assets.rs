@@ -1,0 +1,1346 @@
+use anyhow::{Result, ensure};
+use image::{Rgba, RgbaImage, imageops};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::Path;
+use walkdir::WalkDir;
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct AssetReport {
+    pub converted: Vec<String>,
+    pub generated: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct Sprite {
+    source: String,
+    target: String,
+    source_width: u32,
+    source_height: u32,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
+fn backup(root: &Path, path: &Path) -> Result<()> {
+    let relative = path.strip_prefix(root)?;
+    let destination = root.join("fastpack/original-assets").join(relative);
+    if !destination.exists() {
+        fs::create_dir_all(destination.parent().unwrap())?;
+        fs::copy(path, destination)?;
+    }
+    Ok(())
+}
+
+fn save(root: &Path, path: &Path, image: &RgbaImage) -> Result<()> {
+    if path.exists() {
+        backup(root, path)?;
+    }
+    fs::create_dir_all(path.parent().unwrap())?;
+    image.save(path)?;
+    Ok(())
+}
+
+fn open(path: &Path) -> Result<RgbaImage> {
+    Ok(image::open(path)?.to_rgba8())
+}
+
+pub fn chest(source: &RgbaImage, kind: &str, reverse: bool) -> Result<RgbaImage> {
+    let regions: BTreeMap<String, Vec<[u32; 9]>> =
+        serde_json::from_str(include_str!("../../assets/chest-regions.json"))?;
+    let recipes = regions
+        .get(kind)
+        .ok_or_else(|| anyhow::anyhow!("未知箱子类型"))?;
+    let scale = source.height() / 64;
+    ensure!(
+        scale > 0 && source.height().is_multiple_of(64),
+        "箱子纹理高度必须是 64 的倍数"
+    );
+    let width = if reverse && kind != "single" { 128 } else { 64 };
+    let mut out = RgbaImage::new(width * scale, 64 * scale);
+    if kind == "single" {
+        ensure!(source.width() == 64 * scale, "单箱子纹理比例不匹配");
+    } else {
+        ensure!(
+            source.width() == if reverse { 64 * scale } else { 128 * scale },
+            "双箱子纹理比例不匹配"
+        );
+    }
+    for recipe in recipes {
+        let [sx, sy, dx, dy, w, h, _, flipx, flipy] = *recipe;
+        for y in 0..h * scale {
+            for x in 0..w * scale {
+                let source_x = sx * scale + if flipx == 1 { w * scale - 1 - x } else { x };
+                let source_y = sy * scale + if flipy == 1 { h * scale - 1 - y } else { y };
+                if reverse {
+                    out.put_pixel(
+                        source_x,
+                        source_y,
+                        *source.get_pixel(dx * scale + x, dy * scale + y),
+                    );
+                } else {
+                    out.put_pixel(
+                        dx * scale + x,
+                        dy * scale + y,
+                        *source.get_pixel(source_x, source_y),
+                    );
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn chests(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Result<()> {
+    let upgrade = source < 5 && target >= 5;
+    let downgrade = target < 5 && source >= 5;
+    if !upgrade && !downgrade {
+        return Ok(());
+    }
+    let dir = root.join("assets/minecraft/textures/entity/chest");
+    if !dir.exists() {
+        return Ok(());
+    }
+    for name in ["normal", "trapped", "christmas", "ender"] {
+        let single = dir.join(format!("{name}.png"));
+        if single.exists() {
+            let original = open(&single)?;
+            let converted = chest(&original, "single", downgrade)?;
+            save(root, &single, &converted)?;
+            report.converted.push(format!(
+                "箱子 {name}：1.15 UV 布局{}",
+                if downgrade { "还原" } else { "重建" }
+            ));
+        }
+        let double = dir.join(format!("{name}_double.png"));
+        if upgrade && double.exists() {
+            let original = open(&double)?;
+            for kind in ["left", "right"] {
+                let output = dir.join(format!("{name}_{kind}.png"));
+                if output.exists() {
+                    continue;
+                }
+                save(root, &output, &chest(&original, kind, false)?)?;
+            }
+            backup(root, &double)?;
+            fs::remove_file(&double)?;
+            report
+                .converted
+                .push(format!("双箱子 {name}：拆为左右纹理并重建 UV"));
+        }
+        if downgrade && !double.exists() {
+            let left = dir.join(format!("{name}_left.png"));
+            let right = dir.join(format!("{name}_right.png"));
+            if left.exists() && right.exists() {
+                let a = chest(&open(&left)?, "left", true)?;
+                let b = chest(&open(&right)?, "right", true)?;
+                ensure!(
+                    a.dimensions() == b.dimensions(),
+                    "双箱子的左右纹理分辨率不同"
+                );
+                let mut joined = a;
+                for (x, y, pixel) in b.enumerate_pixels() {
+                    if pixel[3] > 0 {
+                        joined.put_pixel(x, y, *pixel);
+                    }
+                }
+                save(root, &double, &joined)?;
+                report
+                    .converted
+                    .push(format!("双箱子 {name}：自动合并旧版 UV"));
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn alpha_pattern(
+    pattern: &RgbaImage,
+    base: Option<&RgbaImage>,
+    shield: bool,
+    reverse: bool,
+) -> Result<RgbaImage> {
+    let scale = pattern.width() / 64;
+    ensure!(
+        scale > 0 && pattern.width().is_multiple_of(64),
+        "旗帜/盾牌纹理宽度必须是 64 的倍数"
+    );
+    if let Some(base) = base {
+        ensure!(
+            base.dimensions() == pattern.dimensions(),
+            "底图与图案分辨率不同"
+        );
+    }
+    let mut out = RgbaImage::new(pattern.width(), pattern.height());
+    let region = if shield {
+        (2, 2, 12, 22)
+    } else {
+        (0, 0, 42, 41)
+    };
+    for y in region.1 * scale..(region.3 * scale).min(pattern.height()) {
+        for x in region.0 * scale..(region.2 * scale).min(pattern.width()) {
+            let pixel = pattern.get_pixel(x, y);
+            if reverse {
+                out.put_pixel(x, y, Rgba([pixel[3], pixel[3], pixel[3], 255]));
+            } else {
+                let rgb = base
+                    .map(|base| base.get_pixel(x, y).0)
+                    .unwrap_or([255, 255, 255, 255]);
+                out.put_pixel(
+                    x,
+                    y,
+                    Rgba([
+                        rgb[0],
+                        rgb[1],
+                        rgb[2],
+                        ((u16::from(pixel[0]) * u16::from(pixel[3])) / 255) as u8,
+                    ]),
+                );
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn patterns(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Result<()> {
+    if !(source < 5 && target >= 5 || target < 5 && source >= 5) {
+        return Ok(());
+    }
+    let reverse = target < 5;
+    for family in ["banner", "shield"] {
+        let dir = root.join(format!("assets/minecraft/textures/entity/{family}"));
+        if !dir.exists() {
+            continue;
+        }
+        let base_path = root.join(format!(
+            "assets/minecraft/textures/entity/{family}_base.png"
+        ));
+        let base = base_path.exists().then(|| open(&base_path)).transpose()?;
+        let files: Vec<_> = fs::read_dir(&dir)?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "png"))
+            .collect();
+        for path in files {
+            let image = open(&path)?;
+            let converted = alpha_pattern(&image, base.as_ref(), family == "shield", reverse)?;
+            save(root, &path, &converted)?;
+            report.converted.push(format!(
+                "{family}/{}：透明掩码{}",
+                path.file_name().unwrap().to_string_lossy(),
+                if reverse { "还原" } else { "转为 alpha" }
+            ));
+        }
+    }
+    for name in ["dragon", "dragon_exploding"] {
+        let path = root.join(format!(
+            "assets/minecraft/textures/entity/enderdragon/{name}.png"
+        ));
+        if !path.exists() || reverse {
+            continue;
+        }
+        let mut image = open(&path)?;
+        let scale = image.width() / 256;
+        if scale == 0 {
+            report
+                .warnings
+                .push(format!("{name} 分辨率不能表达原生末影龙 UV"));
+            continue;
+        }
+        backup(root, &path)?;
+        for y in 88 * scale..(200 * scale).min(image.height()) {
+            for x in 56 * scale..(112 * scale).min(image.width()) {
+                image.put_pixel(x, y, Rgba([0, 0, 0, 0]));
+            }
+        }
+        image.save(path)?;
+        report
+            .converted
+            .push(format!("{name}：清理 1.15 移除的龙翼底面 UV"));
+    }
+    Ok(())
+}
+
+fn box_regions(u: u32, v: u32, x: u32, y: u32, z: u32) -> [(u32, u32, u32, u32); 6] {
+    [
+        (u + z, v, x, z),
+        (u + z + x, v, x, z),
+        (u, v + z, z, y),
+        (u + z, v + z, x, y),
+        (u + z + x, v + z, z, y),
+        (u + z + x + z, v + z, x, y),
+    ]
+}
+
+fn reproject_box(
+    source: &RgbaImage,
+    out: &mut RgbaImage,
+    old: (u32, u32, u32, u32, u32),
+    new: (u32, u32, u32, u32, u32),
+    scale: u32,
+) {
+    let old = box_regions(old.0, old.1, old.2, old.3, old.4);
+    let new = box_regions(new.0, new.1, new.2, new.3, new.4);
+    for (a, b) in old.into_iter().zip(new) {
+        let patch = imageops::crop_imm(source, a.0 * scale, a.1 * scale, a.2 * scale, a.3 * scale)
+            .to_image();
+        let patch = imageops::resize(
+            &patch,
+            b.2 * scale,
+            b.3 * scale,
+            imageops::FilterType::Nearest,
+        );
+        imageops::replace(out, &patch, i64::from(b.0 * scale), i64::from(b.1 * scale));
+    }
+}
+
+pub fn boat(source: &RgbaImage) -> Result<RgbaImage> {
+    ensure!(
+        source.width().is_multiple_of(64) && source.height() * 2 == source.width(),
+        "1.8 船纹理需要 64×32 或等比例高清布局"
+    );
+    let scale = source.width() / 64;
+    ensure!(scale > 0, "船纹理为空");
+    let mut out = RgbaImage::new(128 * scale, 64 * scale);
+    reproject_box(
+        source,
+        &mut out,
+        (0, 8, 24, 16, 4),
+        (0, 0, 28, 16, 3),
+        scale,
+    );
+    for new in [
+        (0, 19, 18, 6, 2),
+        (0, 27, 16, 6, 2),
+        (0, 35, 28, 6, 2),
+        (0, 43, 28, 6, 2),
+    ] {
+        reproject_box(source, &mut out, (0, 0, 20, 6, 2), new, scale);
+    }
+    for y in [0, 20] {
+        reproject_box(source, &mut out, (0, 0, 20, 6, 2), (62, y, 2, 2, 18), scale);
+        reproject_box(source, &mut out, (0, 0, 20, 6, 2), (62, y, 1, 6, 7), scale);
+    }
+    Ok(out)
+}
+
+fn entities(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Result<()> {
+    if target >= 2 {
+        let old = root.join("assets/minecraft/textures/entity/boat.png");
+        if old.exists() {
+            let converted = boat(&open(&old)?)?;
+            let woods = ["oak", "spruce", "birch", "jungle", "acacia", "dark_oak"];
+            for wood in woods {
+                for name in [format!("boat/{wood}.png"), format!("boat/boat_{wood}.png")] {
+                    let output = root.join("assets/minecraft/textures/entity").join(name);
+                    if !output.exists() {
+                        save(root, &output, &converted)?;
+                    }
+                }
+            }
+            backup(root, &old)?;
+            fs::remove_file(old)?;
+            report
+                .converted
+                .push("船：按新船模型 UV 重建船体，新增桨纹理从原木材图案生成".into());
+        }
+    }
+    if target < 2 && source >= 2 {
+        let old = root.join("assets/minecraft/textures/entity/boat.png");
+        if !old.exists() {
+            let original =
+                root.join("fastpack/original-assets/assets/minecraft/textures/entity/boat.png");
+            if original.exists() {
+                fs::copy(original, &old)?;
+                report
+                    .converted
+                    .push("船：自动恢复备份中的旧版船纹理".into());
+            } else if let Some(path) = ["boat/oak.png", "boat/boat_oak.png"]
+                .iter()
+                .map(|name| root.join("assets/minecraft/textures/entity").join(name))
+                .find(|path| path.exists())
+            {
+                let image = open(&path)?;
+                let scale = image.width() / 128;
+                ensure!(
+                    scale > 0 && image.height() == 64 * scale,
+                    "现代船 UV 比例无效"
+                );
+                let mut out = RgbaImage::new(64 * scale, 32 * scale);
+                reproject_box(
+                    &image,
+                    &mut out,
+                    (0, 0, 28, 16, 3),
+                    (0, 8, 24, 16, 4),
+                    scale,
+                );
+                reproject_box(&image, &mut out, (0, 35, 28, 6, 2), (0, 0, 20, 6, 2), scale);
+                save(root, &old, &out)?;
+                report
+                    .converted
+                    .push("船：自动反向重建旧船 UV，使用橡木船作为旧版统一材质".into());
+            }
+        }
+    }
+    if target >= 4 {
+        for wood in ["oak", "spruce", "birch", "jungle", "acacia", "dark_oak"] {
+            let old = root.join(format!(
+                "assets/minecraft/textures/entity/boat/boat_{wood}.png"
+            ));
+            let new = root.join(format!("assets/minecraft/textures/entity/boat/{wood}.png"));
+            if old.exists() && !new.exists() {
+                fs::copy(&old, &new)?;
+                report
+                    .converted
+                    .push(format!("船目录：boat_{wood}.png → {wood}.png"));
+            }
+        }
+    }
+    if target >= 4 {
+        for (old, new) in [
+            ("iron_golem.png", "iron_golem/iron_golem.png"),
+            (
+                "endercrystal/endercrystal.png",
+                "end_crystal/end_crystal.png",
+            ),
+        ] {
+            let old = root.join("assets/minecraft/textures/entity").join(old);
+            let new = root.join("assets/minecraft/textures/entity").join(new);
+            if old.exists() && !new.exists() {
+                backup(root, &old)?;
+                fs::create_dir_all(new.parent().unwrap())?;
+                fs::copy(&old, &new)?;
+                report.converted.push(format!(
+                    "实体目录 {} → {}",
+                    old.file_name().unwrap().to_string_lossy(),
+                    new.display()
+                ));
+            }
+        }
+    }
+    if target >= 84 && source < 84 {
+        for (old, new) in [
+            ("entity/minecart.png", "entity/minecart/minecart.png"),
+            ("entity/banner_base.png", "entity/banner/banner_base.png"),
+            ("environment/sun.png", "environment/celestial/sun.png"),
+        ] {
+            let old = root.join("assets/minecraft/textures").join(old);
+            let new = root.join("assets/minecraft/textures").join(new);
+            if old.exists() && !new.exists() {
+                backup(root, &old)?;
+                fs::create_dir_all(new.parent().unwrap())?;
+                fs::copy(&old, &new)?;
+                report.converted.push(format!(
+                    "26.x 资源路径 {}",
+                    new.strip_prefix(root)?.display()
+                ));
+            }
+        }
+        let moon = root.join("assets/minecraft/textures/environment/moon_phases.png");
+        if moon.exists() {
+            let image = open(&moon)?;
+            ensure!(
+                image.width() % 4 == 0 && image.height() % 2 == 0,
+                "月相图比例无效"
+            );
+            let w = image.width() / 4;
+            let h = image.height() / 2;
+            for (index, name) in [
+                "full_moon",
+                "waning_gibbous",
+                "third_quarter",
+                "waning_crescent",
+                "new_moon",
+                "waxing_crescent",
+                "first_quarter",
+                "waxing_gibbous",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let part = imageops::crop_imm(
+                    &image,
+                    (index as u32 % 4) * w,
+                    (index as u32 / 4) * h,
+                    w,
+                    h,
+                )
+                .to_image();
+                let output = root.join(format!(
+                    "assets/minecraft/textures/environment/celestial/moon/{name}.png"
+                ));
+                if !output.exists() {
+                    save(root, &output, &part)?;
+                }
+            }
+            report
+                .converted
+                .push("月相图：自动拆为 26.x 八张月相资源".into());
+        }
+    }
+    if target < 84 && source >= 84 {
+        for (old, new) in [
+            ("entity/minecart.png", "entity/minecart/minecart.png"),
+            ("entity/banner_base.png", "entity/banner/banner_base.png"),
+            ("environment/sun.png", "environment/celestial/sun.png"),
+        ] {
+            let old = root.join("assets/minecraft/textures").join(old);
+            let new = root.join("assets/minecraft/textures").join(new);
+            if new.exists() && !old.exists() {
+                fs::copy(&new, &old)?;
+                report.converted.push(format!(
+                    "实体/天体路径还原 {}",
+                    old.strip_prefix(root)?.display()
+                ));
+            }
+        }
+        let old = root.join("assets/minecraft/textures/environment/moon_phases.png");
+        if !old.exists() {
+            let names = [
+                "full_moon",
+                "waning_gibbous",
+                "third_quarter",
+                "waning_crescent",
+                "new_moon",
+                "waxing_crescent",
+                "first_quarter",
+                "waxing_gibbous",
+            ];
+            let paths: Vec<_> = names
+                .iter()
+                .map(|name| {
+                    root.join(format!(
+                        "assets/minecraft/textures/environment/celestial/moon/{name}.png"
+                    ))
+                })
+                .collect();
+            if paths.iter().all(|path| path.exists()) {
+                let tiles = paths
+                    .iter()
+                    .map(|path| open(path))
+                    .collect::<Result<Vec<_>>>()?;
+                let (w, h) = tiles[0].dimensions();
+                ensure!(
+                    tiles.iter().all(|tile| tile.dimensions() == (w, h)),
+                    "月相图分辨率不一致"
+                );
+                let mut atlas = RgbaImage::new(w * 4, h * 2);
+                for (index, tile) in tiles.iter().enumerate() {
+                    imageops::replace(
+                        &mut atlas,
+                        tile,
+                        i64::from(index as u32 % 4 * w),
+                        i64::from(index as u32 / 4 * h),
+                    );
+                }
+                save(root, &old, &atlas)?;
+                report
+                    .converted
+                    .push("月相：自动合并新版八张月相回旧版图集".into());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn nine_slice(source: &RgbaImage, width: u32, height: u32, border: u32) -> RgbaImage {
+    let mut out = RgbaImage::new(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            let sx = if x < border {
+                x
+            } else if x >= width - border {
+                source.width() - (width - x)
+            } else {
+                border + (x - border) * (source.width() - 2 * border) / (width - 2 * border)
+            };
+            let sy = if y < border {
+                y
+            } else if y >= height - border {
+                source.height() - (height - y)
+            } else {
+                border + (y - border) * (source.height() - 2 * border) / (height - 2 * border)
+            };
+            out.put_pixel(x, y, *source.get_pixel(sx, sy));
+        }
+    }
+    out
+}
+
+fn gui(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Result<()> {
+    let textures = root.join("assets/minecraft/textures");
+    if source < 8 && target >= 8 {
+        let path = textures.join("gui/container/inventory.png");
+        if path.exists() {
+            let mut image = open(&path)?;
+            let scale = image.width() / 256;
+            ensure!(
+                scale > 0 && image.height() >= 230 * scale,
+                "背包 GUI 布局不符合 256 基准"
+            );
+            let old =
+                imageops::crop_imm(&image, 0, 166 * scale, 120 * scale, 32 * scale).to_image();
+            let narrow = nine_slice(&old, 32 * scale, 32 * scale, 2 * scale);
+            imageops::replace(&mut image, &narrow, 0, 198 * i64::from(scale));
+            save(root, &path, &image)?;
+            report
+                .converted
+                .push("背包：用原效果列表边框自动生成 1.18 窄效果列表".into());
+        }
+    }
+    if source < 7 && target >= 7 {
+        for name in [
+            "gui/container/gamemode_switcher.png",
+            "gui/gamemode_switcher.png",
+        ] {
+            let path = textures.join(name);
+            if !path.exists() {
+                continue;
+            }
+            let old = open(&path)?;
+            let scale = old.width() / 128;
+            if scale == 0 || old.height() < 101 * scale {
+                continue;
+            }
+            let mut out = old.clone();
+            for index in 0..2 {
+                let tile = imageops::crop_imm(
+                    &old,
+                    index * 25 * scale,
+                    75 * scale,
+                    25 * scale,
+                    25 * scale,
+                )
+                .to_image();
+                let resized =
+                    imageops::resize(&tile, 26 * scale, 26 * scale, imageops::FilterType::Nearest);
+                imageops::replace(
+                    &mut out,
+                    &resized,
+                    i64::from(index * 26 * scale),
+                    75 * i64::from(scale),
+                );
+            }
+            save(root, &path, &out)?;
+            report
+                .converted
+                .push("游戏模式槽位：25px 自动适配为 26px".into());
+        }
+    }
+    if source < 18 && target >= 18 {
+        let recipes: Vec<Sprite> =
+            serde_json::from_str(include_str!("../../assets/gui-sprites.json"))?;
+        let mut cache = BTreeMap::new();
+        let mut count = 0;
+        for recipe in &recipes {
+            let source = textures.join(&recipe.source);
+            let output = textures.join(&recipe.target);
+            if !source.exists() || output.exists() {
+                continue;
+            }
+            if !cache.contains_key(&recipe.source) {
+                cache.insert(recipe.source.clone(), open(&source)?);
+            }
+            let image = &cache[&recipe.source];
+            ensure!(
+                image.width() % recipe.source_width == 0
+                    && image.height() % recipe.source_height == 0,
+                "GUI 图集比例无效: {}",
+                recipe.source
+            );
+            let sx = image.width() / recipe.source_width;
+            let sy = image.height() / recipe.source_height;
+            if sx == 0 || sy == 0 {
+                continue;
+            }
+            let cropped = imageops::crop_imm(
+                image,
+                recipe.x * sx,
+                recipe.y * sy,
+                recipe.width * sx,
+                recipe.height * sy,
+            )
+            .to_image();
+            save(root, &output, &cropped)?;
+            count += 1;
+        }
+        if count > 0 {
+            report.converted.push(format!(
+                "GUI 图集：自动拆分 {count} 个独立精灵，保留高清比例"
+            ));
+        }
+    }
+    if target < 18 && source >= 18 {
+        let recipes: Vec<Sprite> =
+            serde_json::from_str(include_str!("../../assets/gui-sprites.json"))?;
+        let mut rebuilt = BTreeMap::<String, RgbaImage>::new();
+        let mut count = 0;
+        for recipe in recipes {
+            let source = textures.join(&recipe.target);
+            if !source.exists() {
+                continue;
+            }
+            let tile = open(&source)?;
+            let scale = tile.width() / recipe.width;
+            ensure!(
+                scale > 0
+                    && tile.width() % recipe.width == 0
+                    && tile.height() == recipe.height * scale,
+                "独立 GUI 精灵比例无效"
+            );
+            if !rebuilt.contains_key(&recipe.source) {
+                let existing = textures.join(&recipe.source);
+                let canvas = if existing.exists() {
+                    open(&existing)?
+                } else {
+                    RgbaImage::new(recipe.source_width * scale, recipe.source_height * scale)
+                };
+                rebuilt.insert(recipe.source.clone(), canvas);
+            }
+            let image = rebuilt.get_mut(&recipe.source).unwrap();
+            ensure!(
+                image.width() == recipe.source_width * scale,
+                "GUI 精灵缩放比例不一致"
+            );
+            imageops::replace(
+                image,
+                &tile,
+                i64::from(recipe.x * scale),
+                i64::from(recipe.y * scale),
+            );
+            count += 1;
+        }
+        for (name, image) in rebuilt {
+            save(root, &textures.join(name), &image)?;
+        }
+        if count > 0 {
+            report
+                .converted
+                .push(format!("GUI 图集：自动合并 {count} 个精灵回旧版布局"));
+        }
+    }
+    Ok(())
+}
+
+fn glint(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Result<()> {
+    let textures = root.join("assets/minecraft/textures/misc");
+    if source < 13 && target >= 13 {
+        let old = textures.join("enchanted_item_glint.png");
+        if old.exists() {
+            for name in [
+                "enchanted_glint_entity",
+                "enchanted_glint_item",
+                "enchanted_glint_armor",
+            ] {
+                let target = textures.join(format!("{name}.png"));
+                if !target.exists() {
+                    fs::copy(&old, &target)?;
+                }
+                let metadata = old.with_extension("png.mcmeta");
+                if metadata.exists() {
+                    fs::copy(metadata, target.with_extension("png.mcmeta"))?;
+                }
+            }
+            report
+                .converted
+                .push("附魔光效：自动生成物品、实体与盔甲三种版本资源".into());
+        }
+    }
+    if target < 13 && source >= 13 {
+        let old = textures.join("enchanted_item_glint.png");
+        if !old.exists()
+            && let Some(path) = [
+                "enchanted_glint_item",
+                "enchanted_glint_entity",
+                "enchanted_glint_armor",
+            ]
+            .into_iter()
+            .map(|name| textures.join(format!("{name}.png")))
+            .find(|path| path.exists())
+        {
+            fs::copy(&path, &old)?;
+            let metadata = path.with_extension("png.mcmeta");
+            if metadata.exists() {
+                fs::copy(metadata, old.with_extension("png.mcmeta"))?;
+            }
+            report
+                .converted
+                .push("附魔光效：自动还原旧版统一纹理".into());
+        }
+    }
+    if target >= 13 {
+        let item = textures.join("enchanted_glint_item.png");
+        let entity = textures.join("enchanted_glint_entity.png");
+        let armor = textures.join("enchanted_glint_armor.png");
+        for destination in [&item, &entity, &armor] {
+            if destination.exists() {
+                continue;
+            }
+            if let Some(source) = [&entity, &armor, &item]
+                .into_iter()
+                .find(|path| path.exists())
+            {
+                fs::copy(source, destination)?;
+                let metadata = source.with_extension("png.mcmeta");
+                if metadata.exists() {
+                    fs::copy(metadata, destination.with_extension("png.mcmeta"))?;
+                }
+                report.converted.push(format!(
+                    "附魔光效：自动补齐 {}",
+                    destination.file_name().unwrap().to_string_lossy()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn rewrite_model(value: &mut Value, source: u32, target: u32) -> bool {
+    let old = value.clone();
+    if let Some(parent) = value
+        .get_mut("parent")
+        .filter(|parent| parent.as_str().is_some())
+    {
+        let text = parent.as_str().unwrap();
+        if source < 2
+            && target >= 2
+            && matches!(text, "builtin/generated" | "minecraft:builtin/generated")
+        {
+            *parent = json!("minecraft:item/generated");
+        } else if target < 2
+            && source >= 2
+            && matches!(
+                text,
+                "item/generated"
+                    | "minecraft:item/generated"
+                    | "item/handheld"
+                    | "minecraft:item/handheld"
+            )
+        {
+            *parent = json!("builtin/generated");
+        }
+    }
+    if let Some(display) = value.get_mut("display").and_then(Value::as_object_mut) {
+        if source < 2 && target >= 2 {
+            for old in ["firstperson", "thirdperson"] {
+                if let Some(transform) = display.remove(old) {
+                    display
+                        .entry(format!("{old}_righthand"))
+                        .or_insert_with(|| transform.clone());
+                    display
+                        .entry(format!("{old}_lefthand"))
+                        .or_insert(transform);
+                }
+            }
+        }
+        if target < 2 && source >= 2 {
+            for old in ["firstperson", "thirdperson"] {
+                if let Some(transform) = display.get(&format!("{old}_righthand")).cloned() {
+                    display.entry(old).or_insert(transform);
+                }
+                display.remove(&format!("{old}_righthand"));
+                display.remove(&format!("{old}_lefthand"));
+            }
+        }
+    }
+    if let Some(variants) = value.get_mut("variants").and_then(Value::as_object_mut)
+        && source < 4
+        && target >= 4
+        && let Some(normal) = variants.remove("normal")
+    {
+        variants.entry("").or_insert(normal);
+    }
+    if target < 4
+        && source >= 4
+        && let Some(variants) = value.get_mut("variants").and_then(Value::as_object_mut)
+        && let Some(normal) = variants.remove("")
+    {
+        variants.entry("normal").or_insert(normal);
+    }
+    *value != old
+}
+
+fn model_name(name: &str) -> String {
+    for (prefix, suffix) in [
+        ("wool_", "wool"),
+        ("carpet_", "carpet"),
+        ("glass_", "stained_glass"),
+        ("hardened_clay_", "terracotta"),
+    ] {
+        if let Some(color) = name.strip_prefix(prefix)
+            && crate::tables()
+                .colors
+                .iter()
+                .any(|value| value == color || color == "silver" && value == "light_gray")
+        {
+            return format!(
+                "{}_{suffix}",
+                if color == "silver" {
+                    "light_gray"
+                } else {
+                    color
+                }
+            );
+        }
+    }
+    match name {
+        "stonebrick" => "stone_bricks",
+        "stonebrick_mossy" => "mossy_stone_bricks",
+        "stonebrick_cracked" => "cracked_stone_bricks",
+        "stonebrick_chiseled" => "chiseled_stone_bricks",
+        "hardened_clay" => "terracotta",
+        "grass" => "grass_block",
+        "end_stone" => "end_stone",
+        _ => name,
+    }
+    .into()
+}
+
+fn old_model_name(name: &str) -> String {
+    for (prefix, suffix) in [
+        ("wool_", "_wool"),
+        ("carpet_", "_carpet"),
+        ("glass_", "_stained_glass"),
+        ("hardened_clay_", "_terracotta"),
+    ] {
+        if let Some(color) = name.strip_suffix(suffix)
+            && crate::tables().colors.iter().any(|value| value == color)
+        {
+            return format!(
+                "{prefix}{}",
+                if color == "light_gray" {
+                    "silver"
+                } else {
+                    color
+                }
+            );
+        }
+    }
+    match name {
+        "stone_bricks" => "stonebrick",
+        "mossy_stone_bricks" => "stonebrick_mossy",
+        "cracked_stone_bricks" => "stonebrick_cracked",
+        "chiseled_stone_bricks" => "stonebrick_chiseled",
+        "terracotta" => "hardened_clay",
+        "grass_block" => "grass",
+        _ => name,
+    }
+    .into()
+}
+
+fn old_model_refs(value: &mut Value, blockstate: bool) -> bool {
+    let original = value.clone();
+    match value {
+        Value::Object(values) => {
+            for (key, value) in values {
+                if matches!(key.as_str(), "parent" | "model")
+                    && let Some(text) = value.as_str()
+                {
+                    let (namespace, path) = text.split_once(':').unwrap_or(("minecraft", text));
+                    if namespace == "minecraft"
+                        && let Some((folder, name)) = path.split_once('/')
+                        && matches!(folder, "block" | "item")
+                    {
+                        let mapped = old_model_name(name);
+                        if key == "model" && blockstate && folder == "block" {
+                            *value = json!(mapped);
+                        } else if mapped != name {
+                            *value = json!(format!("minecraft:{folder}/{mapped}"));
+                        }
+                    }
+                } else {
+                    old_model_refs(value, blockstate);
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                old_model_refs(value, blockstate);
+            }
+        }
+        _ => {}
+    }
+    *value != original
+}
+
+fn model_refs(value: &mut Value, default_folder: &str) -> bool {
+    let original = value.clone();
+    match value {
+        Value::Object(values) => {
+            for (key, value) in values {
+                if matches!(key.as_str(), "parent" | "model")
+                    && let Some(text) = value.as_str()
+                {
+                    let (namespace, path) = text.split_once(':').unwrap_or(("minecraft", text));
+                    let (folder, name) = path.split_once('/').unwrap_or((default_folder, path));
+                    if matches!(folder, "block" | "item") {
+                        let mapped = if namespace == "minecraft" {
+                            model_name(name)
+                        } else {
+                            name.into()
+                        };
+                        if mapped != name || !path.contains('/') {
+                            *value = json!(format!("{namespace}:{folder}/{mapped}"));
+                        }
+                    }
+                } else {
+                    model_refs(value, default_folder);
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                model_refs(value, default_folder);
+            }
+        }
+        _ => {}
+    }
+    *value != original
+}
+
+fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Result<()> {
+    let assets = root.join("assets");
+    if !assets.exists() {
+        return Ok(());
+    }
+    let mut count = 0;
+    let mut merged = BTreeMap::<String, serde_json::Map<String, Value>>::new();
+    let paths: Vec<_> = WalkDir::new(&assets)
+        .min_depth(1)
+        .into_iter()
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|entry| {
+            entry.file_type().is_file() && entry.path().extension().is_some_and(|ext| ext == "json")
+        })
+        .map(|entry| entry.into_path())
+        .collect();
+    for path in paths {
+        let relative = path
+            .strip_prefix(root)?
+            .to_string_lossy()
+            .replace('\\', "/");
+        if !relative.contains("/models/") && !relative.contains("/blockstates/") {
+            continue;
+        }
+        let Ok(mut value) = serde_json::from_slice::<Value>(&fs::read(&path)?) else {
+            continue;
+        };
+        let mut changed = rewrite_model(&mut value, source, target);
+        if source < 4 && target >= 4 {
+            changed |= model_refs(
+                &mut value,
+                if relative.contains("/models/item/") {
+                    "item"
+                } else {
+                    "block"
+                },
+            );
+        }
+        if target < 4 && source >= 4 {
+            changed |= old_model_refs(&mut value, relative.contains("/blockstates/"));
+        }
+        if changed {
+            backup(root, &path)?;
+            fs::write(&path, serde_json::to_vec_pretty(&value)?)?;
+            count += 1;
+        }
+        if source < 4 && target >= 4 && relative.contains("/blockstates/") {
+            let name = path.file_stem().unwrap_or_default().to_string_lossy();
+            let property = match name.as_ref() {
+                "wool"
+                | "stained_glass"
+                | "stained_glass_pane"
+                | "stained_hardened_clay"
+                | "carpet"
+                | "concrete"
+                | "concrete_powder" => Some("color"),
+                "planks" | "sapling" => Some("variant"),
+                _ => None,
+            };
+            if let Some(property) = property
+                && let Some(variants) = value.get("variants").and_then(Value::as_object)
+            {
+                let mut groups = BTreeMap::<String, serde_json::Map<String, Value>>::new();
+                for (key, model) in variants {
+                    let entries: Vec<_> = key.split(',').collect();
+                    let specific = entries
+                        .iter()
+                        .find_map(|entry| entry.strip_prefix(&format!("{property}=")));
+                    let Some(specific) = specific else {
+                        continue;
+                    };
+                    let specific = if specific == "silver" {
+                        "light_gray"
+                    } else if specific == "big_oak" {
+                        "dark_oak"
+                    } else {
+                        specific
+                    };
+                    let recognized = if property == "color" {
+                        crate::tables().colors.iter().any(|color| color == specific)
+                    } else {
+                        ["oak", "spruce", "birch", "jungle", "acacia", "dark_oak"]
+                            .contains(&specific)
+                    };
+                    if !recognized {
+                        report.warnings.push(format!(
+                            "{relative}：未知 {property} 分支已保留，未将其作为输出文件名"
+                        ));
+                        continue;
+                    }
+                    let base = match name.as_ref() {
+                        "stained_hardened_clay" => "terracotta",
+                        other => other,
+                    };
+                    let target = format!("{specific}_{base}");
+                    let key = entries
+                        .into_iter()
+                        .filter(|entry| !entry.starts_with(&format!("{property}=")))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    groups.entry(target).or_default().insert(key, model.clone());
+                }
+                for (name, variants) in groups {
+                    let output = path.with_file_name(format!("{name}.json"));
+                    if !output.exists() {
+                        fs::write(
+                            output,
+                            serde_json::to_vec_pretty(&json!({"variants":variants}))?,
+                        )?;
+                        count += 1;
+                    }
+                }
+            }
+        }
+        if source < 4 && target >= 4 && relative.starts_with("assets/minecraft/models/") {
+            let old = path.file_stem().unwrap_or_default().to_string_lossy();
+            let name = model_name(&old);
+            if name != old {
+                let destination = path.with_file_name(format!("{name}.json"));
+                if !destination.exists() {
+                    fs::write(destination, serde_json::to_vec_pretty(&value)?)?;
+                    count += 1;
+                }
+            }
+        }
+        if target < 4 && source >= 4 && relative.starts_with("assets/minecraft/models/") {
+            let old = path.file_stem().unwrap_or_default().to_string_lossy();
+            let name = old_model_name(&old);
+            if name != old {
+                let destination = path.with_file_name(format!("{name}.json"));
+                if !destination.exists() {
+                    fs::write(destination, serde_json::to_vec_pretty(&value)?)?;
+                    count += 1;
+                }
+            }
+        }
+        if target < 4 && source >= 4 && relative.starts_with("assets/minecraft/blockstates/") {
+            let name = path.file_stem().unwrap_or_default().to_string_lossy();
+            for base in [
+                "wool",
+                "carpet",
+                "stained_glass",
+                "stained_glass_pane",
+                "terracotta",
+                "concrete",
+                "concrete_powder",
+            ] {
+                let Some(color) = name.strip_suffix(&format!("_{base}")) else {
+                    continue;
+                };
+                if !crate::tables().colors.iter().any(|value| value == color) {
+                    continue;
+                }
+                let color = if color == "light_gray" {
+                    "silver"
+                } else {
+                    color
+                };
+                let legacy = if base == "terracotta" {
+                    "stained_hardened_clay"
+                } else {
+                    base
+                };
+                if let Some(variants) = value.get("variants").and_then(Value::as_object) {
+                    for (key, model) in variants {
+                        let key = if key == "normal" || key.is_empty() {
+                            format!("color={color}")
+                        } else {
+                            format!("color={color},{key}")
+                        };
+                        merged
+                            .entry(legacy.into())
+                            .or_default()
+                            .insert(key, model.clone());
+                    }
+                }
+            }
+        }
+        if source < 46 && target >= 46 && relative.contains("/models/item/") {
+            let (namespace, path_suffix) = relative
+                .strip_prefix("assets/")
+                .unwrap()
+                .split_once('/')
+                .unwrap();
+            let name = path_suffix
+                .strip_prefix("models/item/")
+                .unwrap()
+                .trim_end_matches(".json");
+            let name = if namespace == "minecraft" && source < 4 {
+                model_name(name)
+            } else {
+                name.to_string()
+            };
+            let output = root.join(format!("assets/{namespace}/items/{name}.json"));
+            if !output.exists() {
+                fs::create_dir_all(output.parent().unwrap())?;
+                fs::write(
+                    output,
+                    serde_json::to_vec_pretty(
+                        &json!({"model":{"type":"minecraft:model","model":format!("{namespace}:item/{name}")}}),
+                    )?,
+                )?;
+                count += 1;
+            }
+            if value.get("overrides").is_some() {
+                report.warnings.push(format!(
+                    "{relative}：旧 overrides 已保留；尚未证明任意旧谓词与新物品调度语义等价"
+                ));
+            }
+        }
+    }
+    for (name, variants) in merged {
+        let path = root.join(format!("assets/minecraft/blockstates/{name}.json"));
+        let mut value = if path.exists() {
+            serde_json::from_slice::<Value>(&fs::read(&path)?)?
+        } else {
+            json!({"variants":{}})
+        };
+        if let Some(existing) = value.get_mut("variants").and_then(Value::as_object_mut) {
+            existing.extend(variants);
+        }
+        if path.exists() {
+            backup(root, &path)?;
+        }
+        fs::write(path, serde_json::to_vec_pretty(&value)?)?;
+        count += 1;
+    }
+    if count > 0 {
+        report.converted.push(format!(
+            "模型/方块状态：自动迁移 {count} 个结构与扁平化分支"
+        ));
+    }
+    Ok(())
+}
+
+fn fonts(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Result<()> {
+    if !(source < 15 && target >= 15) {
+        return Ok(());
+    }
+    let directory = root.join("assets/minecraft/font");
+    let mut pages = Vec::new();
+    let font_textures = root.join("assets/minecraft/textures/font");
+    if font_textures.is_dir() {
+        for entry in fs::read_dir(&font_textures)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let page = name
+                .strip_prefix("unicode_page_")
+                .and_then(|value| value.strip_suffix(".png"))
+                .and_then(|value| u32::from_str_radix(value, 16).ok());
+            if let Some(page) = page.filter(|value| *value < 256) {
+                let image = open(&entry.path())?;
+                ensure!(
+                    image.width() % 16 == 0 && image.height() % 16 == 0,
+                    "Unicode 字体页不是 16×16 字符网格"
+                );
+                let chars: Vec<String> = (0..16)
+                    .map(|row| {
+                        (0..16)
+                            .map(|col| {
+                                char::from_u32(page * 256 + row * 16 + col)
+                                    .filter(|c| !c.is_control())
+                                    .unwrap_or('\0')
+                            })
+                            .collect()
+                    })
+                    .collect();
+                pages.push(json!({"type":"bitmap","file":format!("minecraft:font/{name}"),"height":8,"ascent":7,"chars":chars}));
+            }
+        }
+    }
+    let mut files = Vec::new();
+    if directory.is_dir() {
+        for entry in fs::read_dir(&directory)? {
+            let path = entry?.path();
+            if path.extension().is_some_and(|ext| ext == "json") {
+                files.push(path);
+            }
+        }
+    }
+    for path in files {
+        let Ok(mut value) = serde_json::from_slice::<Value>(&fs::read(&path)?) else {
+            continue;
+        };
+        let Some(providers) = value.get_mut("providers").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        if !providers.iter().any(|provider| {
+            matches!(
+                provider.get("type").and_then(Value::as_str),
+                Some("legacy_unicode" | "minecraft:legacy_unicode")
+            )
+        }) {
+            continue;
+        }
+        let mut converted = Vec::new();
+        for provider in providers.drain(..) {
+            if matches!(
+                provider.get("type").and_then(Value::as_str),
+                Some("legacy_unicode" | "minecraft:legacy_unicode")
+            ) {
+                converted.extend(pages.clone());
+                converted.push(json!({"type":"reference","id":"minecraft:include/unifont"}));
+            } else {
+                converted.push(provider);
+            }
+        }
+        *providers = converted;
+        backup(root, &path)?;
+        fs::write(&path, serde_json::to_vec_pretty(&value)?)?;
+        report.converted.push(format!(
+            "字体 {}：legacy_unicode 自动转为 bitmap 页和目标默认字形回退",
+            path.file_name().unwrap().to_string_lossy()
+        ));
+    }
+    if !pages.is_empty() && !directory.join("uniform.json").exists() {
+        fs::create_dir_all(&directory)?;
+        let mut providers = pages;
+        providers.push(json!({"type":"reference","id":"minecraft:include/unifont"}));
+        fs::write(
+            directory.join("uniform.json"),
+            serde_json::to_vec_pretty(&json!({"providers":providers}))?,
+        )?;
+        report
+            .generated
+            .push("从上传的 Unicode 字体页生成新版 uniform 字体定义".into());
+    }
+    Ok(())
+}
+
+pub fn migrate(root: &Path, source: u32, target: u32) -> Result<AssetReport> {
+    let mut report = AssetReport::default();
+    chests(root, source, target, &mut report)?;
+    patterns(root, source, target, &mut report)?;
+    entities(root, source, target, &mut report)?;
+    models(root, source, target, &mut report)?;
+    gui(root, source, target, &mut report)?;
+    glint(root, source, target, &mut report)?;
+    fonts(root, source, target, &mut report)?;
+    Ok(report)
+}

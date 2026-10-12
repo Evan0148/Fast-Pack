@@ -1,0 +1,19 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
+#[cfg(windows)]
+mod gui;
+#[cfg(windows)]
+mod motion;
+
+fn main() {
+    #[cfg(windows)]
+    if let Err(error) = gui::run() {
+        gui::show_error(&format!("{error:#}"));
+        std::process::exit(1);
+    }
+    #[cfg(not(windows))]
+    if let Err(error) = fast_pack::cli::run() {
+        eprintln!("Fast Pack: {error:#}");
+        std::process::exit(1);
+    }
+}
