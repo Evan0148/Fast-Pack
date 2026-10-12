@@ -7,7 +7,7 @@ use fast_pack::{
 };
 use iced::widget::{
     self, button, checkbox, column, container, mouse_area, pick_list, progress_bar, row,
-    scrollable, slider, space, text, text_input, tooltip,
+    scrollable, space, text, text_input, tooltip,
 };
 use iced::{
     Alignment, Background, Border, Color, Element, Font, Length, Padding, Shadow, Size,
@@ -43,7 +43,8 @@ enum Message {
     GlintPicker,
     CloseGlintPicker,
     GlintPreset([u8; 3]),
-    GlintChannel(usize, u8),
+    GlintSaturationValue(f32, f32),
+    GlintHue(f32),
     GlintHex(String),
     Advanced,
     Details,
@@ -115,6 +116,48 @@ fn mix(a: Color, b: Color, fraction: f32) -> Color {
     }
 }
 
+fn rgb_hsv(color: [u8; 3], previous_hue: f32) -> [f32; 3] {
+    let [red, green, blue] = color.map(|channel| channel as f32 / 255.0);
+    let maximum = red.max(green).max(blue);
+    let minimum = red.min(green).min(blue);
+    let difference = maximum - minimum;
+    let hue = if difference < f32::EPSILON {
+        previous_hue
+    } else if maximum == red {
+        ((green - blue) / difference / 6.0).rem_euclid(1.0)
+    } else if maximum == green {
+        ((blue - red) / difference + 2.0) / 6.0
+    } else {
+        ((red - green) / difference + 4.0) / 6.0
+    };
+    [
+        hue,
+        if maximum == 0.0 {
+            0.0
+        } else {
+            difference / maximum
+        },
+        maximum,
+    ]
+}
+
+fn hsv_rgb([hue, saturation, value]: [f32; 3]) -> [u8; 3] {
+    let hue = hue.rem_euclid(1.0) * 6.0;
+    let fraction = hue.fract();
+    let low = value * (1.0 - saturation);
+    let falling = value * (1.0 - fraction * saturation);
+    let rising = value * (1.0 - (1.0 - fraction) * saturation);
+    let channels = match hue as u32 {
+        0 => [value, rising, low],
+        1 => [falling, value, low],
+        2 => [low, value, rising],
+        3 => [low, falling, value],
+        4 => [rising, low, value],
+        _ => [value, low, falling],
+    };
+    channels.map(|channel| (channel * 255.0).round().clamp(0.0, 255.0) as u8)
+}
+
 impl Colors {
     fn at(dark: f32) -> Self {
         let blend = |light, deep| mix(rgb(light), rgb(deep), dark);
@@ -155,6 +198,7 @@ struct App {
     preserve_case: bool,
     custom_glint: bool,
     glint_color: [u8; 3],
+    glint_hsv: [f32; 3],
     glint_hex: String,
     glint_edited: Option<Instant>,
     glint_picker: bool,
@@ -263,6 +307,7 @@ impl App {
             preserve_case: false,
             custom_glint: preferences.custom_glint,
             glint_color: preferences.glint_color,
+            glint_hsv: rgb_hsv(preferences.glint_color, 0.0),
             glint_hex: fast_pack::compat::glint::color_hex(preferences.glint_color),
             glint_edited: None,
             glint_picker: false,
@@ -517,6 +562,7 @@ impl App {
     fn set_glint_color(&mut self, color: [u8; 3]) {
         self.custom_glint = true;
         self.glint_color = color;
+        self.glint_hsv = rgb_hsv(color, self.glint_hsv[0]);
         self.glint_hex = fast_pack::compat::glint::color_hex(color);
         for (motion, channel) in self.glint_color_motion.iter_mut().zip(color) {
             motion.set(channel as f32 / 255.0, self.now, self.reduced);
@@ -898,10 +944,19 @@ impl App {
             }
             Message::CloseGlintPicker => self.close_glint_picker(),
             Message::GlintPreset(color) if !self.busy() => self.set_glint_color(color),
-            Message::GlintChannel(index, value) if !self.busy() && index < 3 => {
-                let mut color = self.glint_color;
-                color[index] = value;
-                self.set_glint_color(color);
+            Message::GlintSaturationValue(saturation, value) if !self.busy() => {
+                let hsv = [
+                    self.glint_hsv[0],
+                    saturation.clamp(0.0, 1.0),
+                    value.clamp(0.0, 1.0),
+                ];
+                self.set_glint_color(hsv_rgb(hsv));
+                self.glint_hsv = hsv;
+            }
+            Message::GlintHue(hue) if !self.busy() => {
+                let hsv = [hue.clamp(0.0, 1.0), self.glint_hsv[1], self.glint_hsv[2]];
+                self.set_glint_color(hsv_rgb(hsv));
+                self.glint_hsv = hsv;
             }
             Message::GlintHex(value) if !self.busy() => {
                 if let Ok(color) = fast_pack::compat::glint::parse_color(&value) {
@@ -1672,19 +1727,10 @@ impl App {
                 .style(|_, status| self.input_style(status))
         ]
         .spacing(12);
-        for (index, label) in ["红", "绿", "蓝"].into_iter().enumerate() {
-            controls = controls.push(
-                row![
-                    self.label(label).width(20),
-                    slider(0..=255, self.glint_color[index], move |value| {
-                        Message::GlintChannel(index, value)
-                    }),
-                    self.label(self.glint_color[index].to_string()).width(30)
-                ]
-                .spacing(12)
-                .align_y(Alignment::Center),
-            );
-        }
+        controls = controls.push(self.label(format!(
+            "RGB  {} · {} · {}",
+            self.glint_color[0], self.glint_color[1], self.glint_color[2]
+        )));
         let valid = fast_pack::compat::glint::parse_color(&self.glint_hex).is_ok();
         controls = controls.push(
             text(if valid {
@@ -1713,8 +1759,8 @@ impl App {
                         .as_secs_f32()
                 },
             })
-            .width(156)
-            .height(152),
+            .width(116)
+            .height(108),
             self.label("颜色示意")
         ]
         .spacing(8)
@@ -1730,9 +1776,21 @@ impl App {
                     .align_y(Alignment::Center),
                     self.label("选择喜欢的颜色，保留原包光效图案与游戏流动动画。"),
                     palette,
-                    row![preview, controls.width(Length::Fill)]
-                        .spacing(26)
-                        .align_y(Alignment::Center),
+                    row![
+                        column![
+                            widget::canvas(GlintColorCard {
+                                hsv: self.glint_hsv,
+                                colors: c
+                            })
+                            .width(272)
+                            .height(228),
+                            self.label("左侧选颜色与明暗 · 右侧切换色相")
+                        ]
+                        .spacing(8),
+                        column![preview, controls].spacing(14).width(Length::Fill)
+                    ]
+                    .spacing(18)
+                    .align_y(Alignment::Center),
                     checkbox(self.custom_glint)
                         .label("转换时应用自定义颜色")
                         .text_size(13)
@@ -2153,6 +2211,191 @@ impl App {
         } else {
             base
         }
+    }
+}
+
+struct GlintColorCard {
+    hsv: [f32; 3],
+    colors: Colors,
+}
+
+#[derive(Default)]
+struct GlintColorCardState {
+    dragging_hue: Option<bool>,
+}
+
+impl GlintColorCard {
+    fn regions(size: Size) -> (iced::Rectangle, iced::Rectangle) {
+        let side = (size.height - 12.0).min(size.width - 52.0).max(1.0);
+        (
+            iced::Rectangle {
+                x: 6.0,
+                y: 6.0,
+                width: side,
+                height: side,
+            },
+            iced::Rectangle {
+                x: side + 20.0,
+                y: 6.0,
+                width: 24.0,
+                height: side,
+            },
+        )
+    }
+}
+
+impl widget::canvas::Program<Message> for GlintColorCard {
+    type State = GlintColorCardState;
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        event: &widget::canvas::Event,
+        bounds: iced::Rectangle,
+        cursor: iced::mouse::Cursor,
+    ) -> Option<widget::canvas::Action<Message>> {
+        use iced::mouse::{Button, Event};
+        let (square, hue_bar) = Self::regions(bounds.size());
+        match event {
+            widget::canvas::Event::Mouse(Event::ButtonPressed(Button::Left)) => {
+                let point = cursor.position_in(bounds)?;
+                state.dragging_hue = if square.contains(point) {
+                    Some(false)
+                } else if hue_bar.contains(point) {
+                    Some(true)
+                } else {
+                    return None;
+                };
+            }
+            widget::canvas::Event::Mouse(Event::ButtonReleased(Button::Left)) => {
+                return state
+                    .dragging_hue
+                    .take()
+                    .map(|_| widget::canvas::Action::capture());
+            }
+            widget::canvas::Event::Mouse(Event::CursorMoved { .. })
+                if state.dragging_hue.is_some() => {}
+            _ => return None,
+        }
+        let point = cursor.position()? - Vector::new(bounds.x, bounds.y);
+        let message = if state.dragging_hue? {
+            Message::GlintHue(1.0 - ((point.y - hue_bar.y) / hue_bar.height).clamp(0.0, 1.0))
+        } else {
+            Message::GlintSaturationValue(
+                ((point.x - square.x) / square.width).clamp(0.0, 1.0),
+                1.0 - ((point.y - square.y) / square.height).clamp(0.0, 1.0),
+            )
+        };
+        Some(widget::canvas::Action::publish(message).and_capture())
+    }
+
+    fn mouse_interaction(
+        &self,
+        state: &Self::State,
+        bounds: iced::Rectangle,
+        cursor: iced::mouse::Cursor,
+    ) -> iced::mouse::Interaction {
+        let (square, hue_bar) = Self::regions(bounds.size());
+        let point = cursor.position_in(bounds);
+        if state.dragging_hue.is_some() || point.is_some_and(|point| square.contains(point)) {
+            iced::mouse::Interaction::Crosshair
+        } else if point.is_some_and(|point| hue_bar.contains(point)) {
+            iced::mouse::Interaction::Pointer
+        } else {
+            iced::mouse::Interaction::default()
+        }
+    }
+
+    fn draw(
+        &self,
+        _: &Self::State,
+        renderer: &iced::Renderer,
+        _: &Theme,
+        bounds: iced::Rectangle,
+        _: iced::mouse::Cursor,
+    ) -> Vec<widget::canvas::Geometry> {
+        use widget::canvas::{Frame, Path, Stroke, gradient};
+        let mut frame = Frame::new(renderer, bounds.size());
+        let (square, hue_bar) = Self::regions(bounds.size());
+        let [red, green, blue] = hsv_rgb([self.hsv[0], 1.0, 1.0]);
+        let pure = Color::from_rgb8(red, green, blue);
+        let square_path = Path::rounded_rectangle(square.position(), square.size(), 3.0.into());
+        frame.fill(
+            &square_path,
+            gradient::Linear::new(
+                square.position(),
+                iced::Point::new(square.x + square.width, square.y),
+            )
+            .add_stop(0.0, Color::WHITE)
+            .add_stop(1.0, pure),
+        );
+        frame.fill(
+            &square_path,
+            gradient::Linear::new(
+                square.position(),
+                iced::Point::new(square.x, square.y + square.height),
+            )
+            .add_stop(0.0, Color::TRANSPARENT)
+            .add_stop(1.0, Color::BLACK),
+        );
+        frame.stroke(
+            &square_path,
+            Stroke::default()
+                .with_color(self.colors.line)
+                .with_width(1.0),
+        );
+        let bar_path = Path::rounded_rectangle(hue_bar.position(), hue_bar.size(), 3.0.into());
+        let mut spectrum = gradient::Linear::new(
+            hue_bar.position(),
+            iced::Point::new(hue_bar.x, hue_bar.y + hue_bar.height),
+        );
+        for index in 0..=6 {
+            let amount = index as f32 / 6.0;
+            let [red, green, blue] = hsv_rgb([1.0 - amount, 1.0, 1.0]);
+            spectrum = spectrum.add_stop(amount, Color::from_rgb8(red, green, blue));
+        }
+        frame.fill(&bar_path, spectrum);
+        frame.stroke(
+            &bar_path,
+            Stroke::default()
+                .with_color(self.colors.line)
+                .with_width(1.0),
+        );
+        let marker = iced::Point::new(
+            square.x + self.hsv[1] * square.width,
+            square.y + (1.0 - self.hsv[2]) * square.height,
+        );
+        let marker_path = Path::circle(marker, 5.5);
+        let [red, green, blue] = hsv_rgb(self.hsv);
+        frame.fill(&marker_path, Color::from_rgb8(red, green, blue));
+        frame.stroke(
+            &marker_path,
+            Stroke::default()
+                .with_color(Color::from_rgba(0.0, 0.0, 0.0, 0.7))
+                .with_width(4.0),
+        );
+        frame.stroke(
+            &marker_path,
+            Stroke::default().with_color(Color::WHITE).with_width(2.0),
+        );
+        let hue_marker = Path::rectangle(
+            iced::Point::new(
+                hue_bar.x - 3.0,
+                hue_bar.y + (1.0 - self.hsv[0]) * hue_bar.height - 2.0,
+            ),
+            Size::new(hue_bar.width + 6.0, 4.0),
+        );
+        frame.stroke(
+            &hue_marker,
+            Stroke::default()
+                .with_color(Color::from_rgba(0.0, 0.0, 0.0, 0.7))
+                .with_width(4.0),
+        );
+        frame.stroke(
+            &hue_marker,
+            Stroke::default().with_color(Color::WHITE).with_width(2.0),
+        );
+        vec![frame.into_geometry()]
     }
 }
 

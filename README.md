@@ -21,7 +21,7 @@ Fast Pack 是面向 Minecraft Java Edition 的材质包版本转换工具，由 
 - **天空资源跨格式迁移。** 自动处理 MCPatcher、OptiFine 的目录与 `source` 引用，重排六面贴图朝向，并支持已识别的静态 FSB / Nuit 天空结构与反向转换。旧包转到新版本时，天空资源也参与转换。
 - **实体贴图按像素重建。** 箱子 UV 重排、双箱左右拆分、旧船到新船的纹理映射、旗帜和盾牌透明掩码转换都由程序执行，支持标准布局的高清比例。
 - **GUI 与字体一起迁移。** 根据 88 条精灵配方拆分或合并 GUI 图集，生成窄版效果列表，适配游戏模式槽位与附魔光效，处理旧 Unicode 字体页。
-- **自定义附魔闪烁颜色。** 在“更多转换选项”中选择白色、经典紫、冰蓝、薄荷绿、金色、粉色、红色，也可以输入任意 HEX 色值或拖动 RGB 滑块。调色面板提供流动光效示意，颜色与开关自动保存；跨版本转换自动处理旧版渲染器的紫色染色，保留原图案、透明度与动画元数据。
+- **自定义附魔闪烁颜色。** 在“更多转换选项”中选择白色、经典紫、冰蓝、薄荷绿、金色、粉色、红色，也可以输入任意 HEX 色值或拖动方形调色卡。调色面板采用方形饱和度 / 明暗卡与竖向色相条，提供流动光效示意，颜色与开关自动保存；跨版本转换自动处理旧版渲染器的紫色染色，保留原图案、透明度与动画元数据。
 - **旧版工具与装备保留材质。** 对照官方资源补齐 227 个旧版物品纹理名称，递归处理嵌套贴图与模型引用，区分方块和物品的映射。支持木质工具、弓、鱼竿、染料、药水、唱片等旧名称，以及弓 / 鱼竿状态和时钟 / 罗盘帧。
 - **只有贴图的旧包自动补模型。** 转到 1.13–1.21.3 时，为上传包中已有的物品贴图补齐缺失模型，明确绑定装备、工具、弓、鱼竿等资源；1.20 起同时补齐相应盔甲纹饰模型。参考表包含 254 个基础物品模型与 200 个纹饰变体，已有自定义模型优先保留。
 - **补齐遗漏的旧方块名称。** 增加 147 条经官方资源核对的别名，处理铁砧、门、轨道、植物生长阶段、火焰、玻璃板、红石和其他旧路径。新版目录中仍残留旧名称的转换结果也会自动整理，并同步 PNG 动画元数据及模型纹理引用。
@@ -39,7 +39,7 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.1.8.exe`。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.1.9.exe`。
 2. 双击下载的程序，把材质包 ZIP 或文件夹拖入窗口。
 3. 选择目标版本与导出目录，点击“开始转换”。资源适配默认自动执行。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
@@ -58,9 +58,9 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 ### 自定义附魔闪烁颜色
 
-展开 **“更多转换选项”**，开启 **“自定义附魔颜色”**，点击 **“调色”**。可以直接选白色等预设，输入 `#RRGGBB` / `#RGB`，或拖动红、绿、蓝滑块；点击预设、输入有效色值或拖动滑块会自动启用自定义颜色。
+展开 **“更多转换选项”**，开启 **“自定义附魔颜色”**，点击 **“调色”**。可以直接选白色等预设，输入 `#RRGGBB` / `#RGB`，或拖动调色卡。右侧竖向色谱选择色相，左侧方形区域横向调整饱和度、纵向调整明暗；点击预设、输入有效色值或拖动调色卡会自动启用自定义颜色。
 
-颜色和自定义开关默认自动记住，后续转换与重启继续使用。关闭自定义颜色后，转换保留输入包的光效效果，已经选好的颜色仍被记住。设置存放在同一个 `%LOCALAPPDATA%\Fast Pack\settings.json` 中；滑块输入短暂停止后自动保存，关闭面板、开始转换或关闭程序时也会提交待保存的颜色。
+颜色和自定义开关默认自动记住，后续转换与重启继续使用。关闭自定义颜色后，转换保留输入包的光效效果，已经选好的颜色仍被记住。设置存放在同一个 `%LOCALAPPDATA%\Fast Pack\settings.json` 中；拖动调色短暂停止后自动保存，关闭面板、开始转换或关闭程序时也会提交待保存的颜色。
 
 1.8.9–1.14 的附魔图案通常为灰度图，颜色由游戏渲染器额外乘入；1.15 起颜色烘焙进贴图。默认转换会补上或补偿这层染色，修复旧图直接复制到新版后变白的问题，并保留新版包有意设计的白色效果。1.19.4 起同步生成物品、实体和盔甲资源名称，兼容后续版本的路径变化。
 
@@ -78,7 +78,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.1.8.exe`、`fast-pack-cli-v1.1.8.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.1.9.exe`、`fast-pack-cli-v1.1.9.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -139,18 +139,18 @@ flowchart LR
 
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.1.8 为例，命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.1.9 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli-v1.1.8.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.1.8.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.1.8.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.1.8.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.1.8.exe old.zip --probe
-.\fast-pack-cli-v1.1.8.exe --versions
-.\fast-pack-cli-v1.1.8.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.1.8.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.1.8.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.1.9.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.1.9.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.1.9.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.1.9.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.1.9.exe old.zip --probe
+.\fast-pack-cli-v1.1.9.exe --versions
+.\fast-pack-cli-v1.1.9.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.1.9.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.1.9.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--from auto` 默认自动识别源版本。`--report-json` 仅在指定时将详情另存到提供的路径，不会把 `转换报告.txt` 塞入输出 ZIP。自定义映射采用 JSON 对象，例如 `{"custom_texture":"replacement_texture"}`。
