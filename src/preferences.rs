@@ -10,12 +10,15 @@ use windows_sys::Win32::UI::Shell::{
     FOLDERID_LocalAppData, KF_FLAG_DONT_VERIFY, SHGetKnownFolderPath,
 };
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Preferences {
     pub auto_save: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_version: Option<String>,
+    pub auto_save_path: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub export_directory: Option<PathBuf>,
 }
 
 impl Default for Preferences {
@@ -23,6 +26,8 @@ impl Default for Preferences {
         Self {
             auto_save: true,
             target_version: None,
+            auto_save_path: true,
+            export_directory: None,
         }
     }
 }
@@ -77,11 +82,24 @@ pub fn load() -> Preferences {
     preferences.target_version = preferences
         .target_version
         .filter(|version| supported(version));
+    preferences.export_directory = preferences
+        .export_directory
+        .filter(|path| path.is_absolute());
     preferences
 }
 
-pub fn save(auto_save: bool, version: Option<&str>) -> Result<()> {
-    ensure!(version.is_none_or(supported), "目标版本无效");
+pub fn save(preferences: &Preferences) -> Result<()> {
+    ensure!(
+        preferences.target_version.as_deref().is_none_or(supported),
+        "目标版本无效"
+    );
+    ensure!(
+        preferences
+            .export_directory
+            .as_ref()
+            .is_none_or(|path| path.is_absolute()),
+        "导出目录必须是完整路径"
+    );
     let path = config_path()?;
     let directory = path.parent().unwrap();
     fs::create_dir_all(directory).context("无法创建用户配置目录")?;
@@ -89,12 +107,9 @@ pub fn save(auto_save: bool, version: Option<&str>) -> Result<()> {
         .prefix("settings-")
         .suffix(".tmp")
         .tempfile_in(directory)
-        .context("无法保存目标版本")?;
-    temporary.write_all(&serde_json::to_vec_pretty(&Preferences {
-        auto_save,
-        target_version: version.map(str::to_owned),
-    })?)?;
+        .context("无法保存偏好设置")?;
+    temporary.write_all(&serde_json::to_vec_pretty(preferences)?)?;
     temporary.as_file().sync_all()?;
-    temporary.persist(&path).context("无法更新目标版本设置")?;
+    temporary.persist(&path).context("无法更新偏好设置")?;
     Ok(())
 }

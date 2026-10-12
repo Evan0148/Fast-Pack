@@ -1,5 +1,5 @@
 use crate::motion::Tween;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use fast_pack::converter::load_extra_renames;
 use fast_pack::{
     ConversionOptions, ConversionReport, PackInfo, convert_pack, pack_format_of, probe_pack,
@@ -28,9 +28,11 @@ enum Message {
     InputPicked(Option<PathBuf>),
     Target(String),
     AutoSave(bool),
+    AutoSavePath(bool),
     SourceVersion(String),
     Swap,
     Output(String),
+    CommitExportDirectory,
     BrowseOutput,
     OutputPicked(Option<PathBuf>),
     Zip(bool),
@@ -136,6 +138,10 @@ struct App {
     target_selected: bool,
     auto_save: bool,
     saved_target: Option<String>,
+    auto_save_path: bool,
+    saved_export_directory: Option<PathBuf>,
+    export_directory_input: String,
+    directory_edited: Option<Instant>,
     output: String,
     description: String,
     as_zip: bool,
@@ -159,12 +165,13 @@ struct App {
     load_motion: Tween,
     theme_motion: Tween,
     auto_save_motion: Tween,
+    auto_save_path_motion: Tween,
     hover: HashMap<u8, Tween>,
     width: f32,
     generation: u64,
     sender: Sender<WorkEvent>,
     receiver: Receiver<WorkEvent>,
-    preferences_sender: Sender<(bool, Option<String>)>,
+    preferences_sender: Sender<crate::preferences::Preferences>,
     preferences_pending: usize,
     mapping_pending: bool,
     window: Option<window::Id>,
@@ -194,13 +201,21 @@ impl App {
         };
         let saved_target = preferences.target_version;
         let auto_save = preferences.auto_save;
+        let auto_save_path = preferences.auto_save_path;
+        let saved_export_directory = preferences.export_directory;
+        let export_directory_input = saved_export_directory
+            .as_ref()
+            .filter(|_| auto_save_path)
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
         let target_selected = auto_save && saved_target.is_some();
-        let (preferences_sender, preferences_receiver) = mpsc::channel::<(bool, Option<String>)>();
+        let (preferences_sender, preferences_receiver) =
+            mpsc::channel::<crate::preferences::Preferences>();
         if !cfg!(test) && !smoke && capture.is_none() {
             let sender = sender.clone();
             std::thread::spawn(move || {
-                for (auto_save, target) in preferences_receiver {
-                    let result = crate::preferences::save(auto_save, target.as_deref())
+                for preferences in preferences_receiver {
+                    let result = crate::preferences::save(&preferences)
                         .map_err(|error| format!("{error:#}"));
                     if sender.send(WorkEvent::Preferences(result)).is_err() {
                         break;
@@ -223,6 +238,10 @@ impl App {
             target_selected,
             auto_save,
             saved_target,
+            auto_save_path,
+            saved_export_directory,
+            export_directory_input,
+            directory_edited: None,
             output: String::new(),
             description: String::new(),
             as_zip: true,
@@ -246,6 +265,7 @@ impl App {
             load_motion: Tween::new(0.0, 240),
             theme_motion: Tween::new(if dark { 1.0 } else { 0.0 }, 180),
             auto_save_motion: Tween::new(if auto_save { 1.0 } else { 0.0 }, 220),
+            auto_save_path_motion: Tween::new(if auto_save_path { 1.0 } else { 0.0 }, 220),
             hover: HashMap::new(),
             width: 1040.0,
             generation: 0,
@@ -288,6 +308,7 @@ impl App {
             &self.load_motion,
             &self.theme_motion,
             &self.auto_save_motion,
+            &self.auto_save_path_motion,
         ]
         .into_iter()
         .any(|value| value.active(self.now))
@@ -321,6 +342,7 @@ impl App {
             || self.busy()
             || self.mapping_pending
             || self.preferences_pending > 0
+            || self.directory_edited.is_some()
             || self.capture.is_some()
             || self.smoke
         {
@@ -382,9 +404,46 @@ impl App {
     }
     fn update_output(&mut self) {
         if let Some(source) = &self.source {
-            self.output = suggest_output(source, &self.target, self.as_zip)
-                .display()
-                .to_string();
+            let Ok(directory) = self.parsed_export_directory() else {
+                self.output.clear();
+                return;
+            };
+            let suggested = suggest_output(source, &self.target, self.as_zip);
+            let output = if let Some(directory) = directory {
+                let name = suggested.file_name().unwrap_or_default();
+                let candidate = directory.join(name);
+                if candidate
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .eq_ignore_ascii_case(&source.to_string_lossy().replace('\\', "/"))
+                {
+                    directory.join("Fast Pack").join(name)
+                } else {
+                    candidate
+                }
+            } else {
+                suggested
+            };
+            self.output = output.display().to_string();
+        }
+    }
+    fn parsed_export_directory(&self) -> Result<Option<PathBuf>> {
+        let input = self.export_directory_input.trim().trim_matches('"');
+        if input.is_empty() {
+            return Ok(None);
+        }
+        let path = PathBuf::from(input);
+        ensure!(path.is_absolute(), "请选择完整的导出目录");
+        ensure!(!path.is_file(), "导出位置应是文件夹，不能是文件");
+        Ok(Some(path))
+    }
+    fn remember_export_directory(&mut self) {
+        if self.auto_save_path
+            && let Ok(directory) = self.parsed_export_directory()
+            && directory != self.saved_export_directory
+        {
+            self.saved_export_directory = directory;
+            self.save_preferences();
         }
     }
     fn remember_target(&mut self) {
@@ -398,7 +457,12 @@ impl App {
         if !cfg!(test) && !self.smoke && self.capture.is_none() {
             if self
                 .preferences_sender
-                .send((self.auto_save, self.saved_target.clone()))
+                .send(crate::preferences::Preferences {
+                    auto_save: self.auto_save,
+                    target_version: self.saved_target.clone(),
+                    auto_save_path: self.auto_save_path,
+                    export_directory: self.saved_export_directory.clone(),
+                })
                 .is_ok()
             {
                 self.preferences_pending += 1;
@@ -424,6 +488,12 @@ impl App {
         if self.busy() || self.phase == Phase::Identifying {
             return;
         }
+        if let Err(error) = self.parsed_export_directory() {
+            self.error = Some(error.to_string());
+            return;
+        }
+        self.directory_edited = None;
+        self.remember_export_directory();
         let Some(source) = self.source.clone() else {
             self.error = Some("请先导入材质包".into());
             return;
@@ -487,6 +557,12 @@ impl App {
             Message::Frame(now) => self.now = now,
             Message::Tick(now) => {
                 self.now = now;
+                if self.directory_edited.is_some_and(|edited| {
+                    now.saturating_duration_since(edited) >= Duration::from_millis(350)
+                }) {
+                    self.directory_edited = None;
+                    self.remember_export_directory();
+                }
                 let mut reset_scroll = false;
                 let events: Vec<_> = self.receiver.try_iter().collect();
                 for event in events {
@@ -650,6 +726,8 @@ impl App {
                         .set(0.0, self.now, self.reduced);
                 }
                 window::Event::CloseRequested => {
+                    self.directory_edited = None;
+                    self.remember_export_directory();
                     if self.busy() || self.preferences_pending > 0 {
                         self.closing = true;
                         self.log(if self.busy() {
@@ -722,7 +800,43 @@ impl App {
                     self.save_preferences();
                 }
             }
-            Message::Output(output) if !self.busy() => self.output = output,
+            Message::AutoSavePath(value) if !self.busy() => {
+                self.auto_save_path = value;
+                self.auto_save_path_motion.set(
+                    if value { 1.0 } else { 0.0 },
+                    self.now,
+                    self.reduced,
+                );
+                self.directory_edited = None;
+                if value {
+                    if self.export_directory_input.trim().is_empty()
+                        && let Some(directory) = &self.saved_export_directory
+                    {
+                        self.export_directory_input = directory.display().to_string();
+                    }
+                    if let Ok(directory) = self.parsed_export_directory() {
+                        self.saved_export_directory = directory;
+                    }
+                    self.update_output();
+                }
+                self.save_preferences();
+            }
+            Message::Output(output) if !self.busy() => {
+                self.export_directory_input = output;
+                self.directory_edited = self.auto_save_path.then_some(self.now);
+                self.update_output();
+                self.error = None;
+            }
+            Message::CommitExportDirectory if !self.busy() => {
+                self.directory_edited = None;
+                if let Err(error) = self.parsed_export_directory() {
+                    self.error = Some(error.to_string());
+                } else {
+                    self.remember_export_directory();
+                    self.update_output();
+                    self.error = None;
+                }
+            }
             Message::Description(value) if !self.busy() => self.description = value,
             Message::PreserveLang(value) if !self.busy() => self.preserve_lang = value,
             Message::PreserveCase(value) if !self.busy() => self.preserve_case = value,
@@ -753,34 +867,32 @@ impl App {
                 }
             }
             Message::BrowseOutput if !self.busy() => {
-                let zip = self.as_zip;
-                let name = Path::new(&self.output)
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned();
+                let directory = self.parsed_export_directory().ok().flatten().or_else(|| {
+                    self.source
+                        .as_ref()
+                        .and_then(|path| path.parent().map(Path::to_owned))
+                });
                 return Task::perform(
                     async move {
-                        let dialog = rfd::AsyncFileDialog::new().set_title("Fast Pack · 输出位置");
-                        if zip {
-                            dialog
-                                .set_file_name(name)
-                                .add_filter("ZIP", &["zip"])
-                                .save_file()
-                                .await
-                                .map(|file| file.path().to_owned())
-                        } else {
-                            dialog
-                                .pick_folder()
-                                .await
-                                .map(|file| file.path().to_owned())
+                        let mut dialog =
+                            rfd::AsyncFileDialog::new().set_title("Fast Pack · 选择导出目录");
+                        if let Some(directory) = directory {
+                            dialog = dialog.set_directory(directory);
                         }
+                        dialog
+                            .pick_folder()
+                            .await
+                            .map(|file| file.path().to_owned())
                     },
                     Message::OutputPicked,
                 );
             }
             Message::OutputPicked(Some(path)) if !self.busy() => {
-                self.output = path.display().to_string()
+                self.export_directory_input = path.display().to_string();
+                self.directory_edited = None;
+                self.update_output();
+                self.remember_export_directory();
+                self.error = None;
             }
             Message::Advanced => {
                 self.advanced = !self.advanced;
@@ -898,6 +1010,7 @@ impl App {
                     self.load_motion.snap();
                     self.theme_motion.snap();
                     self.auto_save_motion.snap();
+                    self.auto_save_path_motion.snap();
                     for value in self.hover.values_mut() {
                         value.snap();
                     }
@@ -1179,28 +1292,26 @@ impl App {
         self.panel(content)
     }
 
-    fn auto_save_control(&self) -> Element<'_, Message> {
+    fn memory_switch<'a>(
+        &self,
+        id: u8,
+        label: &'a str,
+        enabled: bool,
+        amount: f32,
+        message: Message,
+        hint: &'a str,
+    ) -> Element<'a, Message> {
         let c = self.colors();
-        let amount = self.auto_save_motion.value(self.now);
         let hover = self
             .hover
-            .get(&34)
+            .get(&id)
             .map(|value| value.value(self.now))
             .unwrap_or(0.0);
         let content = row![
-            column![
-                text("自动保存版本").size(13).color(c.foreground),
-                self.label(if self.auto_save {
-                    "下次打开继续使用所选版本"
-                } else {
-                    "本次版本保留，重启后自动推荐"
-                })
-                .size(11)
-            ]
-            .spacing(4)
-            .width(Length::Fill),
-            text(if self.auto_save { "开启" } else { "关闭" })
-                .size(11)
+            text(label).size(12).color(c.foreground),
+            space().width(Length::Fill),
+            text(if enabled { "开" } else { "关" })
+                .size(10)
                 .color(mix(c.muted, c.accent, amount)),
             widget::canvas(AutoSaveSwitch {
                 amount,
@@ -1211,12 +1322,12 @@ impl App {
             .width(58)
             .height(34)
         ]
-        .spacing(9)
+        .spacing(5)
         .align_y(Alignment::Center);
         let control = button(content)
-            .padding([8, 12])
+            .padding([4, 8])
             .width(Length::Fill)
-            .on_press_maybe((!self.busy()).then_some(Message::AutoSave(!self.auto_save)))
+            .on_press_maybe((!self.busy()).then_some(message))
             .style(move |_, status| {
                 let disabled = status == button::Status::Disabled;
                 button::Style {
@@ -1240,89 +1351,127 @@ impl App {
                     ..Default::default()
                 }
             });
-        mouse_area(control)
-            .on_enter(Message::Hover(34, true))
-            .on_exit(Message::Hover(34, false))
-            .into()
+        tooltip(
+            mouse_area(control)
+                .on_enter(Message::Hover(id, true))
+                .on_exit(Message::Hover(id, false)),
+            container(text(hint).size(12)).padding(9).max_width(320),
+            tooltip::Position::Bottom,
+        )
+        .into()
+    }
+
+    fn memory_controls(&self) -> Element<'_, Message> {
+        row![
+            self.label("自动保存"),
+            self.memory_switch(
+                34,
+                "版本",
+                self.auto_save,
+                self.auto_save_motion.value(self.now),
+                Message::AutoSave(!self.auto_save),
+                "记住目标版本。关闭后本次版本保留，重启时恢复自动推荐。",
+            ),
+            self.memory_switch(
+                35,
+                "导出目录",
+                self.auto_save_path,
+                self.auto_save_path_motion.value(self.now),
+                Message::AutoSavePath(!self.auto_save_path),
+                "只记住导出文件夹，每个包自动生成新文件名。关闭后重启恢复保存在源包旁。",
+            ),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into()
     }
 
     fn target_panel(&self) -> Element<'_, Message> {
-        let c = self.colors();
         let versions: Vec<_> = tables()
             .pack_formats
             .iter()
             .map(|(label, _)| label.clone())
             .collect();
-        let source = self
-            .info
-            .as_ref()
-            .and_then(|info| info.version_label.clone())
-            .unwrap_or_else(|| "待导入".into());
-        let route = row![
-            column![
-                self.label("源版本"),
-                self.title(
-                    if self.source_version == "自动检测" {
-                        source
-                    } else {
-                        self.source_version.clone()
-                    },
-                    22
-                )
-            ]
-            .spacing(6),
-            space().width(Length::Fill),
-            self.action(
-                5,
-                "⇄",
-                (!self.busy() && self.info.is_some()).then_some(Message::Swap),
-                false
-            ),
-            space().width(Length::Fill),
-            column![
-                self.label("目标版本"),
-                text(&self.target).size(22).color(c.accent)
-            ]
-            .spacing(6)
-        ]
-        .align_y(Alignment::Center);
-        let mut output = text_input("选择转换结果的保存路径", &self.output)
-            .padding(12)
+        let mut output = text_input("留空时保存在源材质包旁", &self.export_directory_input)
+            .padding(10)
             .size(13)
             .style(|_, status| self.input_style(status));
         if !self.busy() {
-            output = output.on_input(Message::Output);
+            output = output
+                .on_input(Message::Output)
+                .on_submit(Message::CommitExportDirectory);
         }
         let zip = checkbox(self.as_zip)
-            .label("打包为 ZIP 压缩包")
-            .size(17)
-            .text_size(13)
+            .label("ZIP 格式")
+            .size(16)
+            .text_size(12)
             .on_toggle_maybe((!self.busy()).then_some(Message::Zip));
+        let filename = if self.output.is_empty() {
+            "文件名按版本和原包名自动生成".into()
+        } else {
+            format!(
+                "将导出 {}",
+                shorten(
+                    &Path::new(&self.output)
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy(),
+                    28,
+                )
+            )
+        };
+        let preview = tooltip(
+            self.label(filename),
+            container(
+                text(if self.output.is_empty() {
+                    "导入材质包后自动生成文件名"
+                } else {
+                    &self.output
+                })
+                .size(12),
+            )
+            .padding(9)
+            .max_width(420),
+            tooltip::Position::Bottom,
+        );
         let content = column![
             self.title("转换目标", 14),
             self.label("目标游戏版本"),
-            pick_list(versions, Some(self.target.clone()), Message::Target)
-                .width(Length::Fill)
-                .padding(12)
-                .style(|_, status| self.picker_style(status)),
-            self.auto_save_control(),
-            route,
-            self.label("输出位置"),
+            row![
+                pick_list(versions, Some(self.target.clone()), Message::Target)
+                    .width(Length::Fill)
+                    .padding(11)
+                    .style(|_, status| self.picker_style(status)),
+                tooltip(
+                    self.action(
+                        5,
+                        "⇄",
+                        (!self.busy() && self.info.is_some()).then_some(Message::Swap),
+                        false,
+                    ),
+                    container(text("交换源版本与目标版本").size(12)).padding(9),
+                    tooltip::Position::Bottom,
+                ),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+            row![self.label("导出目录"), space().width(Length::Fill), zip]
+                .align_y(Alignment::Center),
             row![
                 output,
                 self.action(
                     6,
-                    "浏览",
+                    "选择",
                     (!self.busy()).then_some(Message::BrowseOutput),
-                    false
-                )
+                    false,
+                ),
             ]
             .spacing(8)
             .align_y(Alignment::Center),
-            zip,
-            self.label("实体、模型、GUI、字体与天空自动适配")
+            preview,
+            self.memory_controls(),
         ]
-        .spacing(16);
+        .spacing(13);
         self.panel(content)
     }
 

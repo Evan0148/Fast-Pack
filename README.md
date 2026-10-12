@@ -28,7 +28,8 @@ Fast Pack 是面向 Minecraft Java Edition 的材质包版本转换工具，由 
 - **旧版自定义手持姿态自动换算。** 对照官方 1.8.9 与 1.20.1 模型提取 254 个平面物品模型的 8 组姿态基准，换算第一 / 第三人称的旋转、位移、缩放和左右手姿态，保留作者相对基准设置的大小。带有 Fast Pack 原模型备份的旧转换结果可自动修复，避免剑竖直、过大及左手姿态错误。
 - **背包合成区坐标迁移。** 1.8.9 的输入格、箭头、结果格随新版布局整体右移 10px、上移 8px；人物背景框收窄 3px，补副手槽与配方书按钮，按贴图比例处理高清资源。
 - **现代桌面体验。** 深色 / 浅色主题、拖放导入、后台识别与转换、真实进度、天空贴图预览，以及约 150–280ms 的界面过渡。支持减少动态效果。
-- **主页控制版本记忆。** 目标版本下方提供“自动保存版本”开关，默认开启；滑块、轨道颜色与悬停效果平滑过渡，快速反向切换保持连续。开启时立即记住当前目标版本，继续导入、转换另一个包及重启程序都会保留该版本。开关状态也会保存，设置位于 Windows 用户的 `%LOCALAPPDATA%\Fast Pack\settings.json`，程序目录和材质包目录无需配置文件。
+- **紧凑的自动保存开关。** 主页将“版本 / 导出目录”两个开关排在同一行，分别控制版本记忆与导出文件夹记忆；滑块、轨道颜色及悬停效果平滑过渡。设置位于 Windows 用户的 `%LOCALAPPDATA%\Fast Pack\settings.json`，程序目录和材质包目录无需配置文件。
+- **导出到固定文件夹。** 选好导出目录后，后续导入、切换版本和重新打开程序都会继续导出到该目录，每个包使用自己的 `[目标版本]原包名.zip`，不复用上一次的文件名。只保存导出目录，不记录导入路径。
 - **保留输入原包。** 转换在临时工作副本中完成，结果另存。改写的资源会在输出包内保留原始备份，帮助后续转换恢复内容。
 - **输出 ZIP 更干净。** v1.1.0 起不再向材质包内加入 `转换报告.txt`；输入包已有的同名根目录报告也会从新输出中移除。转换详情仍可在程序内查看或另存。
 - **GUI、CLI 和 Rust 库共用转换逻辑。** 桌面玩家可以直接操作界面，开发者也可以批量调用命令行或集成转换库。
@@ -37,16 +38,20 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack.exe`，或下载 Windows x64 便携包。
-2. 双击 `FastPack.exe`，把材质包 ZIP 或文件夹拖入窗口。
-3. 选择目标版本与输出位置，点击“开始转换”。资源适配默认自动执行。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.1.7.exe`。
+2. 双击下载的程序，把材质包 ZIP 或文件夹拖入窗口。
+3. 选择目标版本与导出目录，点击“开始转换”。资源适配默认自动执行。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
 
 运行桌面版无需解释器或浏览器。材质包处理在本机完成，程序不会把上传内容发送到远端服务。“了解详细”中的源码按钮会在用户点击后打开 GitHub 页面。
 
 右上角的 **“了解详细”** 展示开发者头像、版本、开发交流群、进群答案、源码仓库与许可证摘要。
 
-主页的“自动保存版本”默认开启，开启后选择目标版本会立即自动保存。比如选择 `1.20.1`，下次打开仍默认 `1.20.1`，无需再次选择。关闭后停止记住新选择的版本，本次会话仍可继续使用当前版本，重启后恢复默认版本与导入时的自动推荐；重新开启会立即保存当前目标版本。开关状态在重启后保留，旧版已经保存的版本自动兼容。“减少动态效果”也会关闭开关过渡动画。
+主页“自动保存”一行提供“版本”和“导出目录”两个开关，默认开启。版本开关开启后选择目标版本会自动保存，比如选择 `1.20.1`，下次打开仍默认 `1.20.1`。关闭后本次版本继续使用，重启恢复默认版本与自动推荐。
+
+导出目录通过“选择”按钮选择文件夹，也可以输入完整目录路径。开启目录记忆后，选择的文件夹会自动保存；手动输入支持回车、短暂停止输入或开始转换时保存。下次打开会恢复该目录。关闭后本次目录保留，重启恢复保存在源包旁；清空目录则恢复默认位置。只记住导出文件夹，每次的文件名依照当前版本与当前原包名重新生成。不存在的导出目录会在转换时创建。
+
+两个开关的状态均在重启后保留，旧版已经保存的版本自动兼容。“减少动态效果”会关闭开关过渡动画。长目录在输入框内显示，文件名预览缩短显示，完整导出路径可悬停查看。
 
 设置文件缺失、损坏或保存的版本不再受支持时，程序使用默认版本；首次运行且尚未选择版本时保留原有自动推荐逻辑。
 
@@ -56,7 +61,11 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 输入文件名已有受支持的版本前缀时，会替换该前缀，避免重复叠加。文件夹输出采用 `[目标版本]原文件夹名`，保留原文件夹名称中的点。如果生成路径会与源路径相同，结果放入同级的 `Fast Pack` 文件夹，保护源包。
 
-GUI 会随目标版本更新默认文件名。CLI 可省略 `OUT` 使用相同命名规则；显式选择的输出名称仍按用户指定的路径保存。
+GUI 会随原包和目标版本更新默认文件名，并使用选定的导出目录。CLI 可省略 `OUT` 使用相同命名规则；显式选择的输出名称仍按用户指定的路径保存。
+
+### 发布程序命名
+
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.1.7.exe`、`fast-pack-cli-v1.1.7.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -117,17 +126,17 @@ flowchart LR
 
 ## 命令行
 
-便携包包含 `fast-pack-cli.exe`。以下命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.1.7 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli.exe old.zip new.zip --to 26.2
-.\fast-pack-cli.exe 9178.zip --to 1.20.1
-.\fast-pack-cli.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli.exe old.zip --probe
-.\fast-pack-cli.exe --versions
-.\fast-pack-cli.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.1.7.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.1.7.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.1.7.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.1.7.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.1.7.exe old.zip --probe
+.\fast-pack-cli-v1.1.7.exe --versions
+.\fast-pack-cli-v1.1.7.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.1.7.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--from auto` 默认自动识别源版本。`--report-json` 仅在指定时将详情另存到提供的路径，不会把 `转换报告.txt` 塞入输出 ZIP。自定义映射采用 JSON 对象，例如 `{"custom_texture":"replacement_texture"}`。
@@ -150,6 +159,14 @@ cargo build --release --locked
 target-native/release/FastPack.exe
 target-native/release/fast-pack-cli.exe
 ```
+
+发布打包使用 Rust 入口。将第三方许可证整理到 `third-party-licenses` 后执行：
+
+```powershell
+cargo run --release --locked --example release_bundle -- target-native/release dist-releases third-party-licenses
+```
+
+发布文件生成到 `dist-releases/v<Cargo 版本>/`，包含带版本号的 EXE、便携 ZIP 和 `SHA256SUMS.txt`。文件名直接来自当前 Cargo 版本，后续版本无需手动改写打包命名。
 
 源码仓库保留 Rust 实现、Cargo 文件、构建配置、内置资源配方、图标、开发者头像和文档。编译产物在 Releases 分发。测试输入由 Rust 代码生成，仓库无需携带打包的测试 ZIP。
 
@@ -174,6 +191,7 @@ $env:ICED_BACKEND = 'tiny-skia'
 | --- | --- |
 | `src/gui.rs` | 桌面工作台、动画、后台任务、天空预览和“了解详细”页面 |
 | `src/preferences.rs` | 用户配置目录中的目标版本记忆与自动恢复 |
+| `examples/release_bundle.rs` | 从 Cargo 版本生成发布文件名、便携包与 SHA-256 校验值 |
 | `src/motion.rs` | 有界、可中断、可关闭的时间插值 |
 | `src/converter.rs` | ZIP 与目录处理、转换流水线、元数据和详情 |
 | `src/compat/assets.rs` | 实体 UV、alpha、模型、GUI、附魔光效、字体 |

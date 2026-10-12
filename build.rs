@@ -5,7 +5,13 @@ fn main() {
         resource.set_icon("assets/app.ico");
         resource.set("ProductName", "Fast Pack");
         resource.set("FileDescription", "Fast Pack 材质包转换器");
-        resource.set("OriginalFilename", "FastPack.exe");
+        resource.set(
+            "OriginalFilename",
+            &format!(
+                "FastPack-v{}.exe",
+                std::env::var("CARGO_PKG_VERSION").unwrap()
+            ),
+        );
         resource.set("CompanyName", "ColdEternity Team");
         resource.set(
             "LegalCopyright",
