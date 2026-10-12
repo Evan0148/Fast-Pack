@@ -368,13 +368,41 @@ pub fn suggest_target(format: Option<u32>) -> &'static str {
 }
 
 pub fn suggest_output(source: &Path, target: &str, as_zip: bool) -> PathBuf {
-    let stem = source.file_stem().unwrap_or_default().to_string_lossy();
-    let stem = if stem.is_empty() { "pack" } else { &stem };
-    source.with_file_name(format!(
-        "{stem}_converted_{}{}",
-        target.replace('.', "_"),
-        if as_zip { ".zip" } else { "" }
-    ))
+    let name = if source.is_dir() {
+        source.file_name()
+    } else {
+        source.file_stem()
+    }
+    .unwrap_or_default()
+    .to_string_lossy();
+    let mut stem = name.as_ref();
+    while let Some((version, remainder)) = stem
+        .strip_prefix('[')
+        .and_then(|value| value.split_once(']'))
+    {
+        if !tables()
+            .pack_formats
+            .iter()
+            .any(|(label, _)| label == version)
+        {
+            break;
+        }
+        stem = remainder;
+    }
+    let stem = if stem.is_empty() { "pack" } else { stem };
+    let filename = format!("[{target}]{stem}{}", if as_zip { ".zip" } else { "" });
+    if source
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case(&filename))
+    {
+        source
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("Fast Pack")
+            .join(filename)
+    } else {
+        source.with_file_name(filename)
+    }
 }
 
 pub fn probe_pack(path: &Path) -> PackInfo {

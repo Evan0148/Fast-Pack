@@ -39,6 +39,14 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 右上角的 **“了解详细”** 展示开发者头像、版本、开发交流群、进群答案、源码仓库与许可证摘要。
 
+### 转换结果命名
+
+默认按 **`[目标版本]原材质包名.zip`** 命名，并保留版本号中的点。例如：`9178.zip` 转为 1.20.1 后得到 **`[1.20.1]9178.zip`**。
+
+输入文件名已有受支持的版本前缀时，会替换该前缀，避免重复叠加。文件夹输出采用 `[目标版本]原文件夹名`，保留原文件夹名称中的点。如果生成路径会与源路径相同，结果放入同级的 `Fast Pack` 文件夹，保护源包。
+
+GUI 会随目标版本更新默认文件名。CLI 可省略 `OUT` 使用相同命名规则；显式选择的输出名称仍按用户指定的路径保存。
+
 ### 转换过程中发生了什么
 
 ```mermaid
@@ -101,6 +109,7 @@ flowchart LR
 
 ```powershell
 .\fast-pack-cli.exe old.zip new.zip --to 26.2
+.\fast-pack-cli.exe 9178.zip --to 1.20.1
 .\fast-pack-cli.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
 .\fast-pack-cli.exe old.zip output_folder --folder --to 1.20.1
 .\fast-pack-cli.exe old.zip --probe

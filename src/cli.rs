@@ -1,5 +1,5 @@
 use crate::converter::load_extra_renames;
-use crate::{ConversionOptions, convert_pack, pack_format_of, probe_pack, tables};
+use crate::{ConversionOptions, convert_pack, pack_format_of, probe_pack, suggest_output, tables};
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::io::Write;
@@ -14,7 +14,10 @@ use std::path::PathBuf;
 struct Arguments {
     #[arg(value_name = "SRC", help = "源 ZIP 或材质包文件夹")]
     source: Option<PathBuf>,
-    #[arg(value_name = "OUT", help = "输出 ZIP 或文件夹")]
+    #[arg(
+        value_name = "OUT",
+        help = "输出 ZIP 或文件夹，省略时按 [目标版本]原名自动命名"
+    )]
     output: Option<PathBuf>,
     #[arg(long = "from", default_value = "auto", help = "源版本或 auto")]
     source_version: String,
@@ -62,7 +65,9 @@ pub fn run() -> Result<()> {
         );
         return Ok(());
     }
-    let output = args.output.context("请指定输出路径")?;
+    let output = args
+        .output
+        .unwrap_or_else(|| suggest_output(&source, &args.target_version, !args.folder));
     let as_zip = if output
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))

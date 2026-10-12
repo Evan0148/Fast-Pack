@@ -341,7 +341,7 @@ fn detect_probe_and_output_suggestion() {
     assert_eq!(probe_pack(&fixture("modern")).suggested_target, "1.8.9");
     assert_eq!(
         suggest_output(Path::new("pack.zip"), "26.2", true),
-        PathBuf::from("pack_converted_26_2.zip")
+        PathBuf::from("[26.2]pack.zip")
     );
     let work = tempdir().unwrap();
     for meta in [
