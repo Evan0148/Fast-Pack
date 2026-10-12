@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod atlas;
+mod item_display;
 pub mod properties;
 pub mod shaders;
 pub mod sky;

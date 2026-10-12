@@ -1044,54 +1044,9 @@ fn glint(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Res
     Ok(())
 }
 
-fn rewrite_model(value: &mut Value, source: u32, target: u32) -> bool {
+fn rewrite_model(value: &mut Value, source: u32, target: u32, relative: &str) -> bool {
     let old = value.clone();
-    if let Some(parent) = value
-        .get_mut("parent")
-        .filter(|parent| parent.as_str().is_some())
-    {
-        let text = parent.as_str().unwrap();
-        if source < 2
-            && target >= 2
-            && matches!(text, "builtin/generated" | "minecraft:builtin/generated")
-        {
-            *parent = json!("minecraft:item/generated");
-        } else if target < 2
-            && source >= 2
-            && matches!(
-                text,
-                "item/generated"
-                    | "minecraft:item/generated"
-                    | "item/handheld"
-                    | "minecraft:item/handheld"
-            )
-        {
-            *parent = json!("builtin/generated");
-        }
-    }
-    if let Some(display) = value.get_mut("display").and_then(Value::as_object_mut) {
-        if source < 2 && target >= 2 {
-            for old in ["firstperson", "thirdperson"] {
-                if let Some(transform) = display.remove(old) {
-                    display
-                        .entry(format!("{old}_righthand"))
-                        .or_insert_with(|| transform.clone());
-                    display
-                        .entry(format!("{old}_lefthand"))
-                        .or_insert(transform);
-                }
-            }
-        }
-        if target < 2 && source >= 2 {
-            for old in ["firstperson", "thirdperson"] {
-                if let Some(transform) = display.get(&format!("{old}_righthand")).cloned() {
-                    display.entry(old).or_insert(transform);
-                }
-                display.remove(&format!("{old}_righthand"));
-                display.remove(&format!("{old}_lefthand"));
-            }
-        }
-    }
+    super::item_display::migrate(value, source, target, relative);
     if let Some(variants) = value.get_mut("variants").and_then(Value::as_object_mut)
         && source < 4
         && target >= 4
@@ -1304,7 +1259,18 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
         let Ok(mut value) = serde_json::from_slice::<Value>(&fs::read(&path)?) else {
             continue;
         };
-        let mut changed = rewrite_model(&mut value, source, target);
+        let recovered = if source >= 2 {
+            super::item_display::recover(root, &relative, &mut value, target)?
+        } else {
+            false
+        };
+        let mut changed = rewrite_model(&mut value, source, target, &relative);
+        changed |= recovered;
+        if recovered {
+            report
+                .converted
+                .push(format!("{relative}：从原模型备份自动修复旧转换的手持姿态"));
+        }
         if source < 2 && target >= 2 && relative.starts_with("assets/minecraft/models/item/") {
             let name = path.file_stem().unwrap_or_default().to_string_lossy();
             if let Some(overrides) = crate::tables::legacy_items().overrides.get(name.as_ref()) {
