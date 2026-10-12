@@ -196,3 +196,4 @@ $env:ICED_BACKEND = 'tiny-skia'
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=LongCold-ColdEternity-Team/Fast-Pack&type=Date)](https://star-history.com/#LongCold-ColdEternity-Team/Fast-Pack&Date)
+关注wind
