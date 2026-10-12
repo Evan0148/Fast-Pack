@@ -27,6 +27,7 @@ enum Message {
     OpenFolder,
     InputPicked(Option<PathBuf>),
     Target(String),
+    AutoSave(bool),
     SourceVersion(String),
     Swap,
     Output(String),
@@ -66,6 +67,7 @@ enum WorkEvent {
     Progress(String, u8),
     Finished(Box<std::result::Result<ConversionReport, String>>),
     Mapping(std::result::Result<Vec<(String, String)>, String>),
+    Preferences(std::result::Result<(), String>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,6 +134,8 @@ struct App {
     source_version: String,
     target: String,
     target_selected: bool,
+    auto_save: bool,
+    saved_target: Option<String>,
     output: String,
     description: String,
     as_zip: bool,
@@ -154,11 +158,14 @@ struct App {
     result_motion: Tween,
     load_motion: Tween,
     theme_motion: Tween,
+    auto_save_motion: Tween,
     hover: HashMap<u8, Tween>,
     width: f32,
     generation: u64,
     sender: Sender<WorkEvent>,
     receiver: Receiver<WorkEvent>,
+    preferences_sender: Sender<(bool, Option<String>)>,
+    preferences_pending: usize,
     mapping_pending: bool,
     window: Option<window::Id>,
     closing: bool,
@@ -180,12 +187,27 @@ impl App {
         let dark = std::env::var("FAST_PACK_CAPTURE_THEME").as_deref() != Ok("light");
         let capture_stage =
             std::env::var("FAST_PACK_CAPTURE_STAGE").unwrap_or_else(|_| "empty".into());
-        let saved_target = if !cfg!(test) && !smoke && capture.is_none() {
-            crate::preferences::load_target()
+        let preferences = if !cfg!(test) && !smoke && capture.is_none() {
+            crate::preferences::load()
         } else {
-            None
+            crate::preferences::Preferences::default()
         };
-        let target_selected = saved_target.is_some();
+        let saved_target = preferences.target_version;
+        let auto_save = preferences.auto_save;
+        let target_selected = auto_save && saved_target.is_some();
+        let (preferences_sender, preferences_receiver) = mpsc::channel::<(bool, Option<String>)>();
+        if !cfg!(test) && !smoke && capture.is_none() {
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                for (auto_save, target) in preferences_receiver {
+                    let result = crate::preferences::save(auto_save, target.as_deref())
+                        .map_err(|error| format!("{error:#}"));
+                    if sender.send(WorkEvent::Preferences(result)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
         let mut app = Self {
             phase: Phase::Empty,
             source: None,
@@ -193,8 +215,14 @@ impl App {
             sky_preview: None,
             sky_layers: 0,
             source_version: "自动检测".into(),
-            target: saved_target.unwrap_or_else(|| fast_pack::LATEST_VERSION.into()),
+            target: saved_target
+                .as_ref()
+                .filter(|_| auto_save)
+                .cloned()
+                .unwrap_or_else(|| fast_pack::LATEST_VERSION.into()),
             target_selected,
+            auto_save,
+            saved_target,
             output: String::new(),
             description: String::new(),
             as_zip: true,
@@ -217,11 +245,14 @@ impl App {
             result_motion: Tween::new(0.0, 280),
             load_motion: Tween::new(0.0, 240),
             theme_motion: Tween::new(if dark { 1.0 } else { 0.0 }, 180),
+            auto_save_motion: Tween::new(if auto_save { 1.0 } else { 0.0 }, 220),
             hover: HashMap::new(),
             width: 1040.0,
             generation: 0,
             sender,
             receiver,
+            preferences_sender,
+            preferences_pending: 0,
             mapping_pending: false,
             window: None,
             closing: false,
@@ -256,6 +287,7 @@ impl App {
             &self.result_motion,
             &self.load_motion,
             &self.theme_motion,
+            &self.auto_save_motion,
         ]
         .into_iter()
         .any(|value| value.active(self.now))
@@ -288,6 +320,7 @@ impl App {
             || self.phase == Phase::Identifying
             || self.busy()
             || self.mapping_pending
+            || self.preferences_pending > 0
             || self.capture.is_some()
             || self.smoke
         {
@@ -356,12 +389,22 @@ impl App {
     }
     fn remember_target(&mut self) {
         self.target_selected = true;
-        if !cfg!(test)
-            && !self.smoke
-            && self.capture.is_none()
-            && let Err(error) = crate::preferences::save_target(&self.target)
-        {
-            self.log(format!("目标版本未能保存：{error:#}"));
+        if self.auto_save {
+            self.saved_target = Some(self.target.clone());
+            self.save_preferences();
+        }
+    }
+    fn save_preferences(&mut self) {
+        if !cfg!(test) && !self.smoke && self.capture.is_none() {
+            if self
+                .preferences_sender
+                .send((self.auto_save, self.saved_target.clone()))
+                .is_ok()
+            {
+                self.preferences_pending += 1;
+            } else {
+                self.log("偏好设置未能保存：保存任务不可用".into());
+            }
         }
     }
     fn log(&mut self, value: String) {
@@ -529,7 +572,9 @@ impl App {
                                 }
                                 Err(error) => self.fail(error),
                             }
-                            if self.closing || (self.smoke && self.capture.is_none()) {
+                            if self.closing && self.preferences_pending == 0
+                                || self.smoke && self.capture.is_none()
+                            {
                                 return iced::exit();
                             }
                         }
@@ -538,6 +583,15 @@ impl App {
                             match result {
                                 Ok(mapping) => self.extra = mapping,
                                 Err(error) => self.error = Some(error),
+                            }
+                        }
+                        WorkEvent::Preferences(result) => {
+                            self.preferences_pending = self.preferences_pending.saturating_sub(1);
+                            if let Err(error) = result {
+                                self.log(format!("偏好设置未能保存：{error}"));
+                            }
+                            if self.closing && !self.busy() && self.preferences_pending == 0 {
+                                return iced::exit();
                             }
                         }
                         _ => {}
@@ -596,9 +650,13 @@ impl App {
                         .set(0.0, self.now, self.reduced);
                 }
                 window::Event::CloseRequested => {
-                    if self.busy() {
+                    if self.busy() || self.preferences_pending > 0 {
                         self.closing = true;
-                        self.log("转换完成并清理临时文件后关闭窗口".into());
+                        self.log(if self.busy() {
+                            "转换完成并清理临时文件后关闭窗口".into()
+                        } else {
+                            "设置保存完成后关闭窗口".into()
+                        });
                     } else {
                         return iced::exit();
                     }
@@ -653,6 +711,16 @@ impl App {
                 self.source_version = version;
                 self.report = None;
                 self.error = None;
+            }
+            Message::AutoSave(value) if !self.busy() => {
+                self.auto_save = value;
+                self.auto_save_motion
+                    .set(if value { 1.0 } else { 0.0 }, self.now, self.reduced);
+                if value {
+                    self.remember_target();
+                } else {
+                    self.save_preferences();
+                }
             }
             Message::Output(output) if !self.busy() => self.output = output,
             Message::Description(value) if !self.busy() => self.description = value,
@@ -829,6 +897,7 @@ impl App {
                     self.result_motion.snap();
                     self.load_motion.snap();
                     self.theme_motion.snap();
+                    self.auto_save_motion.snap();
                     for value in self.hover.values_mut() {
                         value.snap();
                     }
@@ -1110,6 +1179,73 @@ impl App {
         self.panel(content)
     }
 
+    fn auto_save_control(&self) -> Element<'_, Message> {
+        let c = self.colors();
+        let amount = self.auto_save_motion.value(self.now);
+        let hover = self
+            .hover
+            .get(&34)
+            .map(|value| value.value(self.now))
+            .unwrap_or(0.0);
+        let content = row![
+            column![
+                text("自动保存版本").size(13).color(c.foreground),
+                self.label(if self.auto_save {
+                    "下次打开继续使用所选版本"
+                } else {
+                    "本次版本保留，重启后自动推荐"
+                })
+                .size(11)
+            ]
+            .spacing(4)
+            .width(Length::Fill),
+            text(if self.auto_save { "开启" } else { "关闭" })
+                .size(11)
+                .color(mix(c.muted, c.accent, amount)),
+            widget::canvas(AutoSaveSwitch {
+                amount,
+                hover,
+                colors: c,
+                disabled: self.busy(),
+            })
+            .width(58)
+            .height(34)
+        ]
+        .spacing(9)
+        .align_y(Alignment::Center);
+        let control = button(content)
+            .padding([8, 12])
+            .width(Length::Fill)
+            .on_press_maybe((!self.busy()).then_some(Message::AutoSave(!self.auto_save)))
+            .style(move |_, status| {
+                let disabled = status == button::Status::Disabled;
+                button::Style {
+                    background: Some(mix(c.field, c.accent, amount * 0.035 + hover * 0.045).into()),
+                    text_color: c.foreground,
+                    border: Border {
+                        color: mix(c.line, c.accent, amount * 0.3 + hover * 0.35),
+                        width: 1.0,
+                        radius: 12.0.into(),
+                    },
+                    shadow: Shadow {
+                        color: Color::from_rgba(
+                            c.accent.r,
+                            c.accent.g,
+                            c.accent.b,
+                            if disabled { 0.0 } else { hover * 0.045 },
+                        ),
+                        blur_radius: 10.0 * hover,
+                        offset: Vector::ZERO,
+                    },
+                    ..Default::default()
+                }
+            });
+        mouse_area(control)
+            .on_enter(Message::Hover(34, true))
+            .on_exit(Message::Hover(34, false))
+            .into()
+    }
+
     fn target_panel(&self) -> Element<'_, Message> {
         let c = self.colors();
         let versions: Vec<_> = tables()
@@ -1169,6 +1305,7 @@ impl App {
                 .width(Length::Fill)
                 .padding(12)
                 .style(|_, status| self.picker_style(status)),
+            self.auto_save_control(),
             route,
             self.label("输出位置"),
             row![
@@ -1582,6 +1719,64 @@ impl App {
         } else {
             base
         }
+    }
+}
+
+struct AutoSaveSwitch {
+    amount: f32,
+    hover: f32,
+    colors: Colors,
+    disabled: bool,
+}
+
+impl widget::canvas::Program<Message> for AutoSaveSwitch {
+    type State = ();
+
+    fn draw(
+        &self,
+        _: &(),
+        renderer: &iced::Renderer,
+        _: &Theme,
+        bounds: iced::Rectangle,
+        _: iced::mouse::Cursor,
+    ) -> Vec<widget::canvas::Geometry> {
+        use widget::canvas::{Frame, Path, Stroke};
+        let mut frame = Frame::new(renderer, bounds.size());
+        let track = Path::rounded_rectangle(
+            iced::Point::new(4.0, 4.0),
+            Size::new(50.0, 26.0),
+            13.0.into(),
+        );
+        let track_color = mix(self.colors.line, self.colors.accent, self.amount);
+        frame.fill(
+            &track,
+            if self.disabled {
+                mix(track_color, self.colors.background, 0.5)
+            } else {
+                track_color
+            },
+        );
+        frame.stroke(
+            &track,
+            Stroke::default()
+                .with_color(mix(self.colors.line, self.colors.accent, self.hover * 0.5))
+                .with_width(1.0),
+        );
+        let center = iced::Point::new(17.0 + self.amount * 24.0, 17.0);
+        let radius = 9.5 + if self.disabled { 0.0 } else { self.hover * 0.5 };
+        frame.fill(
+            &Path::circle(iced::Point::new(center.x, center.y + 1.0), radius + 0.5),
+            Color::from_rgba(0.0, 0.0, 0.0, 0.13),
+        );
+        frame.fill(
+            &Path::circle(center, radius),
+            mix(
+                self.colors.foreground,
+                Color::WHITE,
+                if self.disabled { 0.4 } else { 0.94 },
+            ),
+        );
+        vec![frame.into_geometry()]
     }
 }
 
