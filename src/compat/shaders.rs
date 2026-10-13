@@ -11,7 +11,8 @@ pub fn generation(format: u32) -> &'static str {
         7..=54 => "classic-core",
         55..=62 => "pipeline-core",
         63..=87 => "uniform-blocks",
-        _ => "glsl330-uniform-blocks",
+        88..=96 => "glsl330-uniform-blocks",
+        _ => "modern-render-state",
     }
 }
 

@@ -1,14 +1,30 @@
 pub mod assets;
 pub mod atlas;
+mod beds;
+mod effect_panels;
+mod equipment;
 pub mod glint;
 mod item_bindings;
 mod item_display;
 mod legacy_blocks;
 mod legacy_effect_icons;
 mod legacy_gui;
+mod modern_gui;
+mod modern_items;
+mod players;
 pub mod properties;
+mod recent_resources;
 pub mod shaders;
 pub mod sky;
+
+pub(crate) fn migrate_versioned_assets(
+    root: &std::path::Path,
+    target: u32,
+    version: &str,
+    report: &mut assets::AssetReport,
+) -> anyhow::Result<()> {
+    beds::migrate(root, target, version, report)
+}
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

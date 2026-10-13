@@ -1,0 +1,722 @@
+[
+    {
+        "id":  "1.7.10",
+        "format":  [
+                       1,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.7.10"
+    },
+    {
+        "id":  "1.8",
+        "format":  [
+                       1,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.8"
+    },
+    {
+        "id":  "1.8.1",
+        "format":  [
+                       1,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.8.1"
+    },
+    {
+        "id":  "1.8.2",
+        "format":  [
+                       1,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.8.2"
+    },
+    {
+        "id":  "1.8.3",
+        "format":  [
+                       1,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.8.3"
+    },
+    {
+        "id":  "1.8.4",
+        "format":  [
+                       1,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.8.4"
+    },
+    {
+        "id":  "1.8.5",
+        "format":  [
+                       1,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.8.5"
+    },
+    {
+        "id":  "1.8.6",
+        "format":  [
+                       1,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.8.6"
+    },
+    {
+        "id":  "1.8.7",
+        "format":  [
+                       1,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.8.7"
+    },
+    {
+        "id":  "1.8.8",
+        "format":  [
+                       1,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.8.8"
+    },
+    {
+        "id":  "1.8.9",
+        "format":  [
+                       1,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.8.9"
+    },
+    {
+        "id":  "1.9",
+        "format":  [
+                       2,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.9"
+    },
+    {
+        "id":  "1.9.1",
+        "format":  [
+                       2,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.9.1"
+    },
+    {
+        "id":  "1.9.2",
+        "format":  [
+                       2,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.9.2"
+    },
+    {
+        "id":  "1.9.3",
+        "format":  [
+                       2,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.9.3"
+    },
+    {
+        "id":  "1.9.4",
+        "format":  [
+                       2,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.9.4"
+    },
+    {
+        "id":  "1.10",
+        "format":  [
+                       2,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.10"
+    },
+    {
+        "id":  "1.10.1",
+        "format":  [
+                       2,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.10.1"
+    },
+    {
+        "id":  "1.10.2",
+        "format":  [
+                       2,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.10.2"
+    },
+    {
+        "id":  "1.11",
+        "format":  [
+                       3,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.11"
+    },
+    {
+        "id":  "1.11.1",
+        "format":  [
+                       3,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.11.1"
+    },
+    {
+        "id":  "1.11.2",
+        "format":  [
+                       3,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.11.2"
+    },
+    {
+        "id":  "1.12",
+        "format":  [
+                       3,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.12"
+    },
+    {
+        "id":  "1.12.1",
+        "format":  [
+                       3,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.12.1"
+    },
+    {
+        "id":  "1.12.2",
+        "format":  [
+                       3,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.12.2"
+    },
+    {
+        "id":  "1.13",
+        "format":  [
+                       4,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.13"
+    },
+    {
+        "id":  "1.13.1",
+        "format":  [
+                       4,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.13.1"
+    },
+    {
+        "id":  "1.13.2",
+        "format":  [
+                       4,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.13.2"
+    },
+    {
+        "id":  "1.14",
+        "format":  [
+                       4,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.14"
+    },
+    {
+        "id":  "1.14.1",
+        "format":  [
+                       4,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.14.1"
+    },
+    {
+        "id":  "1.14.2",
+        "format":  [
+                       4,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.14.2"
+    },
+    {
+        "id":  "1.14.3",
+        "format":  [
+                       4,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.14.3"
+    },
+    {
+        "id":  "1.14.4",
+        "format":  [
+                       4,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.14.4"
+    },
+    {
+        "id":  "1.15",
+        "format":  [
+                       5,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.15"
+    },
+    {
+        "id":  "1.15.1",
+        "format":  [
+                       5,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.15.1"
+    },
+    {
+        "id":  "1.15.2",
+        "format":  [
+                       5,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.15.2"
+    },
+    {
+        "id":  "1.16",
+        "format":  [
+                       5,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.16"
+    },
+    {
+        "id":  "1.16.1",
+        "format":  [
+                       5,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.16.1"
+    },
+    {
+        "id":  "1.16.2",
+        "format":  [
+                       6,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.16.2"
+    },
+    {
+        "id":  "1.16.3",
+        "format":  [
+                       6,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.16.3"
+    },
+    {
+        "id":  "1.16.4",
+        "format":  [
+                       6,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.16.4"
+    },
+    {
+        "id":  "1.16.5",
+        "format":  [
+                       6,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.16.5"
+    },
+    {
+        "id":  "1.17",
+        "format":  [
+                       7,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.17"
+    },
+    {
+        "id":  "1.17.1",
+        "format":  [
+                       7,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.17.1"
+    },
+    {
+        "id":  "1.18",
+        "format":  [
+                       8,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.18"
+    },
+    {
+        "id":  "1.18.1",
+        "format":  [
+                       8,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.18.1"
+    },
+    {
+        "id":  "1.18.2",
+        "format":  [
+                       8,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.18.2"
+    },
+    {
+        "id":  "1.19",
+        "format":  [
+                       9,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.19"
+    },
+    {
+        "id":  "1.19.1",
+        "format":  [
+                       9,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.19.1"
+    },
+    {
+        "id":  "1.19.2",
+        "format":  [
+                       9,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.19.2"
+    },
+    {
+        "id":  "1.19.3",
+        "format":  [
+                       12,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.19.3"
+    },
+    {
+        "id":  "1.19.4",
+        "format":  [
+                       13,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.19.4"
+    },
+    {
+        "id":  "1.20",
+        "format":  [
+                       15,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.20"
+    },
+    {
+        "id":  "1.20.1",
+        "format":  [
+                       15,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.20.1"
+    },
+    {
+        "id":  "1.20.2",
+        "format":  [
+                       18,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.20.2"
+    },
+    {
+        "id":  "1.20.3",
+        "format":  [
+                       22,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.20.3"
+    },
+    {
+        "id":  "1.20.4",
+        "format":  [
+                       22,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.20.4"
+    },
+    {
+        "id":  "1.20.5",
+        "format":  [
+                       32,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.20.5"
+    },
+    {
+        "id":  "1.20.6",
+        "format":  [
+                       32,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.20.6"
+    },
+    {
+        "id":  "1.21",
+        "format":  [
+                       34,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.21"
+    },
+    {
+        "id":  "1.21.1",
+        "format":  [
+                       34,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.21.1"
+    },
+    {
+        "id":  "1.21.2",
+        "format":  [
+                       42,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.21.2"
+    },
+    {
+        "id":  "1.21.3",
+        "format":  [
+                       42,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.21.3"
+    },
+    {
+        "id":  "1.21.4",
+        "format":  [
+                       46,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.21.4"
+    },
+    {
+        "id":  "1.21.5",
+        "format":  [
+                       55,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.21.5"
+    },
+    {
+        "id":  "1.21.6",
+        "format":  [
+                       63,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.21.6"
+    },
+    {
+        "id":  "1.21.7",
+        "format":  [
+                       64,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.21.7"
+    },
+    {
+        "id":  "1.21.8",
+        "format":  [
+                       64,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.21.8"
+    },
+    {
+        "id":  "1.21.9",
+        "format":  [
+                       69,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.21.9"
+    },
+    {
+        "id":  "1.21.10",
+        "format":  [
+                       69,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.21.10"
+    },
+    {
+        "id":  "1.21.11",
+        "format":  [
+                       75,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "1.21.11"
+    },
+    {
+        "id":  "26.1",
+        "format":  [
+                       84,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "26.1"
+    },
+    {
+        "id":  "26.1.1",
+        "format":  [
+                       84,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "26.1.1"
+    },
+    {
+        "id":  "26.1.2",
+        "format":  [
+                       84,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "26.1.2"
+    },
+    {
+        "id":  "26.2",
+        "format":  [
+                       88,
+                       0
+                   ],
+        "kind":  "release",
+        "reference":  "26.2"
+    },
+    {
+        "id":  "26.3",
+        "format":  [
+                       97,
+                       1
+                   ],
+        "kind":  "release",
+        "reference":  "26.3"
+    },
+    {
+        "id":  "26.4-snapshot-1",
+        "format":  [
+                       98,
+                       0
+                   ],
+        "kind":  "snapshot",
+        "reference":  "26.4-snapshot-1"
+    },
+    {
+        "id":  "26.4-snapshot-2",
+        "format":  [
+                       99,
+                       0
+                   ],
+        "kind":  "snapshot",
+        "reference":  "26.4-snapshot-2"
+    },
+    {
+        "id":  "26.4-snapshot-3",
+        "format":  [
+                       100,
+                       0
+                   ],
+        "kind":  "snapshot",
+        "reference":  "26.4-snapshot-3"
+    },
+    {
+        "id":  "26.4",
+        "format":  [
+                       100,
+                       0
+                   ],
+        "kind":  "snapshot-alias",
+        "reference":  "26.4-snapshot-3"
+    }
+]

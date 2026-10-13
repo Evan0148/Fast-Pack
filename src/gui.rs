@@ -1604,7 +1604,15 @@ impl App {
         );
         let content = column![
             self.title("转换目标", 14),
-            self.label("目标游戏版本"),
+            self.label(
+                if fast_pack::tables::version_profile(&self.target)
+                    .is_some_and(|profile| profile.kind.starts_with("snapshot"))
+                {
+                    "目标游戏版本 · 26.4 当前为官方快照"
+                } else {
+                    "目标游戏版本"
+                }
+            ),
             row![
                 pick_list(versions, Some(self.target.clone()), Message::Target)
                     .width(Length::Fill)
@@ -1967,22 +1975,18 @@ impl App {
             .align_y(Alignment::Center),
         )
         .padding([18, 28]);
-        let intro = column![
-            self.title(
-                if self.phase == Phase::Done {
-                    "你的材质包已准备好。"
-                } else {
-                    "材质包，换个版本。"
-                },
-                28
-            ),
-            self.label(if self.phase == Phase::Done {
-                "转换结果已保存，原材质包没有改动。"
+        let mut intro = column![self.title(
+            if self.phase == Phase::Done {
+                "转换完成"
             } else {
-                "导入材质包，选好目标版本，即可开始转换。"
-            })
-        ]
+                "材质包转换"
+            },
+            28
+        )]
         .spacing(9);
+        if self.phase == Phase::Done {
+            intro = intro.push(self.label("转换结果已保存，原材质包没有改动。"));
+        }
         let panels: Element<'_, Message> = if self.width < 940.0 {
             column![self.source_panel(), self.target_panel()]
                 .spacing(18)

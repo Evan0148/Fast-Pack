@@ -4,9 +4,36 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
-pub const LATEST_VERSION: &str = "26.2";
-pub const LEGACY_VERSION: &str = "1.8.9";
+pub const LATEST_VERSION: &str = "26.4";
+pub const LEGACY_VERSION: &str = "1.7.10";
 pub const NEW_META_MIN_FORMAT: u32 = 69;
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct VersionProfile {
+    pub id: String,
+    pub format: [u32; 2],
+    pub kind: String,
+    pub reference: String,
+}
+
+static VERSIONS: LazyLock<Vec<VersionProfile>> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../assets/versions.json")).expect("版本配置无效")
+});
+
+pub fn version_profiles() -> &'static [VersionProfile] {
+    &VERSIONS
+}
+
+pub fn version_profile(version: &str) -> Option<&'static VersionProfile> {
+    VERSIONS.iter().find(|profile| profile.id == version)
+}
+
+pub fn format_components(version: Option<&str>, major: u32) -> [u32; 2] {
+    version
+        .and_then(version_profile)
+        .filter(|profile| profile.format[0] == major)
+        .map_or([major, 0], |profile| profile.format)
+}
 
 #[derive(Debug, Deserialize)]
 pub struct Tables {

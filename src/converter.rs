@@ -33,7 +33,7 @@ impl Default for ConversionOptions {
     fn default() -> Self {
         Self {
             src_format: None,
-            tgt_format: 88,
+            tgt_format: 100,
             description: None,
             as_zip: true,
             lowercase: true,
@@ -63,6 +63,10 @@ pub struct ConversionReport {
     pub output: Option<String>,
     pub meta_written: bool,
     #[serde(default)]
+    pub target_version: Option<String>,
+    #[serde(default)]
+    pub target_format_components: Option<[u32; 2]>,
+    #[serde(default)]
     pub assets: crate::compat::assets::AssetReport,
     #[serde(default)]
     pub compatibility: crate::compat::CompatibilityReport,
@@ -82,7 +86,9 @@ impl ConversionReport {
             ),
             format!(
                 "  目标版本   : {} (pack_format {})",
-                version_label_of(self.tgt_format),
+                self.target_version
+                    .clone()
+                    .unwrap_or_else(|| version_label_of(self.tgt_format)),
                 self.tgt_format
             ),
             format!("  文件总数   : {}", self.files_total),
@@ -364,7 +370,7 @@ pub fn compact_json(value: &Value) -> String {
 }
 
 pub fn suggest_target(format: Option<u32>) -> &'static str {
-    if format.is_some_and(|format| format >= 88) {
+    if format.is_some_and(|format| format >= crate::pack_format_of(LATEST_VERSION).unwrap_or(100)) {
         LEGACY_VERSION
     } else {
         LATEST_VERSION
@@ -1063,14 +1069,19 @@ fn write_mcmeta(
     if description.is_empty() {
         description = format!(
             "Converted for Minecraft {}",
-            version_label_of(report.tgt_format)
+            options
+                .target_version
+                .clone()
+                .unwrap_or_else(|| version_label_of(report.tgt_format))
         );
     }
     let mut pack = Map::new();
     pack.insert("description".into(), Value::String(description));
     if report.tgt_format >= NEW_META_MIN_FORMAT {
-        pack.insert("min_format".into(), json!([report.tgt_format, 0]));
-        pack.insert("max_format".into(), json!([report.tgt_format, 0]));
+        let format =
+            crate::tables::format_components(options.target_version.as_deref(), report.tgt_format);
+        pack.insert("min_format".into(), json!(format));
+        pack.insert("max_format".into(), json!(format));
     }
     pack.insert("pack_format".into(), json!(report.tgt_format));
     fs::write(path, serde_json::to_string_pretty(&json!({"pack": pack}))?)?;
@@ -1181,6 +1192,11 @@ pub fn convert_pack(
     let mut report = ConversionReport {
         src_format,
         tgt_format: options.tgt_format,
+        target_version: options.target_version.clone(),
+        target_format_components: Some(crate::tables::format_components(
+            options.target_version.as_deref(),
+            options.tgt_format,
+        )),
         direction: if options.tgt_format > src_format {
             "升级"
         } else if options.tgt_format < src_format {
@@ -1234,6 +1250,15 @@ pub fn convert_pack(
     post_renames(&root, &mut report)?;
     progress("自动适配实体、模型与界面", 80);
     report.assets = crate::compat::assets::migrate(&root, src_format, options.tgt_format)?;
+    crate::compat::migrate_versioned_assets(
+        &root,
+        options.tgt_format,
+        options
+            .target_version
+            .as_deref()
+            .unwrap_or(&version_label_of(options.tgt_format)),
+        &mut report.assets,
+    )?;
     progress("自动适配天空与材质包着色器", 82);
     report.compatibility = crate::compat::migrate(
         &root,

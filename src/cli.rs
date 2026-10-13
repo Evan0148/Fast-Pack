@@ -21,7 +21,7 @@ struct Arguments {
     output: Option<PathBuf>,
     #[arg(long = "from", default_value = "auto", help = "源版本或 auto")]
     source_version: String,
-    #[arg(long = "to", default_value = "26.2", help = "目标版本")]
+    #[arg(long = "to", default_value = crate::LATEST_VERSION, help = "目标版本；26.4 对应当前官方快照")]
     target_version: String,
     #[arg(long, help = "输出为文件夹")]
     folder: bool,

@@ -1420,7 +1420,9 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
                 )?;
                 count += 1;
             }
-            if value.get("overrides").is_some() {
+            if value.get("overrides").is_some()
+                && !super::modern_items::recognized(&relative, &value, target)
+            {
                 report.warnings.push(format!(
                     "{relative}：旧 overrides 已保留；尚未证明任意旧谓词与新物品调度语义等价"
                 ));
@@ -1602,10 +1604,17 @@ pub fn migrate_with_glint(
     item_resources(root, source, target, &mut report)?;
     super::item_bindings::migrate(root, source, target, &mut report)?;
     super::item_display::bind_definitions(root, source, target, &mut report)?;
+    super::modern_items::migrate(root, source, target, &mut report)?;
     models(root, source, target, &mut report)?;
     super::legacy_blocks::migrate(root, source, target, &mut report)?;
+    super::equipment::migrate(root, source, target, &mut report)?;
+    super::players::migrate(root, source, target, &mut report)?;
+    super::recent_resources::migrate(root, source, target, &mut report)?;
+    super::modern_gui::prepare(root, source, target, &mut report)?;
+    super::modern_gui::migrate(root, source, target, &mut report)?;
     gui(root, source, target, &mut report)?;
     super::legacy_gui::migrate(root, source, target, &mut report)?;
+    super::effect_panels::migrate(root, source, target, &mut report)?;
     super::glint::migrate(root, source, target, glint_color, &mut report)?;
     fonts(root, source, target, &mut report)?;
     Ok(report)
