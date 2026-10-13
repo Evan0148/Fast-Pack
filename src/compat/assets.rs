@@ -1610,6 +1610,7 @@ pub fn migrate_with_glint(
     super::item_display::bind_definitions(root, source, target, &mut report)?;
     super::modern_items::migrate(root, source, target, &mut report)?;
     models(root, source, target, &mut report)?;
+    super::item_transparency::migrate(root, source, target, &mut report)?;
     super::legacy_blocks::migrate(root, source, target, &mut report)?;
     super::equipment::migrate(root, source, target, &mut report)?;
     super::players::migrate(root, source, target, &mut report)?;

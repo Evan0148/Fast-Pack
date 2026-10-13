@@ -19,6 +19,7 @@ pub struct Preferences {
     pub auto_save_path: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub export_directory: Option<PathBuf>,
+    #[serde(skip)]
     pub custom_glint: bool,
     pub glint_color: [u8; 3],
 }

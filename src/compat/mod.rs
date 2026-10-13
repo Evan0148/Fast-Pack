@@ -6,6 +6,7 @@ mod equipment;
 pub mod glint;
 mod item_bindings;
 mod item_display;
+mod item_transparency;
 mod legacy_blocks;
 mod legacy_effect_icons;
 mod legacy_gui;

@@ -21,8 +21,9 @@ Fast Pack 是面向 Minecraft Java Edition 的材质包版本转换工具，由 
 - **天空资源跨格式迁移。** 自动处理 MCPatcher、OptiFine 的目录与 `source` 引用，重排六面贴图朝向，并支持已识别的静态 FSB / Nuit 天空结构与反向转换。旧包转到新版本时，天空资源也参与转换。
 - **实体贴图按像素重建。** 箱子 UV 重排、双箱左右拆分、旧船到新船的纹理映射、旗帜和盾牌透明掩码转换都由程序执行，支持标准布局的高清比例。
 - **GUI 与字体一起迁移。** 根据 88 条精灵配方拆分或合并 GUI 图集，生成窄版效果列表，适配游戏模式槽位与附魔光效，处理旧 Unicode 字体页。
-- **自定义附魔闪烁颜色。** 在“更多转换选项”中选择白色、经典紫、冰蓝、薄荷绿、金色、粉色、红色，也可以输入任意 HEX 色值或拖动方形调色卡。调色面板采用方形饱和度 / 明暗卡与竖向色相条，提供流动光效示意，颜色与开关自动保存；跨版本转换自动处理旧版渲染器的紫色染色，保留原图案、透明度与动画元数据。
+- **自定义附魔闪烁颜色。** 在“更多转换选项”中选择白色、经典紫、冰蓝、薄荷绿、金色、粉色、红色，也可以输入任意 HEX 色值或拖动方形调色卡。调色面板采用方形饱和度 / 明暗卡与竖向色相条，提供流动光效示意。颜色自动保存，每次启动和转换结束后取消自定义勾选，需要使用时手动启用；跨版本转换自动处理旧版渲染器的紫色染色，保留原图案、透明度与动画元数据。
 - **旧版工具与装备保留材质。** 对照官方资源补齐 227 个旧版物品纹理名称，递归处理嵌套贴图与模型引用，区分方块和物品的映射。支持木质工具、弓、鱼竿、染料、药水、唱片等旧名称，以及弓 / 鱼竿状态和时钟 / 罗盘帧。
+- **旧工具轮廓与厚度。** 旧包转到 1.9+ 时，识别生成式物品贴图里大面积 alpha 为 1–2 的近透明背景，将其恢复为真正透明，让新版沿工具实际轮廓生成侧面，避免只剩正反两张薄片。保留可见像素、RGB、动画元数据和已有自定义立体模型，不改写手持角度与缩放规则。
 - **只有贴图的旧包自动补模型。** 转到 1.13–1.21.3 时，为上传包中已有的物品贴图补齐缺失模型，明确绑定装备、工具、弓、鱼竿等资源；1.20 起同时补齐相应盔甲纹饰模型。参考表包含 254 个基础物品模型与 200 个纹饰变体，已有自定义模型优先保留。
 - **新版物品定义自动生成。** 转到 1.21.4+ 时，按目标官方结构生成物品定义与需要的模型变体，处理弓拉弦、鱼竿抛投、时钟、罗盘、药水染色和盔甲纹饰。参考数据覆盖 12 组格式，每组包含 252 个旧物品定义与 570 个模型变体；只为原包提供了贴图或模型的物品生成资源，已有自定义定义优先保留。
 - **新版装备与玩家路径。** 1.21.2+ 的盔甲穿戴贴图自动迁移到装备目录，保留皮革叠层与动画元数据；旧 Steve / Alex 默认皮肤迁移到新玩家目录，64×32 皮肤按旧版左右肢体规则补齐。
@@ -54,7 +55,7 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.2.exe`。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.3.exe`。
 2. 双击下载的程序，把材质包 ZIP 或文件夹拖入窗口。
 3. 选择目标版本与导出目录，点击“开始转换”。资源适配默认自动执行。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
@@ -77,7 +78,7 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 展开 **“更多转换选项”**，开启 **“自定义附魔颜色”**，点击颜色右侧紧邻的 **“调色”** 按钮。可以直接选白色等预设，输入 `#RRGGBB` / `#RGB`，或拖动调色卡。右侧竖向色谱选择色相，左侧方形区域横向调整饱和度、纵向调整明暗；点击预设、输入有效色值或拖动调色卡会自动启用自定义颜色。
 
-颜色和自定义开关默认自动记住，后续转换与重启继续使用。取消勾选自定义颜色后，色块、调色卡与动画预览同步恢复原版紫色，下一次转换也会将输入包的附魔光效统一恢复紫色。之前选择的自定义颜色仍被记住，重新勾选即可恢复。设置存放在同一个 `%LOCALAPPDATA%\Fast Pack\settings.json` 中；拖动调色短暂停止后自动保存，关闭面板、开始转换或关闭程序时也会提交待保存的颜色。
+只自动记住选择的颜色。**每次重新打开软件，以及每个转换任务结束后，“自定义附魔颜色”都会取消勾选。** 后续包需要手动重新启用；关闭状态使用原版紫色。转换任务已经开始时使用的颜色不会因为完成后的重置而改变，重置只影响下一次转换。之前选择的颜色仍被记住，重新勾选即可恢复。旧配置里保存的启用状态不再恢复，设置不再写入这个开关；颜色仍存放在 `%LOCALAPPDATA%\Fast Pack\settings.json` 中，版本和导出目录记忆保持原样。
 
 1.8.9–1.14 的附魔图案通常为灰度图，颜色由游戏渲染器额外乘入；1.15 起颜色烘焙进贴图。底层兼容转换会补上或补偿这层染色，修复旧图直接复制到新版后变白的问题。桌面版未勾选自定义颜色时，最终输出统一使用原版紫色；需要白色等效果时开启自定义颜色选择相应色值。1.19.4 起同步生成物品、实体和盔甲资源名称，兼容后续版本的路径变化。
 
@@ -95,7 +96,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.2.exe`、`fast-pack-cli-v1.2.2.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.3.exe`、`fast-pack-cli-v1.2.3.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -179,19 +180,19 @@ flowchart LR
 
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.2 为例，命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.3 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli-v1.2.2.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.2.2.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.2.2.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.2.2.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.2.2.exe old.zip --probe
-.\fast-pack-cli-v1.2.2.exe --versions
-.\fast-pack-cli-v1.2.2.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.2.2.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.2.2.exe old.zip --to 1.20.1 --vanilla-glint
-.\fast-pack-cli-v1.2.2.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.2.3.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.2.3.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.2.3.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.2.3.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.2.3.exe old.zip --probe
+.\fast-pack-cli-v1.2.3.exe --versions
+.\fast-pack-cli-v1.2.3.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.2.3.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.2.3.exe old.zip --to 1.20.1 --vanilla-glint
+.\fast-pack-cli-v1.2.3.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--from auto` 默认自动识别源版本。`--report-json` 仅在指定时将详情另存到提供的路径，不会把 `转换报告.txt` 塞入输出 ZIP。自定义映射采用 JSON 对象，例如 `{"custom_texture":"replacement_texture"}`。
@@ -259,6 +260,7 @@ $env:ICED_BACKEND = 'tiny-skia'
 | `src/compat/assets.rs` | 实体 UV、alpha、模型、GUI、附魔光效、字体 |
 | `src/compat/glint.rs` | 附魔染色代际转换、HEX 解析、RGB 重着色、图案生成与元数据同步 |
 | `src/compat/item_display.rs`、`assets/item-display.json` | 官方物品手持姿态参考表、跨版本姿态换算与旧转换恢复 |
+| `src/compat/item_transparency.rs` | 旧生成式物品近透明背景清理、侧面轮廓恢复与自定义立体模型保护 |
 | `src/compat/item_bindings.rs`、`assets/item-bindings.json` | 旧包缺失的物品模型绑定与盔甲纹饰变体 |
 | `src/compat/modern_items.rs`、`assets/modern-items.json` | 各目标代际的物品定义、常见状态、染色和模型变体 |
 | `src/compat/modern_gui.rs` | 创造背包升级、标签精灵拆分、旧效果图标提取 |

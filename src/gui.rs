@@ -279,11 +279,7 @@ impl App {
         let auto_save = preferences.auto_save;
         let auto_save_path = preferences.auto_save_path;
         let saved_export_directory = preferences.export_directory;
-        let active_glint_color = if preferences.custom_glint {
-            preferences.glint_color
-        } else {
-            fast_pack::compat::glint::VANILLA_COLOR
-        };
+        let active_glint_color = fast_pack::compat::glint::VANILLA_COLOR;
         let export_directory_input = saved_export_directory
             .as_ref()
             .filter(|_| auto_save_path)
@@ -328,7 +324,7 @@ impl App {
             as_zip: true,
             preserve_lang: false,
             preserve_case: false,
-            custom_glint: preferences.custom_glint,
+            custom_glint: false,
             glint_color: preferences.glint_color,
             glint_hsv: rgb_hsv(active_glint_color, 0.0),
             glint_hex: fast_pack::compat::glint::color_hex(active_glint_color),
@@ -797,6 +793,10 @@ impl App {
                                 }
                                 Err(error) => self.fail(error),
                             }
+                            self.custom_glint = false;
+                            self.glint_edited = None;
+                            self.sync_glint_color();
+                            self.save_preferences();
                             if self.closing && self.preferences_pending == 0
                                 || self.smoke && self.capture.is_none()
                             {
@@ -1804,7 +1804,7 @@ impl App {
         let valid = fast_pack::compat::glint::parse_color(&self.glint_hex).is_ok();
         controls = controls.push(
             text(if valid {
-                "颜色与开关自动保存"
+                "颜色自动保存 · 仅本次启用"
             } else {
                 "输入 3 位或 6 位 HEX 色值"
             })
