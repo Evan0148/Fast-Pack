@@ -705,13 +705,23 @@ fn restore_optifine(
             fs::copy(local(root, &layer.texture)?, &target)?;
         } else {
             let image = super::assets::open(&local(root, &layer.texture)?)?;
-            let image = atlas::remap(
+            let converted = atlas::remap(
                 &image,
                 layout(&layer.layout),
                 AtlasLayout::Optifine,
                 layer.world == "world0",
             )?;
-            image.save(&target)?;
+            if image.dimensions() != converted.dimensions() {
+                report.sky_converted.push(format!(
+                    "{}：六面分别对齐尺寸 {}×{} → {}×{}，保留完整面内容与朝向",
+                    layer.original,
+                    image.width(),
+                    image.height(),
+                    converted.width(),
+                    converted.height()
+                ));
+            }
+            converted.save(&target)?;
         }
         let mut props = layer.properties.clone();
         props.insert("source".into(), format!("./{name}.png"));
@@ -793,13 +803,7 @@ pub fn migrate(
                 let reader = image::ImageReader::open(local(root, &layer.texture)?)?
                     .with_guessed_format()?;
                 let (width, height) = reader.into_dimensions()?;
-                ensure!(
-                    width > 0
-                        && width.is_multiple_of(3)
-                        && height.is_multiple_of(2)
-                        && width / 3 == height / 2,
-                    "天空图不是有效的 3×2 六面布局"
-                );
+                atlas::face_size(width, height)?;
                 Ok(())
             })();
             if let Err(error) = preflight {
@@ -838,12 +842,21 @@ pub fn migrate(
                 ));
                 fs::create_dir_all(file.parent().unwrap())?;
                 fs::write(&file, serde_json::to_vec_pretty(&definition)?)?;
-                let description = format!(
+                let mut description = format!(
                     "{} → {} schema {}（六面朝向与淡入淡出已转换）",
                     layer.original,
                     target,
                     if nuit { 1 } else { 2 }
                 );
+                if image.dimensions() != converted.dimensions() {
+                    description.push_str(&format!(
+                        "；六面分别对齐 {}×{} → {}×{}",
+                        image.width(),
+                        image.height(),
+                        converted.width(),
+                        converted.height()
+                    ));
+                }
                 generated.push((layer.world.clone(), texture, file, description));
                 Ok(())
             })();
@@ -927,10 +940,8 @@ fn compose_preview(
         let Ok(size) = atlas::dimensions(&image) else {
             continue;
         };
-        let image = if size > 256 {
-            image::imageops::resize(&image, 768, 512, image::imageops::FilterType::Triangle)
-        } else {
-            image
+        let Ok(image) = atlas::resize_faces(&image, size.min(256)) else {
+            continue;
         };
         let Ok(image) = atlas::remap(
             &image,

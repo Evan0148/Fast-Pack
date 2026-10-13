@@ -25,6 +25,7 @@ Fast Pack 是面向 Minecraft Java Edition 的材质包版本转换工具，由 
 - **旧版工具与装备保留材质。** 对照官方资源补齐 227 个旧版物品纹理名称，递归处理嵌套贴图与模型引用，区分方块和物品的映射。支持木质工具、弓、鱼竿、染料、药水、唱片等旧名称，以及弓 / 鱼竿状态和时钟 / 罗盘帧。
 - **旧工具轮廓与厚度。** 旧包转到 1.9+ 时，识别生成式物品贴图里大面积 alpha 为 1–2 的近透明背景，将其恢复为真正透明，让新版沿工具实际轮廓生成侧面，避免只剩正反两张薄片。保留可见像素、RGB、动画元数据和已有自定义立体模型，不改写手持角度与缩放规则。
 - **自动补齐同风格下界合金套装。** 目标版本为 1.16+ 时，自动为原包缺失的下界合金剑、斧、镐、锹、锄、头盔、胸甲、护腿和靴子制作材质，并补穿戴贴图。优先采用原包同类钻石装备，缺失时依次采用可用的其他材质；保留像素轮廓、短剑长度、分辨率、透明度、阴影层次和动画，按原版下界合金材质分开处理暗红底色、紫色金属包边、银紫刃口高光与暗红柄部细节，依据原图轮廓增加边缘层次。模型继承、立体几何、UV、手持大小、旋转及自定义状态变体同步适配，1.20+ 盔甲纹饰和 1.21.4+ 物品定义也会生成。已有下界合金贴图、模型或物品定义优先保留，玩家无需额外操作。原包未提供某类装备参考时沿用目标原版资源。
+- **天空图尺寸自动对齐。** 对明确使用 3×2 六面布局、因缩放或像素取整而略偏比例的天空图，按六个独立面重采样到相同的正方形尺寸，自动处理 2560×1706、3500×2334、3015×2048、2210×1535 等图集。完整保留每面的覆盖范围，避免整图缩放造成相邻面串色；标准尺寸的图集保持像素不变，预览与 OptiFine / FabricSkyBoxes / Nuit 转换使用同一套规则。
 - **只有贴图的旧包自动补模型。** 转到 1.13–1.21.3 时，为上传包中已有的物品贴图补齐缺失模型，明确绑定装备、工具、弓、鱼竿等资源；1.20 起同时补齐相应盔甲纹饰模型。参考表包含 254 个基础物品模型与 200 个纹饰变体，已有自定义模型优先保留。
 - **新版物品定义自动生成。** 转到 1.21.4+ 时，按目标官方结构生成物品定义与需要的模型变体，处理弓拉弦、鱼竿抛投、时钟、罗盘、药水染色和盔甲纹饰。参考数据覆盖 12 组格式，每组包含 252 个旧物品定义与 570 个模型变体；只为原包提供了贴图或模型的物品生成资源，已有自定义定义优先保留。
 - **新版装备与玩家路径。** 1.21.2+ 的盔甲穿戴贴图自动迁移到装备目录，保留皮革叠层与动画元数据；旧 Steve / Alex 默认皮肤迁移到新玩家目录，64×32 皮肤按旧版左右肢体规则补齐。
@@ -57,7 +58,7 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.7.exe`。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.8.exe`。
 2. 双击下载的程序，把材质包 ZIP 或文件夹拖入窗口。
 3. 选择目标版本与导出目录，点击“开始转换”。资源适配默认自动执行。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
@@ -98,7 +99,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.7.exe`、`fast-pack-cli-v1.2.7.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.8.exe`、`fast-pack-cli-v1.2.8.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -182,19 +183,19 @@ flowchart LR
 
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.7 为例，命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.8 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli-v1.2.7.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.2.7.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.2.7.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.2.7.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.2.7.exe old.zip --probe
-.\fast-pack-cli-v1.2.7.exe --versions
-.\fast-pack-cli-v1.2.7.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.2.7.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.2.7.exe old.zip --to 1.20.1 --vanilla-glint
-.\fast-pack-cli-v1.2.7.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.2.8.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.2.8.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.2.8.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.2.8.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.2.8.exe old.zip --probe
+.\fast-pack-cli-v1.2.8.exe --versions
+.\fast-pack-cli-v1.2.8.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.2.8.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.2.8.exe old.zip --to 1.20.1 --vanilla-glint
+.\fast-pack-cli-v1.2.8.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--from auto` 默认自动识别源版本。`--report-json` 仅在指定时将详情另存到提供的路径，不会把 `转换报告.txt` 塞入输出 ZIP。自定义映射采用 JSON 对象，例如 `{"custom_texture":"replacement_texture"}`。

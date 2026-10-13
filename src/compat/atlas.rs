@@ -1,5 +1,6 @@
 use anyhow::{Result, ensure};
 use image::{RgbaImage, imageops};
+use std::borrow::Cow;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AtlasLayout {
@@ -60,18 +61,49 @@ fn faces(layout: AtlasLayout, overworld: bool) -> [(usize, Matrix); 6] {
     }
 }
 
-pub fn dimensions(image: &RgbaImage) -> Result<u32> {
+pub fn face_size(width: u32, height: u32) -> Result<u32> {
+    let horizontal = u64::from(width) * 2;
+    let vertical = u64::from(height) * 3;
     ensure!(
-        image.width().is_multiple_of(3)
-            && image.height().is_multiple_of(2)
-            && image.width() / 3 == image.height() / 2,
-        "天空图需要 3×2 方形六面布局，实际为 {}×{}",
-        image.width(),
-        image.height()
+        width >= 3 && height >= 2 && horizontal.abs_diff(vertical) * 10 <= vertical,
+        "天空图未识别为 3×2 六面布局，实际为 {width}×{height}"
     );
-    let size = image.width() / 3;
-    ensure!(size > 0, "天空图不能为空");
+    let size = width.div_ceil(3).max(height.div_ceil(2));
+    ensure!(size <= u32::MAX / 3, "天空单面尺寸无效");
     Ok(size)
+}
+
+pub fn dimensions(image: &RgbaImage) -> Result<u32> {
+    face_size(image.width(), image.height())
+}
+
+pub fn resize_faces(image: &RgbaImage, size: u32) -> Result<RgbaImage> {
+    dimensions(image)?;
+    ensure!(size > 0 && size <= u32::MAX / 3, "天空单面尺寸无效");
+    if image.dimensions() == (3 * size, 2 * size) {
+        return Ok(image.clone());
+    }
+    let mut output = RgbaImage::new(3 * size, 2 * size);
+    let boundary = |part: u32, extent: u32, count: u32| {
+        ((u64::from(part) * u64::from(extent) + u64::from(count / 2)) / u64::from(count)) as u32
+    };
+    for row in 0..2 {
+        for column in 0..3 {
+            let left = boundary(column, image.width(), 3);
+            let right = boundary(column + 1, image.width(), 3);
+            let top = boundary(row, image.height(), 2);
+            let bottom = boundary(row + 1, image.height(), 2);
+            let face = imageops::crop_imm(image, left, top, right - left, bottom - top).to_image();
+            let face = imageops::resize(&face, size, size, imageops::FilterType::Triangle);
+            imageops::replace(
+                &mut output,
+                &face,
+                i64::from(column * size),
+                i64::from(row * size),
+            );
+        }
+    }
+    Ok(output)
 }
 
 pub fn remap(
@@ -81,8 +113,13 @@ pub fn remap(
     overworld: bool,
 ) -> Result<RgbaImage> {
     let size = dimensions(image)?;
+    let image = if image.dimensions() == (3 * size, 2 * size) {
+        Cow::Borrowed(image)
+    } else {
+        Cow::Owned(resize_faces(image, size)?)
+    };
     if source == target {
-        return Ok(image.clone());
+        return Ok(image.into_owned());
     }
     let mut out = RgbaImage::new(image.width(), image.height());
     for (target_tile, target_matrix) in faces(target, overworld) {
@@ -121,8 +158,8 @@ pub fn remap(
 }
 
 pub fn faces_preview(image: &RgbaImage) -> Result<Vec<RgbaImage>> {
-    let size = dimensions(image)?;
     let canonical = remap(image, AtlasLayout::Optifine, AtlasLayout::Nuit, true)?;
+    let size = canonical.width() / 3;
     Ok([4, 2, 5, 3, 1, 0]
         .into_iter()
         .map(|tile| {
