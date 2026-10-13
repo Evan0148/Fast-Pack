@@ -1,6 +1,6 @@
-Minecraft Java resource models and textures belong to Mojang Studios / Microsoft.
+Minecraft Java resource models, textures and sounds belong to Mojang Studios / Microsoft.
 Official reference clients: Minecraft Java 1.20.1 and 26.4 snapshot 3.
-These assets are used only to supply missing inventory and held-item appearances.
+These assets supply missing inventory and held-item appearances and sound resources.
 Minecraft is not affiliated with or endorsed by ColdEternity Team / Fast Pack.
 
 Protocol identifiers, numeric model data, registry IDs and carrier names are
@@ -17,3 +17,7 @@ https://github.com/ViaVersionAddons/ViaBackwards-Plus
 
 The adapter does not install client mods or server plugins, change placed block
 or entity rendering, or infer an item when its server sends no distinguishing tag.
+Sound resources cannot recover protocol sound packets that were cancelled or
+rewritten as shared legacy events. The fastpack sound namespace provides direct
+event aliases for servers that preserve or explicitly forward those sounds.
+Equip animations in Minecraft 1.20.1 are controlled by client code, not pack models.

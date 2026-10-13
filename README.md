@@ -59,7 +59,7 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.9.exe`。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.10.exe`。
 2. 双击下载的程序，把材质包 ZIP 或文件夹拖入窗口。
 3. 选择目标版本与导出目录，点击“开始转换”。资源适配默认自动执行。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
@@ -100,7 +100,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.9.exe`、`fast-pack-cli-v1.2.9.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.10.exe`、`fast-pack-cli-v1.2.10.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -196,23 +196,31 @@ flowchart LR
 
 该功能还原物品栏和手持模型。放置后的方块、实体、物品行为、攻击机制和客户端没有的渲染功能属于不同范围。无法在旧模型格式中表达的特殊实体物品会继续使用代理的替代外观，避免输出空模型。适配器为独立 Rust 实现，协议字段来自公开互操作数据，缺失外观参考官方客户端资源，未嵌入 ViaBackwards-Plus 的包文件或代码。
 
+v1.2.10 起，转换到 1.20.x 等受支持的旧客户端时，还会自动补齐重锤的三类猛击音效、风弹的发射与爆裂音效、旋风人的风弹爆裂音效，包括 Ogg 文件、声音事件及中英文字幕。原包已有的事件定义、音频和字幕优先保留，不覆盖普通攻击、弓箭或烈焰弹的共用声音。风弹发射声在官方资源中使用 `random/bow`，风弹爆裂声则有独立音频。
+
+**声音资源与声音触发需要分别处理。** ViaBackwards 会把重锤声音改成普通攻击事件；风弹爆裂声转到 1.20.1 的过程中可能被取消。已经被合并或丢弃的事件不包含足够的信息，材质包无法还原其来源。转换器生成 `fastpack:item.mace.smash_air`、`fastpack:item.mace.smash_ground`、`fastpack:item.mace.smash_ground_heavy`、`fastpack:entity.wind_charge.throw`、`fastpack:entity.wind_charge.wind_burst` 和 `fastpack:entity.breeze.wind_burst` 六个入口，供能够保留原声的服务器适配使用；这些入口委托给原包对应的 Minecraft 声音事件。仅升级转换器不能让未传递正确事件的服务器自动恢复声音。
+
+Minecraft 1.20.1 的换手抬起与攻击冷却造成的手部动画由客户端渲染代码控制，物品模型 JSON 没有关闭该动画的开关。转换器保留已经正常的重锤模型；不会写入旧客户端不识别的参数，或改变所有下界合金斧的表现来模拟关闭动画。
+
 参考：[ViaBackwards 配置](https://github.com/ViaVersion/ViaBackwards/blob/master/common/src/main/resources/assets/viabackwards/config.yml)、[物品协议映射](https://github.com/ViaVersion/Mappings)、[原项目说明](https://github.com/ViaVersionAddons/ViaBackwards-Plus/blob/main/.github/README.md)。
+
+声音映射：[1.20.5 → 1.20.3](https://github.com/ViaVersion/Mappings/blob/master/mappings/diff/mapping-1.20.5to1.20.3.json)、[1.20.3 → 1.20.2](https://github.com/ViaVersion/Mappings/blob/master/mappings/diff/mapping-1.20.3to1.20.2.json)。
 
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.9 为例，命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.10 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli-v1.2.9.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.2.9.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.2.9.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.2.9.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.2.9.exe old.zip --probe
-.\fast-pack-cli-v1.2.9.exe --versions
-.\fast-pack-cli-v1.2.9.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.2.9.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.2.9.exe old.zip --to 1.20.1 --vanilla-glint
-.\fast-pack-cli-v1.2.9.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.2.10.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.2.10.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.2.10.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.2.10.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.2.10.exe old.zip --probe
+.\fast-pack-cli-v1.2.10.exe --versions
+.\fast-pack-cli-v1.2.10.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.2.10.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.2.10.exe old.zip --to 1.20.1 --vanilla-glint
+.\fast-pack-cli-v1.2.10.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--from auto` 默认自动识别源版本。`--report-json` 仅在指定时将详情另存到提供的路径，不会把 `转换报告.txt` 塞入输出 ZIP。自定义映射采用 JSON 对象，例如 `{"custom_texture":"replacement_texture"}`。

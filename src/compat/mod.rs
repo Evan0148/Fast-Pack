@@ -21,6 +21,7 @@ pub mod shaders;
 pub mod sky;
 mod texture_formats;
 mod via_items;
+mod via_sounds;
 
 pub(crate) fn migrate_versioned_assets(
     root: &std::path::Path,
@@ -29,7 +30,8 @@ pub(crate) fn migrate_versioned_assets(
     report: &mut assets::AssetReport,
 ) -> anyhow::Result<()> {
     beds::migrate(root, target, version, report)?;
-    via_items::migrate(root, target, version, report)
+    via_items::migrate(root, target, version, report)?;
+    via_sounds::migrate(root, target, version, report)
 }
 
 use anyhow::Result;

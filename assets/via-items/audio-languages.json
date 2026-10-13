@@ -1,0 +1,23 @@
+{
+    "en_us":  {
+                  "subtitles.entity.breeze.wind_burst":  "Wind Charge bursts",
+                  "subtitles.entity.wind_charge.throw":  "Wind Charge flies",
+                  "subtitles.entity.wind_charge.wind_burst":  "Wind Charge bursts",
+                  "subtitles.item.mace.smash_air":  "Mace smashes",
+                  "subtitles.item.mace.smash_ground":  "Mace smashes"
+              },
+    "zh_cn":  {
+                  "subtitles.entity.breeze.wind_burst":  "风弹：爆裂",
+                  "subtitles.entity.wind_charge.throw":  "风弹：飞行",
+                  "subtitles.entity.wind_charge.wind_burst":  "风弹：爆裂",
+                  "subtitles.item.mace.smash_air":  "重锤：猛击",
+                  "subtitles.item.mace.smash_ground":  "重锤：猛击"
+              },
+    "zh_tw":  {
+                  "subtitles.entity.breeze.wind_burst":  "風彈爆裂",
+                  "subtitles.entity.wind_charge.throw":  "風彈飛行",
+                  "subtitles.entity.wind_charge.wind_burst":  "風彈爆裂",
+                  "subtitles.item.mace.smash_air":  "重錘重擊聲",
+                  "subtitles.item.mace.smash_ground":  "重錘重擊聲"
+              }
+}
