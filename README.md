@@ -27,7 +27,7 @@ Fast Pack 是面向 Minecraft Java Edition 的材质包版本转换工具，由 
 - **只有贴图的旧包自动补模型。** 转到 1.13–1.21.3 时，为上传包中已有的物品贴图补齐缺失模型，明确绑定装备、工具、弓、鱼竿等资源；1.20 起同时补齐相应盔甲纹饰模型。参考表包含 254 个基础物品模型与 200 个纹饰变体，已有自定义模型优先保留。
 - **新版物品定义自动生成。** 转到 1.21.4+ 时，按目标官方结构生成物品定义与需要的模型变体，处理弓拉弦、鱼竿抛投、时钟、罗盘、药水染色和盔甲纹饰。参考数据覆盖 12 组格式，每组包含 252 个旧物品定义与 570 个模型变体；只为原包提供了贴图或模型的物品生成资源，已有自定义定义优先保留。
 - **新版装备与玩家路径。** 1.21.2+ 的盔甲穿戴贴图自动迁移到装备目录，保留皮革叠层与动画元数据；旧 Steve / Alex 默认皮肤迁移到新玩家目录，64×32 皮肤按旧版左右肢体规则补齐。
-- **旧床纹理转实体图集。** 1.12 起床改用实体渲染，程序从旧包的床头、床尾、侧面与木纹重建红床贴图，并保留已有实体床资源。修正旧床文件被当作颜色名称改名的问题；1.11 与 1.12 虽共用资源格式，仍按实际目标版本区分处理。
+- **旧床纹理转实体图集。** 1.12 起床改用实体渲染，程序按官方床模型的面坐标和 UV，从旧包的床头、床尾、侧面与木纹重建红床贴图。顶面的旧 UV 翻转、侧面方向、端面上下和四条床腿分别处理，让枕头、床单和床框在各面相接。支持不同分辨率的旧床贴图；若识别到 Fast Pack 旧规则生成的错位图集，会自动修复，其他已有实体床优先保留。1.11 与 1.12 虽共用资源格式，仍按实际目标版本区分处理。
 - **补齐遗漏的旧方块名称。** 增加 147 条经官方资源核对的别名，处理铁砧、门、轨道、植物生长阶段、火焰、玻璃板、红石和其他旧路径。新版目录中仍残留旧名称的转换结果也会自动整理，并同步 PNG 动画元数据及模型纹理引用。
 - **冲突时保留旧版实际使用的原图。** 旧包同时包含已知的旧名称和新版名称时，优先迁移旧版标准路径中的贴图，并备份被替换的重复文件；原模型明确引用的目标贴图优先保留，避免覆盖作者指定的资源。
 - **旧版自定义手持姿态自动换算。** 对照官方 1.8.9 与 1.20.1 模型提取 254 个平面物品模型的 8 组姿态基准，换算第一 / 第三人称的旋转、位移、缩放和左右手姿态，保留作者相对基准设置的大小。带有 Fast Pack 原模型备份的旧转换结果可自动修复，避免剑竖直、过大及左手姿态错误。
@@ -55,7 +55,7 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.3.exe`。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.4.exe`。
 2. 双击下载的程序，把材质包 ZIP 或文件夹拖入窗口。
 3. 选择目标版本与导出目录，点击“开始转换”。资源适配默认自动执行。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
@@ -96,7 +96,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.3.exe`、`fast-pack-cli-v1.2.3.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.4.exe`、`fast-pack-cli-v1.2.4.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -129,7 +129,7 @@ flowchart LR
 | 创造背包 | 六列 28px / 七列 26px 双向重排、上下 / 选中状态、误切红蓝占位区修复、完整边框、滚动条拆分与合并、升级人物窗口 / 副手槽、1.8.9 旧窗口重定位 |
 | 药水效果图标 | 升级时从旧 inventory 图集拆出独立图标，降级时合并回旧图集，保留包内图标并补齐缺失符号 |
 | 装备与玩家 | 1.21.2+ 装备目录迁移、皮革叠层、动画元数据、默认玩家路径和旧 64×32 皮肤扩展 |
-| 床 | 旧床六张方块贴图重建为 1.12+ 红床实体图集，保留已有自定义实体床 |
+| 床 | 按官方模型面坐标重建顶面 / 侧面 / 端面 / 四条床腿，保留内侧透明区，自动修复可识别的旧转换图集，保留已有自定义实体床 |
 | 现代物品 | 1.21.4+ 物品调度定义、目标模型变体、常见动画状态和染色，已有自定义模型优先保留 |
 | 26.3+ 资源 | 新纹饰调色板目录、JSON 引用、缺失耕地父模型、主次资源格式号 |
 | 附魔光效 | 旧版紫色染色烘焙 / 反向补偿，生成物品、实体与盔甲资源，任意 RGB 颜色、原图案和 alpha 保留、动画元数据同步、缺失图案自动生成 |
@@ -180,19 +180,19 @@ flowchart LR
 
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.3 为例，命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.4 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli-v1.2.3.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.2.3.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.2.3.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.2.3.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.2.3.exe old.zip --probe
-.\fast-pack-cli-v1.2.3.exe --versions
-.\fast-pack-cli-v1.2.3.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.2.3.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.2.3.exe old.zip --to 1.20.1 --vanilla-glint
-.\fast-pack-cli-v1.2.3.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.2.4.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.2.4.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.2.4.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.2.4.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.2.4.exe old.zip --probe
+.\fast-pack-cli-v1.2.4.exe --versions
+.\fast-pack-cli-v1.2.4.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.2.4.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.2.4.exe old.zip --to 1.20.1 --vanilla-glint
+.\fast-pack-cli-v1.2.4.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--from auto` 默认自动识别源版本。`--report-json` 仅在指定时将详情另存到提供的路径，不会把 `转换报告.txt` 塞入输出 ZIP。自定义映射采用 JSON 对象，例如 `{"custom_texture":"replacement_texture"}`。
