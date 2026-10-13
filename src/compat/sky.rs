@@ -6,9 +6,11 @@ use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
+use std::fs::{self, File};
+use std::io::{BufReader, Read};
 use std::path::{Component, Path, PathBuf};
 use walkdir::WalkDir;
+use zip::ZipArchive;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Layer {
@@ -24,6 +26,7 @@ pub struct Layer {
 #[derive(Clone, Debug)]
 pub struct Preview {
     pub names: Vec<String>,
+    pub selected_layer: String,
     pub image: RgbaImage,
 }
 
@@ -49,12 +52,28 @@ fn local(root: &Path, value: &str) -> Result<PathBuf> {
     Ok(root.join(path))
 }
 
-fn resolve(root: &Path, property: &Path, source: Option<&str>, base: &str) -> Result<PathBuf> {
+fn resolve(
+    root: &Path,
+    property: &Path,
+    source: Option<&str>,
+    base: &str,
+    available: Option<&BTreeSet<String>>,
+) -> Result<PathBuf> {
     let relative = property
         .strip_prefix(root)?
         .to_string_lossy()
         .replace('\\', "/");
     let namespace = relative.split('/').nth(1).unwrap_or("minecraft");
+    let exists = |path: &Path| {
+        available.map_or_else(
+            || path.is_file(),
+            |files| {
+                path.strip_prefix(root).ok().is_some_and(|relative| {
+                    files.contains(&relative.to_string_lossy().replace('\\', "/").to_lowercase())
+                })
+            },
+        )
+    };
     let value = source.map(str::trim).filter(|value| !value.is_empty());
     let candidate = match value {
         None => property.with_extension("png"),
@@ -87,7 +106,7 @@ fn resolve(root: &Path, property: &Path, source: Option<&str>, base: &str) -> Re
         }
         Some(value) => {
             let candidate = local(root, &format!("assets/{namespace}/{value}"))?;
-            if candidate.exists() {
+            if exists(&candidate) {
                 candidate
             } else {
                 local(
@@ -102,7 +121,7 @@ fn resolve(root: &Path, property: &Path, source: Option<&str>, base: &str) -> Re
         }
     };
     ensure!(
-        candidate.is_file(),
+        exists(&candidate),
         "天空纹理不存在: {}",
         candidate.display()
     );
@@ -282,6 +301,13 @@ fn json_props(value: &Value, nuit: bool) -> Result<Properties> {
 }
 
 fn read_layers(root: &Path) -> Result<(Vec<Layer>, Vec<String>)> {
+    read_layers_known(root, None)
+}
+
+fn read_layers_known(
+    root: &Path,
+    available: Option<&BTreeSet<String>>,
+) -> Result<(Vec<Layer>, Vec<String>)> {
     let cache = root.join("fastpack/canonical-sky/layers.json");
     if cache.is_file() {
         let layers: Vec<Layer> = serde_json::from_slice(&fs::read(cache)?)?;
@@ -329,7 +355,18 @@ fn read_layers(root: &Path) -> Result<(Vec<Layer>, Vec<String>)> {
             candidates.push(entry.into_path());
         }
     }
-    candidates.sort();
+    candidates.sort_by_key(|path| {
+        let name = path.file_stem().unwrap_or_default().to_string_lossy();
+        let number = name
+            .strip_prefix("sky")
+            .and_then(|value| value.parse::<u32>().ok());
+        (
+            path.parent().map(Path::to_path_buf),
+            number.is_none(),
+            number.unwrap_or(0),
+            name.into_owned(),
+        )
+    });
     let mut layers = Vec::new();
     let mut warnings = Vec::new();
     let mut seen = BTreeSet::new();
@@ -362,6 +399,7 @@ fn read_layers(root: &Path) -> Result<(Vec<Layer>, Vec<String>)> {
                     &path,
                     properties.get("source").map(String::as_str),
                     base,
+                    available,
                 )?;
                 Ok(Layer {
                     name: name.clone(),
@@ -391,7 +429,7 @@ fn read_layers(root: &Path) -> Result<(Vec<Layer>, Vec<String>)> {
                     .get("texture")
                     .and_then(Value::as_str)
                     .context("天空 JSON 缺少纹理")?;
-                let texture = resolve(root, &path, Some(texture), "")?;
+                let texture = resolve(root, &path, Some(texture), "", available)?;
                 let properties = json_props(&value, nuit)?;
                 let worlds = value
                     .get("conditions")
@@ -666,7 +704,7 @@ fn restore_optifine(
         if layer.decoration {
             fs::copy(local(root, &layer.texture)?, &target)?;
         } else {
-            let image = image::open(local(root, &layer.texture)?)?.to_rgba8();
+            let image = super::assets::open(&local(root, &layer.texture)?)?;
             let image = atlas::remap(
                 &image,
                 layout(&layer.layout),
@@ -741,15 +779,48 @@ pub fn migrate(
             if nuit { format >= 84 } else { format >= 6 },
             "所选天空加载器不支持该游戏代际"
         );
-        let mut fallback = Vec::new();
+        let mut fallback_worlds = BTreeSet::new();
+        let mut generated = Vec::new();
         for (index, layer) in layers.iter().enumerate() {
+            let preflight = (|| -> Result<()> {
+                ensure!(!layer.decoration, "太阳/月亮混合规则保留到原配置");
+                native(
+                    layer,
+                    nuit,
+                    &format!("fastpack:textures/sky/layer_{index}.png"),
+                    index as i32,
+                )?;
+                let reader = image::ImageReader::open(local(root, &layer.texture)?)?
+                    .with_guessed_format()?;
+                let (width, height) = reader.into_dimensions()?;
+                ensure!(
+                    width > 0
+                        && width.is_multiple_of(3)
+                        && height.is_multiple_of(2)
+                        && width / 3 == height / 2,
+                    "天空图不是有效的 3×2 六面布局"
+                );
+                Ok(())
+            })();
+            if let Err(error) = preflight {
+                fallback_worlds.insert(layer.world.clone());
+                report.warnings.push(format!(
+                    "{}：{error:#}；同维度天空层将整体保留，避免混合底层与彩色天空分离后变黑",
+                    layer.original
+                ));
+            }
+        }
+        for (index, layer) in layers.iter().enumerate() {
+            if fallback_worlds.contains(&layer.world) {
+                continue;
+            }
             let result = (|| -> Result<()> {
                 ensure!(!layer.decoration, "太阳/月亮混合规则保留到原配置");
                 let identifier = format!("fastpack:textures/sky/layer_{index}.png");
                 let definition = native(layer, nuit, &identifier, index as i32)?;
                 let texture = root.join(format!("assets/fastpack/textures/sky/layer_{index}.png"));
                 fs::create_dir_all(texture.parent().unwrap())?;
-                let image = image::open(local(root, &layer.texture)?)?.to_rgba8();
+                let image = super::assets::open(&local(root, &layer.texture)?)?;
                 let converted = atlas::remap(
                     &image,
                     layout(&layer.layout),
@@ -760,19 +831,20 @@ pub fn migrate(
                     },
                     layer.world == "world0",
                 )?;
-                converted.save(texture)?;
+                converted.save(&texture)?;
                 let file = root.join(format!(
                     "assets/{}/sky/fastpack_layer_{index}.json",
                     if nuit { "nuit" } else { "fastpack" }
                 ));
                 fs::create_dir_all(file.parent().unwrap())?;
-                fs::write(file, serde_json::to_vec_pretty(&definition)?)?;
-                report.sky_converted.push(format!(
+                fs::write(&file, serde_json::to_vec_pretty(&definition)?)?;
+                let description = format!(
                     "{} → {} schema {}（六面朝向与淡入淡出已转换）",
                     layer.original,
                     target,
                     if nuit { 1 } else { 2 }
-                ));
+                );
+                generated.push((layer.world.clone(), texture, file, description));
                 Ok(())
             })();
             if let Err(error) = result {
@@ -780,9 +852,22 @@ pub fn migrate(
                     "{}：{error:#}；保留原天空供 Interop 自动读取",
                     layer.original
                 ));
-                fallback.push(layer.clone());
+                fallback_worlds.insert(layer.world.clone());
             }
         }
+        for (world, texture, definition, description) in generated {
+            if fallback_worlds.contains(&world) {
+                fs::remove_file(texture)?;
+                fs::remove_file(definition)?;
+            } else {
+                report.sky_converted.push(description);
+            }
+        }
+        let fallback: Vec<_> = layers
+            .iter()
+            .filter(|layer| fallback_worlds.contains(&layer.world))
+            .cloned()
+            .collect();
         if !fallback.is_empty() {
             restore_optifine(root, &fallback, format, report)?;
             report
@@ -829,21 +914,197 @@ fn read_active_layers(root: &Path) -> Result<Vec<String>> {
     Ok(active)
 }
 
+fn compose_preview(
+    layers: Vec<Layer>,
+    mut read: impl FnMut(&Layer) -> Result<RgbaImage>,
+) -> Result<Option<Preview>> {
+    let names: Vec<_> = layers.iter().map(|layer| layer.name.clone()).collect();
+    let mut fallback = None;
+    for layer in layers.iter().filter(|layer| !layer.decoration) {
+        let Ok(image) = read(layer) else {
+            continue;
+        };
+        let Ok(size) = atlas::dimensions(&image) else {
+            continue;
+        };
+        let image = if size > 256 {
+            image::imageops::resize(&image, 768, 512, image::imageops::FilterType::Triangle)
+        } else {
+            image
+        };
+        let Ok(image) = atlas::remap(
+            &image,
+            layout(&layer.layout),
+            AtlasLayout::Optifine,
+            layer.world == "world0",
+        ) else {
+            continue;
+        };
+        let thumbnail = image::imageops::thumbnail(&image, 192, 128);
+        let visible = thumbnail
+            .pixels()
+            .filter(|pixel| pixel[3] > 16 && pixel[0].max(pixel[1]).max(pixel[2]) > 12)
+            .count();
+        let primary = !matches!(
+            layer.properties.get("blend").map(String::as_str),
+            Some("multiply" | "burn" | "subtract")
+        );
+        let representative =
+            visible * 20 > thumbnail.width() as usize * thumbnail.height() as usize && primary;
+        let brightness = thumbnail
+            .pixels()
+            .map(|pixel| u64::from(pixel[0].max(pixel[1]).max(pixel[2])) * u64::from(pixel[3]))
+            .sum::<u64>()
+            / u64::from(thumbnail.width() * thumbnail.height()).max(1);
+        let score = (primary, brightness);
+        let selected_layer = layer
+            .properties
+            .get("source")
+            .and_then(|source| Path::new(source).file_stem())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| layer.name.clone());
+        let preview = Preview {
+            names: names.clone(),
+            selected_layer,
+            image,
+        };
+        if representative {
+            return Ok(Some(preview));
+        }
+        if fallback
+            .as_ref()
+            .is_none_or(|(previous, _)| score > *previous)
+        {
+            fallback = Some((score, preview));
+        }
+    }
+    Ok(fallback.map(|(_, preview)| preview))
+}
+
+fn preview_entry(
+    archive: &mut ZipArchive<BufReader<File>>,
+    index: usize,
+    limit: u64,
+) -> Result<Vec<u8>> {
+    let entry = archive.by_index(index)?;
+    ensure!(
+        !entry.is_dir()
+            && entry
+                .unix_mode()
+                .is_none_or(|mode| mode & 0o170000 != 0o120000),
+        "天空预览不读取目录或符号链接"
+    );
+    ensure!(entry.size() <= limit, "天空预览文件过大");
+    let mut bytes = Vec::new();
+    entry.take(limit + 1).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() as u64 <= limit, "天空预览文件过大");
+    Ok(bytes)
+}
+
 pub fn preview(source: &Path) -> Result<Option<Preview>> {
-    let (_work, root) = crate::converter::load_pack(source)?;
-    let (layers, _) = read_layers(&root)?;
-    let Some(layer) = layers.iter().find(|layer| !layer.decoration) else {
-        return Ok(None);
+    if source.is_dir() {
+        let root = crate::converter::find_pack_root(source)?;
+        let canonical = root.canonicalize()?;
+        let (layers, _) = read_layers(&root)?;
+        return compose_preview(layers, |layer| {
+            let path = local(&root, &layer.texture)?.canonicalize()?;
+            ensure!(path.starts_with(&canonical), "天空纹理越过材质包目录");
+            super::assets::open(&path)
+        });
+    }
+    let mut archive = ZipArchive::new(BufReader::new(File::open(source)?))?;
+    let mut indexed = BTreeMap::new();
+    for name in archive.file_names() {
+        let value = name.replace('\\', "/");
+        let path = Path::new(&value);
+        if value.ends_with('/')
+            || value.contains(':')
+            || path.is_absolute()
+            || path.components().any(|part| {
+                matches!(
+                    part,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                )
+            })
+        {
+            continue;
+        }
+        let normalized = path
+            .components()
+            .filter_map(|part| {
+                if let Component::Normal(name) = part {
+                    Some(name.to_string_lossy().into_owned())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("/")
+            .to_lowercase();
+        if let Some(index) = archive.index_for_name(name) {
+            indexed.insert(normalized, index);
+        }
+    }
+    let prefix = if indexed.contains_key("pack.mcmeta") {
+        String::new()
+    } else {
+        indexed
+            .keys()
+            .filter_map(|name| name.strip_suffix("/pack.mcmeta"))
+            .filter(|prefix| !prefix.contains('/'))
+            .next()
+            .or_else(|| {
+                indexed
+                    .keys()
+                    .filter_map(|name| name.split_once("/assets/").map(|(prefix, _)| prefix))
+                    .find(|prefix| !prefix.contains('/'))
+            })
+            .map(|prefix| format!("{prefix}/"))
+            .unwrap_or_default()
     };
-    let image = image::open(local(&root, &layer.texture)?)?.to_rgba8();
-    let image = atlas::remap(
-        &image,
-        layout(&layer.layout),
-        AtlasLayout::Optifine,
-        layer.world == "world0",
-    )?;
-    Ok(Some(Preview {
-        names: layers.iter().map(|layer| layer.name.clone()).collect(),
-        image,
-    }))
+    let files: BTreeMap<_, _> = indexed
+        .into_iter()
+        .filter_map(|(name, index)| {
+            name.strip_prefix(&prefix)
+                .map(|relative| (relative.to_string(), index))
+        })
+        .collect();
+    let available = files.keys().cloned().collect::<BTreeSet<_>>();
+    let work = tempfile::tempdir()?;
+    let root = work.path().join("preview");
+    fs::create_dir_all(&root)?;
+    let cached = files.contains_key("fastpack/canonical-sky/layers.json");
+    for (name, index) in &files {
+        let configuration = if cached {
+            matches!(
+                name.as_str(),
+                "fastpack/canonical-sky/layers.json" | "fastpack/canonical-sky/warnings.json"
+            )
+        } else {
+            name.ends_with(".properties")
+                && (name.contains("/mcpatcher/sky/") || name.contains("/optifine/sky/"))
+                || name.ends_with(".json") && name.starts_with("assets/") && name.contains("/sky/")
+        };
+        if !configuration {
+            continue;
+        }
+        let Ok(bytes) = preview_entry(&mut archive, *index, 8 * 1024 * 1024) else {
+            continue;
+        };
+        let target = local(&root, name)?;
+        fs::create_dir_all(target.parent().unwrap())?;
+        fs::write(target, bytes)?;
+    }
+    let (layers, _) = read_layers_known(&root, Some(&available))?;
+    compose_preview(layers, |layer| {
+        let path = local(&root, &layer.texture)?;
+        let name = path
+            .strip_prefix(&root)?
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_lowercase();
+        let index = *files.get(&name).context("天空预览纹理不存在")?;
+        let bytes = preview_entry(&mut archive, index, 512 * 1024 * 1024)?;
+        Ok(image::load_from_memory(&bytes)?.to_rgba8())
+    })
 }

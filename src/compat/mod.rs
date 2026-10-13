@@ -16,6 +16,7 @@ pub mod properties;
 mod recent_resources;
 pub mod shaders;
 pub mod sky;
+mod texture_formats;
 
 pub(crate) fn migrate_versioned_assets(
     root: &std::path::Path,

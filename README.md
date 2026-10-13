@@ -38,6 +38,12 @@ Fast Pack 是面向 Minecraft Java Edition 的材质包版本转换工具，由 
 - **方向方块降级。** 发射器和投掷器的六种朝向还原为旧版状态引用，补齐缺失的水平 / 垂直模型，并保留垂直纹理名称；已识别的单模型 multipart 分支会转换到旧版 variants。降到 1.8.9 时展开同时包含 `parent` 与 `elements` 的立体模型，保留几何与包内父模型设置，修复竖向放置时的模型解析失败；同步换算方块父模型与物品模型的旧版显示参数，避免默认值回退到新版 GUI 角度与缩放，让物品栏图标恢复旧版大小。
 - **背包合成区坐标迁移。** 1.8.9 的输入格、箭头、结果格随新版布局整体右移 10px、上移 8px；人物背景框收窄 3px，补副手槽与配方书按钮，按贴图比例处理高清资源。
 - **现代桌面体验。** 深色 / 浅色主题、拖放导入、后台识别与转换、真实进度、天空贴图预览，以及约 150–280ms 的界面过渡。支持减少动态效果。
+- **转换进度固定显示。** 进度条固定在窗口底部，滚动页面时仍能查看；操作按钮保留原有位置和样式。悬停提示使用完整背景，版本交换提示显示在按钮上方，避免与导出区文字重叠。
+- **ZIP 开关移入更多选项。** 在“更多转换选项”中切换 ZIP / 文件夹输出，导出区保留目录和自动保存开关，其他面板沿用原有布局。
+- **桌面背景与磨砂玻璃。** 可在“更多转换选项”选择 PNG、JPG 或 WebP 背景，开启或关闭背景显示，并独立开关磨砂玻璃、拖动强度。图片会按窗口比例裁切，面板使用半透明底色保留桌面层次；设置自动保存到 `%LOCALAPPDATA%\Fast Pack\settings.json`。
+- **天空预览自动选择主图。** 跳过用于混合的黑色底层，优先显示有实际画面的天空贴图。多层天空按数字顺序处理，同一维度存在不能等价转换的规则时整体保留，避免黑色底层与彩色层被拆到不同格式后变黑。
+- **天空预览独立加载。** ZIP 预览只读取天空配置和最终选中的贴图，与材质包识别并行执行，避免等待两次完整解压。文件夹直接读取所需资源，预览先缩小再重排六面；实际转换继续使用原分辨率。
+- **图片按实际格式识别。** 自动识别扩展名为 PNG、实际为 JPEG 的纹理并重编码为 PNG，备份原文件。月相等天体资源参与检查，避免新版本拆分月相时解码失败。
 - **紧凑的自动保存开关。** 主页将“版本 / 导出目录”两个开关排在同一行，分别控制版本记忆与导出文件夹记忆；滑块、轨道颜色及悬停效果平滑过渡。设置位于 Windows 用户的 `%LOCALAPPDATA%\Fast Pack\settings.json`，程序目录和材质包目录无需配置文件。
 - **导出到固定文件夹。** 选好导出目录后，后续导入、切换版本和重新打开程序都会继续导出到该目录，每个包使用自己的 `[目标版本]原包名.zip`，不复用上一次的文件名。只保存导出目录，不记录导入路径。
 - **保留输入原包。** 转换在临时工作副本中完成，结果另存。改写的资源会在输出包内保留原始备份，帮助后续转换恢复内容。
@@ -48,7 +54,7 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.0.exe`。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.1.exe`。
 2. 双击下载的程序，把材质包 ZIP 或文件夹拖入窗口。
 3. 选择目标版本与导出目录，点击“开始转换”。资源适配默认自动执行。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
@@ -56,6 +62,8 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 运行桌面版无需解释器或浏览器。材质包处理在本机完成，程序不会把上传内容发送到远端服务。“了解详细”中的源码按钮会在用户点击后打开 GitHub 页面。
 
 右上角的 **“了解详细”** 展示开发者头像、版本、开发交流群、进群答案、源码仓库与许可证摘要。
+
+“输出为 ZIP”位于“更多转换选项”，默认开启；关闭后导出材质包文件夹。转换开始后，窗口底部持续显示进度条，页面滚动不会遮住它。其他区域沿用原有布局。
 
 主页“自动保存”一行提供“版本”和“导出目录”两个开关，默认开启。版本开关开启后选择目标版本会自动保存，比如选择 `1.20.1`，下次打开仍默认 `1.20.1`。关闭后本次版本继续使用，重启恢复默认版本与自动推荐。
 
@@ -87,7 +95,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.0.exe`、`fast-pack-cli-v1.2.0.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.1.exe`、`fast-pack-cli-v1.2.1.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -170,19 +178,19 @@ flowchart LR
 
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.0 为例，命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.1 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli-v1.2.0.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.2.0.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.2.0.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.2.0.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.2.0.exe old.zip --probe
-.\fast-pack-cli-v1.2.0.exe --versions
-.\fast-pack-cli-v1.2.0.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.2.0.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.2.0.exe old.zip --to 1.20.1 --vanilla-glint
-.\fast-pack-cli-v1.2.0.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.2.1.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.2.1.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.2.1.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.2.1.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.2.1.exe old.zip --probe
+.\fast-pack-cli-v1.2.1.exe --versions
+.\fast-pack-cli-v1.2.1.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.2.1.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.2.1.exe old.zip --to 1.20.1 --vanilla-glint
+.\fast-pack-cli-v1.2.1.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--from auto` 默认自动识别源版本。`--report-json` 仅在指定时将详情另存到提供的路径，不会把 `转换报告.txt` 塞入输出 ZIP。自定义映射采用 JSON 对象，例如 `{"custom_texture":"replacement_texture"}`。
@@ -249,6 +257,7 @@ $env:ICED_BACKEND = 'tiny-skia'
 | `src/compat/modern_items.rs`、`assets/modern-items.json` | 各目标代际的物品定义、常见状态、染色和模型变体 |
 | `src/compat/modern_gui.rs` | 创造背包升级、标签精灵拆分、旧效果图标提取 |
 | `src/compat/effect_panels.rs` | 旧版药水效果背景、透明区域 RGB 与缺失面板恢复 |
+| `src/compat/texture_formats.rs` | 纹理实际格式识别、JPEG 内容重编码为 PNG 与原图备份 |
 | `src/compat/equipment.rs`、`players.rs` | 装备目录、默认玩家皮肤路径与旧皮肤布局迁移 |
 | `src/compat/beds.rs`、`recent_resources.rs` | 旧床实体图集、新版纹饰调色板与模型父级补齐 |
 | `src/compat/legacy_gui.rs`、`legacy_effect_icons.rs` | 创造标签页与滚动条图集重建、药水效果图标合并与默认符号 |

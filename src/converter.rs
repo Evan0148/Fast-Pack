@@ -248,7 +248,7 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn find_pack_root(base: &Path) -> Result<PathBuf> {
+pub(crate) fn find_pack_root(base: &Path) -> Result<PathBuf> {
     if base.join("pack.mcmeta").exists() {
         return Ok(base.into());
     }

@@ -45,8 +45,11 @@ pub(super) fn save(root: &Path, path: &Path, image: &RgbaImage) -> Result<()> {
     Ok(())
 }
 
-fn open(path: &Path) -> Result<RgbaImage> {
-    Ok(image::open(path)?.to_rgba8())
+pub(super) fn open(path: &Path) -> Result<RgbaImage> {
+    Ok(image::ImageReader::open(path)?
+        .with_guessed_format()?
+        .decode()?
+        .to_rgba8())
 }
 
 pub fn chest(source: &RgbaImage, kind: &str, reverse: bool) -> Result<RgbaImage> {
@@ -1598,6 +1601,7 @@ pub fn migrate_with_glint(
     glint_color: Option<[u8; 3]>,
 ) -> Result<AssetReport> {
     let mut report = AssetReport::default();
+    super::texture_formats::migrate(root, &mut report)?;
     chests(root, source, target, &mut report)?;
     patterns(root, source, target, &mut report)?;
     entities(root, source, target, &mut report)?;

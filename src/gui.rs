@@ -7,7 +7,7 @@ use fast_pack::{
 };
 use iced::widget::{
     self, button, checkbox, column, container, mouse_area, pick_list, progress_bar, row,
-    scrollable, space, text, text_input, tooltip,
+    scrollable, slider, space, text, text_input, tooltip,
 };
 use iced::{
     Alignment, Background, Border, Color, Element, Font, Length, Padding, Shadow, Size,
@@ -35,6 +35,11 @@ enum Message {
     CommitExportDirectory,
     BrowseOutput,
     OutputPicked(Option<PathBuf>),
+    BackgroundPicker,
+    BackgroundPicked(Option<PathBuf>),
+    BackgroundEnabled(bool),
+    GlassEnabled(bool),
+    GlassStrength(f32),
     Zip(bool),
     Description(String),
     PreserveLang(bool),
@@ -76,6 +81,7 @@ enum WorkEvent {
     Progress(String, u8),
     Finished(Box<std::result::Result<ConversionReport, String>>),
     Mapping(std::result::Result<Vec<(String, String)>, String>),
+    Background(std::result::Result<(PathBuf, widget::image::Handle), String>),
     Preferences(std::result::Result<(), String>),
 }
 
@@ -176,12 +182,35 @@ impl Colors {
     }
 }
 
+fn hint_style(colors: Colors) -> container::Style {
+    container::Style {
+        background: Some(colors.panel.into()),
+        text_color: Some(colors.foreground),
+        border: Border {
+            radius: 9.0.into(),
+            width: 1.0,
+            color: colors.line,
+        },
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.16),
+            offset: Vector::new(0.0, 3.0),
+            blur_radius: 12.0,
+        },
+        ..Default::default()
+    }
+}
+
 struct App {
     phase: Phase,
     source: Option<PathBuf>,
     info: Option<PackInfo>,
     sky_preview: Option<widget::image::Handle>,
     sky_layers: usize,
+    background_handle: Option<widget::image::Handle>,
+    background_path: Option<PathBuf>,
+    background_enabled: bool,
+    glass_enabled: bool,
+    glass_strength: f32,
     source_version: String,
     target: String,
     target_selected: bool,
@@ -261,6 +290,10 @@ impl App {
         let auto_save = preferences.auto_save;
         let auto_save_path = preferences.auto_save_path;
         let saved_export_directory = preferences.export_directory;
+        let background_path = preferences.background_path;
+        let background_enabled = preferences.background_enabled;
+        let glass_enabled = preferences.glass_enabled;
+        let glass_strength = preferences.glass_strength.clamp(0.0, 1.0);
         let active_glint_color = if preferences.custom_glint {
             preferences.glint_color
         } else {
@@ -292,6 +325,11 @@ impl App {
             info: None,
             sky_preview: None,
             sky_layers: 0,
+            background_handle: None,
+            background_path,
+            background_enabled,
+            glass_enabled,
+            glass_strength,
             source_version: "自动检测".into(),
             target: saved_target
                 .as_ref()
@@ -359,6 +397,11 @@ impl App {
         };
         if let Some(path) = std::env::var_os("FAST_PACK_SMOKE_INPUT") {
             app.load(PathBuf::from(path));
+        }
+        if app.background_enabled {
+            if let Some(path) = app.background_path.clone() {
+                app.request_background(path);
+            }
         }
         if app.capture_stage == "advanced" {
             app.advanced = true;
@@ -475,15 +518,16 @@ impl App {
         self.load_motion.set(0.0, self.now, self.reduced);
         let generation = self.generation;
         let sender = self.sender.clone();
+        let preview_path = path.clone();
+        let preview_sender = sender.clone();
+        std::thread::spawn(move || {
+            let preview = fast_pack::compat::sky::preview(&preview_path)
+                .map_err(|error| format!("{error:#}"));
+            let _ = preview_sender.send(WorkEvent::Preview(generation, preview));
+        });
         std::thread::spawn(move || {
             let info = probe_pack(&path);
-            let has_sky = info.features.sky_count() > 0;
             let _ = sender.send(WorkEvent::Probed(generation, info));
-            if has_sky {
-                let preview =
-                    fast_pack::compat::sky::preview(&path).map_err(|error| format!("{error:#}"));
-                let _ = sender.send(WorkEvent::Preview(generation, preview));
-            }
         });
     }
     fn update_output(&mut self) {
@@ -548,6 +592,10 @@ impl App {
                     export_directory: self.saved_export_directory.clone(),
                     custom_glint: self.custom_glint,
                     glint_color: self.glint_color,
+                    background_enabled: self.background_enabled,
+                    background_path: self.background_path.clone(),
+                    glass_enabled: self.glass_enabled,
+                    glass_strength: self.glass_strength,
                 })
                 .is_ok()
             {
@@ -556,6 +604,28 @@ impl App {
                 self.log("偏好设置未能保存：保存任务不可用".into());
             }
         }
+    }
+
+    fn request_background(&self, path: PathBuf) {
+        let sender = self.sender.clone();
+        std::thread::spawn(move || {
+            let result = std::fs::read(&path)
+                .map_err(|error| format!("{error:#}"))
+                .and_then(|bytes| {
+                    image::load_from_memory(&bytes)
+                        .map_err(|error| format!("{error:#}"))
+                        .map(|image| {
+                            let image = image::imageops::thumbnail(&image, 1920, 1080);
+                            widget::image::Handle::from_rgba(
+                                image.width(),
+                                image.height(),
+                                image.into_raw(),
+                            )
+                        })
+                })
+                .map(|handle| (path, handle));
+            let _ = sender.send(WorkEvent::Background(result));
+        });
     }
     fn log(&mut self, value: String) {
         if self.logs.len() >= 500 {
@@ -743,6 +813,9 @@ impl App {
                                     image.height(),
                                     image.into_raw(),
                                 ));
+                                if self.capture.is_some() {
+                                    self.settled_at = now;
+                                }
                             }
                             Err(error) => self.log(format!("天空预览：{error}")),
                             _ => {}
@@ -787,6 +860,14 @@ impl App {
                                 Err(error) => self.error = Some(error),
                             }
                         }
+                        WorkEvent::Background(result) => match result {
+                            Ok((path, handle)) => {
+                                if self.background_path.as_ref() == Some(&path) {
+                                    self.background_handle = Some(handle);
+                                }
+                            }
+                            Err(error) => self.log(format!("背景图片：{error}")),
+                        },
                         WorkEvent::Preferences(result) => {
                             self.preferences_pending = self.preferences_pending.saturating_sub(1);
                             if let Err(error) = result {
@@ -808,6 +889,7 @@ impl App {
                 }
                 let can_capture = match self.capture_stage.as_str() {
                     "sky" => self.sky_preview.is_some(),
+                    "running" => self.busy(),
                     "done" => self.phase == Phase::Done,
                     "failed" => self.phase == Phase::Failed,
                     "loaded" | "advanced" => self.phase == Phase::Ready,
@@ -1054,6 +1136,37 @@ impl App {
                 self.remember_export_directory();
                 self.error = None;
             }
+            Message::BackgroundPicker if !self.busy() => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .set_title("Fast Pack · 选择背景图片")
+                            .add_filter("图片", &["png", "jpg", "jpeg", "webp"])
+                            .pick_file()
+                            .await
+                            .map(|file| file.path().to_owned())
+                    },
+                    Message::BackgroundPicked,
+                );
+            }
+            Message::BackgroundPicked(Some(path)) if !self.busy() => {
+                self.background_path = Some(path.clone());
+                self.background_enabled = true;
+                self.request_background(path);
+                self.save_preferences();
+            }
+            Message::BackgroundEnabled(value) if !self.busy() => {
+                self.background_enabled = value;
+                self.save_preferences();
+            }
+            Message::GlassEnabled(value) if !self.busy() => {
+                self.glass_enabled = value;
+                self.save_preferences();
+            }
+            Message::GlassStrength(value) if !self.busy() => {
+                self.glass_strength = value.clamp(0.0, 1.0);
+                self.save_preferences();
+            }
             Message::Advanced => {
                 self.advanced = !self.advanced;
                 self.advanced_motion.set(
@@ -1243,9 +1356,14 @@ impl App {
                         color: mix(c.line, c.accent, hover * 0.7),
                     },
                     shadow: Shadow {
-                        color: Color::TRANSPARENT,
+                        color: Color::from_rgba(
+                            c.accent.r,
+                            c.accent.g,
+                            c.accent.b,
+                            if disabled { 0.0 } else { hover * 0.12 },
+                        ),
                         offset: Vector::ZERO,
-                        blur_radius: 0.0,
+                        blur_radius: hover * 12.0,
                     },
                     ..Default::default()
                 }
@@ -1275,8 +1393,13 @@ impl App {
             selection: mix(c.panel, c.accent, 0.25),
         }
     }
-    fn picker_style(&self, status: widget::pick_list::Status) -> widget::pick_list::Style {
+    fn picker_style(&self, status: widget::pick_list::Status, id: u8) -> widget::pick_list::Style {
         let c = self.colors();
+        let hover = self
+            .hover
+            .get(&id)
+            .map(|value| value.value(self.now))
+            .unwrap_or(0.0);
         let active = matches!(
             status,
             widget::pick_list::Status::Opened { .. } | widget::pick_list::Status::Hovered
@@ -1284,12 +1407,16 @@ impl App {
         widget::pick_list::Style {
             text_color: c.foreground,
             placeholder_color: c.muted,
-            handle_color: c.muted,
+            handle_color: mix(c.muted, c.accent, hover * 0.65),
             background: c.field.into(),
             border: Border {
                 radius: 10.0.into(),
                 width: 1.0,
-                color: if active { c.accent } else { c.line },
+                color: if active || hover > 0.01 {
+                    mix(c.line, c.accent, 0.55 + hover * 0.45)
+                } else {
+                    c.line
+                },
             },
         }
     }
@@ -1309,11 +1436,15 @@ impl App {
 
     fn panel<'a>(&self, content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         let c = self.colors();
+        let mut panel = c.panel;
+        if self.background_enabled && self.glass_enabled && self.background_handle.is_some() {
+            panel.a = (0.9 - self.glass_strength * 0.34).clamp(0.5, 0.9);
+        }
         container(content)
             .padding(24)
             .width(Length::Fill)
             .style(move |_| container::Style {
-                background: Some(c.panel.into()),
+                background: Some(panel.into()),
                 text_color: Some(c.foreground),
                 border: Border {
                     color: c.line,
@@ -1425,24 +1556,31 @@ impl App {
                     .color(muted)
                 ]
                 .spacing(8),
-                pick_list(
-                    versions,
-                    Some(self.source_version.clone()),
-                    Message::SourceVersion
+                mouse_area(
+                    pick_list(
+                        versions,
+                        Some(self.source_version.clone()),
+                        Message::SourceVersion
+                    )
+                    .width(Length::Fill)
+                    .padding(10)
+                    .style(|_, status| self.picker_style(status, 41))
                 )
-                .width(Length::Fill)
-                .padding(10)
-                .style(|_, status| self.picker_style(status))
+                .on_enter(Message::Hover(41, true))
+                .on_exit(Message::Hover(41, false))
             ]
             .spacing(12);
             content = content.push(container(metadata).height(80.0 * amount).clip(true));
         }
         if let Some(path) = &self.source {
-            content = content.push(tooltip(
-                self.label(shorten(&path.display().to_string(), 48)),
-                container(text(path.display().to_string()).size(12)).padding(10),
-                tooltip::Position::Bottom,
-            ));
+            content = content.push(
+                tooltip(
+                    self.label(shorten(&path.display().to_string(), 48)),
+                    container(text(path.display().to_string()).size(12)).padding(10),
+                    tooltip::Position::Bottom,
+                )
+                .style(move |_| hint_style(c)),
+            );
         }
         if let Some(preview) = &self.sky_preview {
             content = content.push(
@@ -1526,6 +1664,7 @@ impl App {
             container(text(hint).size(12)).padding(9).max_width(320),
             tooltip::Position::Bottom,
         )
+        .style(move |_| hint_style(c))
         .into()
     }
 
@@ -1555,6 +1694,7 @@ impl App {
     }
 
     fn target_panel(&self) -> Element<'_, Message> {
+        let c = self.colors();
         let versions: Vec<_> = tables()
             .pack_formats
             .iter()
@@ -1569,11 +1709,6 @@ impl App {
                 .on_input(Message::Output)
                 .on_submit(Message::CommitExportDirectory);
         }
-        let zip = checkbox(self.as_zip)
-            .label("ZIP 格式")
-            .size(16)
-            .text_size(12)
-            .on_toggle_maybe((!self.busy()).then_some(Message::Zip));
         let filename = if self.output.is_empty() {
             "文件名按版本和原包名自动生成".into()
         } else {
@@ -1601,7 +1736,8 @@ impl App {
             .padding(9)
             .max_width(420),
             tooltip::Position::Bottom,
-        );
+        )
+        .style(move |_| hint_style(c));
         let content = column![
             self.title("转换目标", 14),
             self.label(
@@ -1617,7 +1753,7 @@ impl App {
                 pick_list(versions, Some(self.target.clone()), Message::Target)
                     .width(Length::Fill)
                     .padding(11)
-                    .style(|_, status| self.picker_style(status)),
+                    .style(|_, status| self.picker_style(status, 40)),
                 tooltip(
                     self.action(
                         5,
@@ -1626,13 +1762,14 @@ impl App {
                         false,
                     ),
                     container(text("交换源版本与目标版本").size(12)).padding(9),
-                    tooltip::Position::Bottom,
-                ),
+                    tooltip::Position::Top,
+                )
+                .delay(Duration::from_millis(350))
+                .style(move |_| hint_style(c)),
             ]
             .spacing(8)
             .align_y(Alignment::Center),
-            row![self.label("导出目录"), space().width(Length::Fill), zip]
-                .align_y(Alignment::Center),
+            self.label("导出目录"),
             row![
                 output,
                 self.action(
@@ -1737,7 +1874,9 @@ impl App {
                     },
                     ..Default::default()
                 });
-            tooltip(choice, text(name).size(12), tooltip::Position::Top).into()
+            tooltip(choice, text(name).size(12), tooltip::Position::Top)
+                .style(move |_| hint_style(c))
+                .into()
         }))
         .spacing(12);
         let mut controls = column![
@@ -1827,6 +1966,49 @@ impl App {
         .into()
     }
 
+    fn background_controls(&self) -> Element<'_, Message> {
+        let name = self
+            .background_path
+            .as_ref()
+            .map(|path| shorten(&path.display().to_string(), 42))
+            .unwrap_or_else(|| "未选择背景图片".into());
+        let glass = row![
+            checkbox(self.glass_enabled)
+                .label("磨砂玻璃")
+                .size(17)
+                .text_size(13)
+                .on_toggle_maybe((!self.busy()).then_some(Message::GlassEnabled)),
+            self.label("强度"),
+            slider(0.0..=1.0, self.glass_strength, Message::GlassStrength)
+                .step(0.01_f32)
+                .width(Length::Fill),
+            self.label(format!("{}%", (self.glass_strength * 100.0).round() as u8)),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center);
+        column![
+            row![
+                checkbox(self.background_enabled)
+                    .label("自定义背景")
+                    .size(17)
+                    .text_size(13)
+                    .on_toggle_maybe((!self.busy()).then_some(Message::BackgroundEnabled)),
+                self.action(
+                    36,
+                    "选择图片",
+                    (!self.busy()).then_some(Message::BackgroundPicker),
+                    false,
+                ),
+                self.label(name),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
+            glass,
+        ]
+        .spacing(12)
+        .into()
+    }
+
     fn advanced_view(&self) -> Element<'_, Message> {
         let amount = self.advanced_motion.value(self.now);
         if amount < 0.001 {
@@ -1854,16 +2036,22 @@ impl App {
             .size(17)
             .text_size(13)
             .on_toggle(Message::ReducedMotion);
+        let zip = checkbox(self.as_zip)
+            .label("输出为 ZIP")
+            .size(17)
+            .text_size(13)
+            .on_toggle_maybe((!self.busy()).then_some(Message::Zip));
         let options: Element<'_, Message> = if self.width < 940.0 {
-            column![lang, case, reduced].spacing(12).into()
+            column![zip, lang, case, reduced].spacing(12).into()
         } else {
-            row![lang, case, reduced].spacing(28).into()
+            row![zip, lang, case, reduced].spacing(28).into()
         };
         let content = column![
             self.title("更多转换选项", 14),
             self.label("材质包描述"),
             input,
             options,
+            self.background_controls(),
             self.glint_controls(),
             row![
                 self.action(
@@ -1879,7 +2067,11 @@ impl App {
         ]
         .spacing(14);
         container(self.panel(content))
-            .height((if self.width < 940.0 { 412.0 } else { 334.0 }) * amount)
+            .height(if amount >= 0.999 {
+                Length::Shrink
+            } else {
+                Length::Fixed((if self.width < 940.0 { 520.0 } else { 410.0 }) * amount)
+            })
             .clip(true)
             .into()
     }
@@ -2036,7 +2228,7 @@ impl App {
                 body = body.push(self.result_view());
             }
         }
-        if self.busy() {
+        let fixed_progress: Element<'_, Message> = if self.busy() {
             let value = self
                 .progress
                 .value(self.now)
@@ -2051,18 +2243,25 @@ impl App {
                     },
                 }
             });
-            body = body.push(
+            container(
                 column![
                     row![
                         self.label(&self.step),
                         space().width(Length::Fill),
                         self.label(format!("{}%", value.round() as u8))
-                    ],
+                    ]
+                    .align_y(Alignment::Center),
                     progress
                 ]
-                .spacing(12),
-            );
-        }
+                .spacing(8)
+                .width(Length::Fill),
+            )
+            .padding([10, 28])
+            .width(Length::Fill)
+            .into()
+        } else {
+            space().height(0).into()
+        };
         let status = match self.phase {
             Phase::Empty => "数据仅在本机处理",
             Phase::Identifying => "正在后台识别，你仍可操作界面",
@@ -2133,21 +2332,46 @@ impl App {
         )
         .width(Length::Fill)
         .height(Length::Fill);
-        let base: Element<'_, Message> = container(column![
+        let mut base_color = c.background;
+        if self.background_enabled && self.background_handle.is_some() {
+            base_color.a = if self.glass_enabled {
+                (0.3 + (1.0 - self.glass_strength) * 0.25).clamp(0.22, 0.55)
+            } else {
+                0.76
+            };
+        }
+        let surface: Element<'_, Message> = container(column![
             header,
             widget::rule::horizontal(1),
             main,
             widget::rule::horizontal(1),
+            fixed_progress,
             footer
         ])
         .height(Length::Fill)
         .width(Length::Fill)
         .style(move |_| container::Style {
-            background: Some(c.background.into()),
+            background: Some(base_color.into()),
             text_color: Some(c.foreground),
             ..Default::default()
         })
         .into();
+        let base: Element<'_, Message> = if self.background_enabled {
+            if let Some(background) = &self.background_handle {
+                widget::stack![
+                    widget::image(background.clone())
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .content_fit(iced::ContentFit::Cover),
+                    surface
+                ]
+                .into()
+            } else {
+                surface
+            }
+        } else {
+            surface
+        };
         if self.glint_picker || self.glint_picker_motion.value(self.now) > 0.001 {
             let amount = self.glint_picker_motion.value(self.now);
             let overlay = container(self.glint_dialog())
