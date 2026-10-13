@@ -1,0 +1,19 @@
+Minecraft Java resource models and textures belong to Mojang Studios / Microsoft.
+Official reference clients: Minecraft Java 1.20.1 and 26.4 snapshot 3.
+These assets are used only to supply missing inventory and held-item appearances.
+Minecraft is not affiliated with or endorsed by ColdEternity Team / Fast Pack.
+
+Protocol identifiers, numeric model data, registry IDs and carrier names are
+independently generated interoperability facts verified against ViaVersion's
+public registry mappings and ViaBackwards' documented item metadata.
+References:
+https://github.com/ViaVersion/Mappings
+https://github.com/ViaVersion/ViaBackwards
+
+The Rust adapter is an independent Fast Pack implementation. No source code,
+pack files, artwork, or branding from ViaBackwards-Plus is embedded or required.
+The original project's documentation was used to identify the compatibility goal:
+https://github.com/ViaVersionAddons/ViaBackwards-Plus
+
+The adapter does not install client mods or server plugins, change placed block
+or entity rendering, or infer an item when its server sends no distinguishing tag.
