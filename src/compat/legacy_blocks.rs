@@ -1,6 +1,7 @@
 use super::assets::{AssetReport, backup};
 use anyhow::Result;
 use serde_json::{Map, Value, json};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -18,6 +19,231 @@ fn write(root: &Path, path: &Path, value: &Value) -> Result<bool> {
     fs::create_dir_all(path.parent().unwrap())?;
     fs::write(path, serde_json::to_vec_pretty(value)?)?;
     Ok(true)
+}
+
+fn model_id(name: &str) -> Option<String> {
+    let (namespace, name) = name.split_once(':').unwrap_or(("minecraft", name));
+    if namespace.is_empty()
+        || name.is_empty()
+        || !namespace
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "._-".contains(c))
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "._-/".contains(c))
+        || name
+            .split('/')
+            .any(|part| part.is_empty() || matches!(part, "." | ".."))
+    {
+        return None;
+    }
+    Some(format!("{namespace}:{name}"))
+}
+
+fn inherited_fields(
+    id: &str,
+    models: &BTreeMap<String, Value>,
+    visited: &mut BTreeSet<String>,
+) -> Value {
+    if visited.len() >= 64 || !visited.insert(id.into()) {
+        return json!({});
+    }
+    let Some(model) = models.get(id) else {
+        return json!({});
+    };
+    let mut inherited = model
+        .get("parent")
+        .and_then(Value::as_str)
+        .and_then(model_id)
+        .map(|parent| inherited_fields(&parent, models, visited))
+        .unwrap_or_else(|| json!({}));
+    for field in ["textures", "display"] {
+        if let Some(values) = model.get(field).and_then(Value::as_object) {
+            if !inherited.get(field).is_some_and(Value::is_object) {
+                inherited[field] = json!({});
+            }
+            inherited[field]
+                .as_object_mut()
+                .unwrap()
+                .extend(values.clone());
+        }
+    }
+    if let Some(ambient) = model.get("ambientocclusion") {
+        inherited["ambientocclusion"] = ambient.clone();
+    }
+    visited.remove(id);
+    inherited
+}
+
+fn standalone_models(root: &Path, report: &mut AssetReport) -> Result<()> {
+    let assets = root.join("assets");
+    if !assets.is_dir() {
+        return Ok(());
+    }
+    let mut models = BTreeMap::new();
+    let mut paths = BTreeMap::new();
+    for entry in walkdir::WalkDir::new(&assets).min_depth(1) {
+        let entry = entry?;
+        if !entry.file_type().is_file() || entry.path().extension().is_none_or(|ext| ext != "json")
+        {
+            continue;
+        }
+        let relative = entry
+            .path()
+            .strip_prefix(&assets)?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let Some((namespace, name)) = relative.split_once("/models/") else {
+            continue;
+        };
+        if namespace.contains('/') {
+            continue;
+        }
+        let Some(id) = model_id(&format!("{namespace}:{}", name.trim_end_matches(".json"))) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_slice::<Value>(&fs::read(entry.path())?) else {
+            continue;
+        };
+        models.insert(id.clone(), value);
+        paths.insert(id, entry.into_path());
+    }
+    let mut count = 0;
+    for (id, value) in &models {
+        if !value.get("elements").is_some_and(Value::is_array)
+            || !value.get("parent").is_some_and(Value::is_string)
+        {
+            continue;
+        }
+        let mut converted = value.clone();
+        let inherited = inherited_fields(id, &models, &mut BTreeSet::new());
+        for field in ["textures", "display", "ambientocclusion"] {
+            if let Some(value) = inherited.get(field) {
+                converted[field] = value.clone();
+            }
+        }
+        converted.as_object_mut().unwrap().remove("parent");
+        if write(root, &paths[id], &converted)? {
+            count += 1;
+        }
+    }
+    if count > 0 {
+        report.converted.push(format!("旧版立体模型：展开 {count} 个同时包含 parent 和 elements 的模型，保留几何、贴图与包内父模型设置"));
+    }
+    Ok(())
+}
+
+fn box_transform(value: &Value, view: &str) -> Option<Value> {
+    let (rotation, translation, scale, legacy_rotation, legacy_translation, legacy_scale): (
+        [f64; 3],
+        [f64; 3],
+        f64,
+        [f64; 3],
+        [f64; 3],
+        f64,
+    ) = match view {
+        "gui" => ([30.0, 225.0, 0.0], [0.0; 3], 0.625, [0.0; 3], [0.0; 3], 1.0),
+        "thirdperson" => (
+            [75.0, 45.0, 0.0],
+            [0.0, 2.5, 0.0],
+            0.375,
+            [10.0, -45.0, 170.0],
+            [0.0, 1.5, -2.75],
+            0.375,
+        ),
+        "firstperson" => ([0.0, 45.0, 0.0], [0.0; 3], 0.4, [0.0; 3], [0.0; 3], 1.0),
+        _ => return None,
+    };
+    let read = |key: &str, default: [f64; 3]| -> Option<[f64; 3]> {
+        value.get(key).map_or(Some(default), |value| {
+            serde_json::from_value(value.clone()).ok()
+        })
+    };
+    let input_rotation = read("rotation", [0.0; 3])?;
+    let input_translation = read("translation", [0.0; 3])?;
+    let input_scale = read("scale", [1.0; 3])?;
+    let round = |value: f64| (value * 1_000_000.0).round() / 1_000_000.0;
+    Some(json!({
+        "rotation":std::array::from_fn::<_, 3, _>(|axis| round(legacy_rotation[axis] + input_rotation[axis] - rotation[axis])),
+        "translation":std::array::from_fn::<_, 3, _>(|axis| round(legacy_translation[axis] + input_translation[axis] - translation[axis])),
+        "scale":input_scale.map(|value| round(value * legacy_scale / scale))
+    }))
+}
+
+fn inventory_model(root: &Path, name: &str, source: u32, report: &mut AssetReport) -> Result<()> {
+    let directory = root.join("assets/minecraft/models");
+    let path = directory.join(format!("item/{name}.json"));
+    let provided = path.is_file();
+    let mut model = if provided {
+        serde_json::from_slice::<Value>(&fs::read(&path)?)?
+    } else {
+        json!({"parent":format!("block/{name}")})
+    };
+    let block_path = directory.join(format!("block/{name}.json"));
+    let block = serde_json::from_slice::<Value>(&fs::read(block_path)?)?;
+    let inherited = block.get("display").and_then(Value::as_object);
+    if !model.get("display").is_some_and(Value::is_object) {
+        model["display"] = json!({});
+    }
+    for (view, fallback) in [
+        (
+            "gui",
+            json!({"rotation":[0,0,0],"translation":[0,0,0],"scale":[1,1,1]}),
+        ),
+        (
+            "firstperson",
+            json!({"rotation":[0,0,0],"translation":[0,0,0],"scale":[1,1,1]}),
+        ),
+        (
+            "thirdperson",
+            json!({"rotation":[10,-45,170],"translation":[0,1.5,-2.75],"scale":[0.375,0.375,0.375]}),
+        ),
+    ] {
+        let right = format!("{view}_righthand");
+        let own = model["display"]
+            .get(view)
+            .or_else(|| model["display"].get(&right))
+            .cloned();
+        let transform = own.clone().or_else(|| {
+            inherited
+                .and_then(|values| values.get(view).or_else(|| values.get(&right)))
+                .cloned()
+        });
+        let modern_default = transform.as_ref().is_some_and(|value| match view {
+            "gui" => {
+                value.get("rotation") == Some(&json!([30, 225, 0]))
+                    && value.get("scale") == Some(&json!([0.625, 0.625, 0.625]))
+            }
+            "firstperson" => {
+                value.get("rotation") == Some(&json!([0, 45, 0]))
+                    && value.get("scale") == Some(&json!([0.4, 0.4, 0.4]))
+            }
+            _ => {
+                value.get("rotation") == Some(&json!([75, 45, 0]))
+                    && value.get("scale") == Some(&json!([0.375, 0.375, 0.375]))
+            }
+        });
+        let converted = if source >= 2 || modern_default {
+            transform
+                .as_ref()
+                .and_then(|value| box_transform(value, view))
+                .unwrap_or(fallback)
+        } else {
+            own.unwrap_or(fallback)
+        };
+        model["display"][view] = converted;
+        model["display"].as_object_mut().unwrap().remove(&right);
+        model["display"]
+            .as_object_mut()
+            .unwrap()
+            .remove(&format!("{view}_lefthand"));
+    }
+    if write(root, &path, &model)? {
+        report.converted.push(format!(
+            "{name} 物品栏：生成旧版方块物品显示参数，修复角度重复叠加导致的图标变形"
+        ));
+    }
+    Ok(())
 }
 
 fn model_ref(model: &str) -> Option<String> {
@@ -80,7 +306,13 @@ fn condition(value: &Value, facing: &str) -> bool {
     })
 }
 
-fn directional(root: &Path, name: &str, report: &mut AssetReport) -> Result<()> {
+fn directional(
+    root: &Path,
+    name: &str,
+    source: u32,
+    target: u32,
+    report: &mut AssetReport,
+) -> Result<()> {
     let directory = root.join("assets/minecraft");
     let path = directory.join(format!("blockstates/{name}.json"));
     let provided = path.is_file()
@@ -196,6 +428,9 @@ fn directional(root: &Path, name: &str, report: &mut AssetReport) -> Result<()> 
             "{name}：还原上、下、东、西、南、北六个旧版朝向，补齐水平与垂直模型及纹理引用"
         ));
     }
+    if target < 2 {
+        inventory_model(root, name, source, report)?;
+    }
     Ok(())
 }
 
@@ -205,10 +440,13 @@ pub(super) fn migrate(
     target: u32,
     report: &mut AssetReport,
 ) -> Result<()> {
-    if source < 4 || target >= 4 {
+    if target >= 4 {
         return Ok(());
     }
-    directional(root, "dispenser", report)?;
-    directional(root, "dropper", report)?;
+    if target < 2 {
+        standalone_models(root, report)?;
+    }
+    directional(root, "dispenser", source, target, report)?;
+    directional(root, "dropper", source, target, report)?;
     Ok(())
 }
