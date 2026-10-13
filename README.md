@@ -38,6 +38,7 @@ Fast Pack 是面向 Minecraft Java Edition 的材质包版本转换工具，由 
 - **方向方块降级。** 发射器和投掷器的六种朝向还原为旧版状态引用，补齐缺失的水平 / 垂直模型，并保留垂直纹理名称；已识别的单模型 multipart 分支会转换到旧版 variants。降到 1.8.9 时展开同时包含 `parent` 与 `elements` 的立体模型，保留几何与包内父模型设置，修复竖向放置时的模型解析失败；同步换算方块父模型与物品模型的旧版显示参数，避免默认值回退到新版 GUI 角度与缩放，让物品栏图标恢复旧版大小。
 - **背包合成区坐标迁移。** 1.8.9 的输入格、箭头、结果格随新版布局整体右移 10px、上移 8px；人物背景框收窄 3px，补副手槽与配方书按钮，按贴图比例处理高清资源。
 - **现代桌面体验。** 深色 / 浅色主题、拖放导入、后台识别与转换、真实进度、天空贴图预览，以及约 150–280ms 的界面过渡。支持减少动态效果。
+- **Windows 兼容构建。** 发布程序使用 Rust 的 `x86_64-win7-windows-msvc` 目标和重新编译的标准库，静态链接 CRT；面向 Windows 7 SP1、Windows 10 和 Windows 11 的 x64 系统。Win7 自动使用软件渲染与旧系统字体，Win10 / Win11 优先使用 GPU 并保留软件回退。窗口声明旧版和新版 DPI 支持，运行无需单独安装 Rust 或 VC++ 运行库。
 - **转换进度固定显示。** 进度条固定在窗口底部，滚动页面时仍能查看；操作按钮保留原有位置和样式。悬停提示使用完整背景，版本交换提示显示在按钮上方，避免与导出区文字重叠。
 - **ZIP 开关移入更多选项。** 在“更多转换选项”中切换 ZIP / 文件夹输出，导出区保留目录和自动保存开关，其他面板沿用原有布局。
 - **天空预览自动选择主图。** 跳过用于混合的黑色底层，优先显示有实际画面的天空贴图。多层天空按数字顺序处理，同一维度存在不能等价转换的规则时整体保留，避免黑色底层与彩色层被拆到不同格式后变黑。
@@ -53,7 +54,7 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.1.exe`。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.2.exe`。
 2. 双击下载的程序，把材质包 ZIP 或文件夹拖入窗口。
 3. 选择目标版本与导出目录，点击“开始转换”。资源适配默认自动执行。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
@@ -94,7 +95,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.1.exe`、`fast-pack-cli-v1.2.1.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.2.exe`、`fast-pack-cli-v1.2.2.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -173,23 +174,24 @@ flowchart LR
 - 原包未提供的下界合金、三叉戟等新增装备会沿用客户端材质；程序不会把凭空生成的贴图当成原作者作品。原包本来使用原版图标的装备会保留这些图标。
 - 冲突与未知名称会进入转换详情；原包仍会保留。
 - 未在每个 Minecraft 版本、客户端加载器及实际材质包中逐一验证游戏画面。有限样例不代表任意资源都完全等价。
-- Windows x64 桌面版是当前发布目标。库与 CLI 可用于其他平台，当前 Release 提供 Windows 构建。
+- 当前发布程序面向 Windows 7 SP1 / 10 / 11 **x64**。32 位 Windows 与 Windows ARM64 不包含在该构建的支持范围内；支持的系统不代表所有旧显卡、被修改的系统和客户端组合均已验证。
+- Windows 兼容性会检查 EXE 导入表、标准库目标与运行库依赖。当前可直接验证的运行环境为 Windows 11；Win7 和 Win10 的实际启动、文件对话框、DPI 与画面仍需在对应系统验证，不能将构建通过宣称为三系统的完全实测。
 
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.1 为例，命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.2 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli-v1.2.1.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.2.1.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.2.1.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.2.1.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.2.1.exe old.zip --probe
-.\fast-pack-cli-v1.2.1.exe --versions
-.\fast-pack-cli-v1.2.1.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.2.1.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.2.1.exe old.zip --to 1.20.1 --vanilla-glint
-.\fast-pack-cli-v1.2.1.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.2.2.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.2.2.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.2.2.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.2.2.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.2.2.exe old.zip --probe
+.\fast-pack-cli-v1.2.2.exe --versions
+.\fast-pack-cli-v1.2.2.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.2.2.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.2.2.exe old.zip --to 1.20.1 --vanilla-glint
+.\fast-pack-cli-v1.2.2.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--from auto` 默认自动识别源版本。`--report-json` 仅在指定时将详情另存到提供的路径，不会把 `转换报告.txt` 塞入输出 ZIP。自定义映射采用 JSON 对象，例如 `{"custom_texture":"replacement_texture"}`。
@@ -200,28 +202,31 @@ GUI 对已有输出提供覆盖确认；CLI 会替换明确指定的已有输出
 
 ## 从源码构建
 
-推荐使用 Rust MSVC 稳定版工具链，以及包含 Windows SDK 的 Visual Studio C++ Build Tools。当前项目使用 Rust 2024 edition、Iced 0.14 和静态 CRT 配置；构建工具本身不随程序分发。
+推荐在 Windows 10 / 11 使用 Rust MSVC 工具链，以及包含 Windows SDK 的 Visual Studio C++ Build Tools。当前项目使用 Rust 2024 edition、Iced 0.14 和静态 CRT 配置；构建工具本身不随程序分发。兼容发布使用 Rust 1.98.1 与对应的 `rust-src`，构建 Win7 标准库。
 
 ```powershell
 git clone https://github.com/LongCold-ColdEternity-Team/Fast-Pack.git
 cd Fast-Pack
-cargo build --release --locked
+rustup component add rust-src
+cargo run --release --locked --example build_windows
 ```
 
 构建结果：
 
 ```text
-target-native/release/FastPack.exe
-target-native/release/fast-pack-cli.exe
+target-win7/x86_64-win7-windows-msvc/release/FastPack.exe
+target-win7/x86_64-win7-windows-msvc/release/fast-pack-cli.exe
 ```
 
 发布打包使用 Rust 入口。将第三方许可证整理到 `third-party-licenses` 后执行：
 
 ```powershell
-cargo run --release --locked --example release_bundle -- target-native/release dist-releases third-party-licenses
+cargo run --release --locked --example release_bundle -- target-win7/x86_64-win7-windows-msvc/release dist-releases third-party-licenses
 ```
 
 发布文件生成到 `dist-releases/v<Cargo 版本>/`，包含带版本号的 EXE、便携 ZIP 和 `SHA256SUMS.txt`。文件名直接来自当前 Cargo 版本，后续版本无需手动改写打包命名。
+
+`build_windows` 是 Rust 构建入口，为子 Cargo 进程设置 `RUSTC_BOOTSTRAP=1`，通过 `-Z build-std=std,panic_abort` 编译 Win7 专用标准库。该目标没有随 rustup 分发的预编译标准库；只把普通 Windows 目标的子系统版本改为 6.1 无法获得 Win7 兼容性。直接运行 `cargo build --release --locked` 仍可生成开发构建，但普通 `x86_64-pc-windows-msvc` 标准库最低要求为 Windows 10，不应作为 Win7 发布程序。
 
 源码仓库保留 Rust 实现、Cargo 文件、构建配置、内置资源配方、图标、开发者头像和文档。编译产物在 Releases 分发。测试输入由 Rust 代码生成，仓库无需携带打包的测试 ZIP。
 
@@ -237,7 +242,7 @@ cargo test --all-targets --locked
 
 ```powershell
 $env:ICED_BACKEND = 'tiny-skia'
-.\target-native\release\FastPack.exe
+.\target-win7\x86_64-win7-windows-msvc\release\FastPack.exe
 ```
 
 ## 源码结构
@@ -246,6 +251,8 @@ $env:ICED_BACKEND = 'tiny-skia'
 | --- | --- |
 | `src/gui.rs` | 桌面工作台、动画、后台任务、天空预览和“了解详细”页面 |
 | `src/preferences.rs` | 用户配置目录中的目标版本、导出目录、附魔颜色与开关记忆 |
+| `src/windows_compat.rs`、`build.rs` | Windows 版本检测、自动渲染选择、旧系统字体、DPI / 系统兼容声明 |
+| `examples/build_windows.rs` | 重新编译 Win7 标准库并生成统一 x64 Windows 构建 |
 | `examples/release_bundle.rs` | 从 Cargo 版本生成发布文件名、便携包与 SHA-256 校验值 |
 | `src/motion.rs` | 有界、可中断、可关闭的时间插值 |
 | `src/converter.rs` | ZIP 与目录处理、转换流水线、元数据和详情 |

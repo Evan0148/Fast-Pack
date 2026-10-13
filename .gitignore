@@ -1,5 +1,6 @@
 /target/
 /target-native/
+/target-win7/
 /dist/
 /validation/
 /.backups/

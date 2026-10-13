@@ -1340,7 +1340,7 @@ impl App {
                 } else {
                     iced::font::Weight::Medium
                 },
-                ..Font::with_name("Microsoft YaHei UI")
+                ..Font::with_name(crate::windows_compat::font_family())
             })
             .color(self.colors().foreground)
     }
@@ -2761,7 +2761,7 @@ pub fn run() -> Result<()> {
         .theme(App::theme)
         .subscription(App::subscription)
         .window(settings)
-        .default_font(Font::with_name("Microsoft YaHei UI"))
+        .default_font(Font::with_name(crate::windows_compat::font_family()))
         .antialiasing(true)
         .run()
         .context("无法启动 Fast Pack 界面")
