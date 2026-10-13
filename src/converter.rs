@@ -1216,6 +1216,8 @@ pub fn convert_pack(
             report.lowercased = normalize_lowercase(&root)?;
         }
     }
+    let default_notes =
+        crate::compat::legacy_defaults::prepare(&root, src_format, options.tgt_format)?;
     let upgrade = src_format < 4 && 4 <= options.tgt_format;
     let downgrade = options.tgt_format < 4 && 4 <= src_format;
     if upgrade || downgrade {
@@ -1250,6 +1252,7 @@ pub fn convert_pack(
     post_renames(&root, &mut report)?;
     progress("自动适配实体、模型与界面", 80);
     report.assets = crate::compat::assets::migrate(&root, src_format, options.tgt_format)?;
+    report.assets.converted.extend(default_notes);
     crate::compat::migrate_versioned_assets(
         &root,
         options.tgt_format,

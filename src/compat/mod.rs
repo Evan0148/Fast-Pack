@@ -8,6 +8,7 @@ mod item_bindings;
 mod item_display;
 mod item_transparency;
 mod legacy_blocks;
+pub(crate) mod legacy_defaults;
 mod legacy_effect_icons;
 mod legacy_gui;
 mod modern_gui;
