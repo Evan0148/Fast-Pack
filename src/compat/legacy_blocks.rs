@@ -170,6 +170,21 @@ fn box_transform(value: &Value, view: &str) -> Option<Value> {
     }))
 }
 
+fn modern_box_default(value: &Value, view: &str) -> bool {
+    let (rotation, scale): ([f64; 3], [f64; 3]) = match view {
+        "gui" => ([30.0, 225.0, 0.0], [0.625; 3]),
+        "firstperson" => ([0.0, 45.0, 0.0], [0.4; 3]),
+        "thirdperson" => ([75.0, 45.0, 0.0], [0.375; 3]),
+        _ => return false,
+    };
+    let read = |key: &str| {
+        value
+            .get(key)
+            .and_then(|value| serde_json::from_value::<[f64; 3]>(value.clone()).ok())
+    };
+    read("rotation") == Some(rotation) && read("scale") == Some(scale)
+}
+
 fn inventory_model(root: &Path, name: &str, source: u32, report: &mut AssetReport) -> Result<()> {
     let directory = root.join("assets/minecraft/models");
     let path = directory.join(format!("item/{name}.json"));
@@ -180,7 +195,7 @@ fn inventory_model(root: &Path, name: &str, source: u32, report: &mut AssetRepor
         json!({"parent":format!("block/{name}")})
     };
     let block_path = directory.join(format!("block/{name}.json"));
-    let block = serde_json::from_slice::<Value>(&fs::read(block_path)?)?;
+    let block = serde_json::from_slice::<Value>(&fs::read(&block_path)?)?;
     let inherited = block.get("display").and_then(Value::as_object);
     if !model.get("display").is_some_and(Value::is_object) {
         model["display"] = json!({});
@@ -209,20 +224,9 @@ fn inventory_model(root: &Path, name: &str, source: u32, report: &mut AssetRepor
                 .and_then(|values| values.get(view).or_else(|| values.get(&right)))
                 .cloned()
         });
-        let modern_default = transform.as_ref().is_some_and(|value| match view {
-            "gui" => {
-                value.get("rotation") == Some(&json!([30, 225, 0]))
-                    && value.get("scale") == Some(&json!([0.625, 0.625, 0.625]))
-            }
-            "firstperson" => {
-                value.get("rotation") == Some(&json!([0, 45, 0]))
-                    && value.get("scale") == Some(&json!([0.4, 0.4, 0.4]))
-            }
-            _ => {
-                value.get("rotation") == Some(&json!([75, 45, 0]))
-                    && value.get("scale") == Some(&json!([0.375, 0.375, 0.375]))
-            }
-        });
+        let modern_default = transform
+            .as_ref()
+            .is_some_and(|value| modern_box_default(value, view));
         let converted = if source >= 2 || modern_default {
             transform
                 .as_ref()
@@ -237,6 +241,34 @@ fn inventory_model(root: &Path, name: &str, source: u32, report: &mut AssetRepor
             .as_object_mut()
             .unwrap()
             .remove(&format!("{view}_lefthand"));
+    }
+    let mut converted_block = block.clone();
+    for view in ["gui", "firstperson", "thirdperson"] {
+        let right = format!("{view}_righthand");
+        let Some(transform) =
+            inherited.and_then(|display| display.get(view).or_else(|| display.get(&right)))
+        else {
+            continue;
+        };
+        if source < 2 && !modern_box_default(transform, view) {
+            continue;
+        }
+        if let Some(converted) = box_transform(transform, view) {
+            converted_block["display"][view] = converted;
+            converted_block["display"]
+                .as_object_mut()
+                .unwrap()
+                .remove(&right);
+            converted_block["display"]
+                .as_object_mut()
+                .unwrap()
+                .remove(&format!("{view}_lefthand"));
+        }
+    }
+    if write(root, &block_path, &converted_block)? {
+        report.converted.push(format!(
+            "{name}：同步换算方块父模型的 GUI 与手持显示参数，阻止旧版默认值回退到新版缩放"
+        ));
     }
     if write(root, &path, &model)? {
         report.converted.push(format!(
