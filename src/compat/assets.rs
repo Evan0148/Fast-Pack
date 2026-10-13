@@ -632,7 +632,7 @@ fn item_resources(root: &Path, source: u32, target: u32, report: &mut AssetRepor
     Ok(())
 }
 
-fn clear_inventory_region(
+pub(super) fn clear_inventory_region(
     image: &mut RgbaImage,
     old: &RgbaImage,
     x: u32,
