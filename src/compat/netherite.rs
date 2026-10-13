@@ -2,7 +2,7 @@ use super::assets::{AssetReport, open, save};
 use anyhow::Result;
 use image::RgbaImage;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -134,7 +134,17 @@ fn warm(hue: f64, saturation: f64) -> bool {
     (15.0..=68.0).contains(&hue) && saturation > 0.22
 }
 
-fn recolor(mut image: RgbaImage) -> RgbaImage {
+fn ramp(palette: &[[f64; 3]], value: f64) -> [u8; 3] {
+    let position = value.clamp(0.0, 1.0) * (palette.len() - 1) as f64;
+    let index = (position.floor() as usize).min(palette.len() - 2);
+    let fraction = position - index as f64;
+    std::array::from_fn(|channel| {
+        (palette[index][channel] * (1.0 - fraction) + palette[index + 1][channel] * fraction)
+            .round() as u8
+    })
+}
+
+fn recolor(mut image: RgbaImage, armor: bool, grip: bool) -> RgbaImage {
     let mut histogram = [0u64; 24];
     let mut colored = 0;
     let mut neutral = 0;
@@ -173,38 +183,150 @@ fn recolor(mut image: RgbaImage) -> RgbaImage {
         .filter(|pixel| pixel[3] >= 128 && metal(pixel))
         .map(|pixel| color([pixel[0], pixel[1], pixel[2]]).2)
         .collect();
-    if levels.is_empty() {
+    if levels.is_empty() && !grip {
         return image;
     }
     levels.sort_by(f64::total_cmp);
-    let low = levels[(levels.len() - 1) / 20];
-    let high = levels[(levels.len() - 1) * 19 / 20];
-    let palette: [[f64; 3]; 7] = [
-        [18.0, 14.0, 15.0],
-        [28.0, 24.0, 26.0],
-        [40.0, 34.0, 37.0],
-        [54.0, 46.0, 51.0],
-        [61.0, 55.0, 60.0],
-        [75.0, 66.0, 75.0],
-        [96.0, 84.0, 96.0],
+    let low = levels
+        .get(levels.len().saturating_sub(1) / 20)
+        .copied()
+        .unwrap_or(0.0);
+    let high = levels
+        .get(levels.len().saturating_sub(1) * 19 / 20)
+        .copied()
+        .unwrap_or(255.0);
+    let palette = [
+        [35.0, 16.0, 18.0],
+        [50.0, 39.0, 39.0],
+        [79.0, 60.0, 62.0],
+        [81.0, 68.0, 78.0],
+        [93.0, 86.0, 93.0],
+        [112.0, 103.0, 112.0],
+        [134.0, 123.0, 134.0],
     ];
-    for pixel in image.pixels_mut() {
-        if !metal(pixel) {
+    let handle_palette = [
+        [22.0, 8.0, 20.0],
+        [35.0, 16.0, 18.0],
+        [47.0, 33.0, 34.0],
+        [79.0, 60.0, 62.0],
+        [96.0, 52.0, 50.0],
+        [115.0, 69.0, 67.0],
+    ];
+    let original = image.clone();
+    let width = image.width();
+    let height = image.height();
+    let step = (width / if armor { 64 } else { 16 }).max(1) as i32;
+    let frame_height = if armor { height } else { width.min(height) };
+    let index = |x: u32, y: u32| (y * width + x) as usize;
+    let mut distances = vec![u32::MAX; width as usize * height as usize];
+    let mut queue = VecDeque::new();
+    for (x, y, pixel) in original.enumerate_pixels() {
+        let (_, saturation, _) = color([pixel[0], pixel[1], pixel[2]]);
+        if metal(pixel) && saturation >= 0.22 {
+            distances[index(x, y)] = 0;
+            queue.push_back((x, y));
+        }
+    }
+    while let Some((x, y)) = queue.pop_front() {
+        let distance = distances[index(x, y)] + 1;
+        if distance > 3 * step as u32 {
             continue;
         }
-        let luminance = color([pixel[0], pixel[1], pixel[2]]).2;
+        for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+            let (nx, ny) = (x as i32 + dx, y as i32 + dy);
+            if nx < 0
+                || nx >= width as i32
+                || ny < 0
+                || ny >= height as i32
+                || y / frame_height != ny as u32 / frame_height
+            {
+                continue;
+            }
+            let target = index(nx as u32, ny as u32);
+            if distances[target] > distance {
+                distances[target] = distance;
+                queue.push_back((nx as u32, ny as u32));
+            }
+        }
+    }
+    let material = |x: i32, y: i32, frame: u32| -> bool {
+        if x < 0
+            || x >= width as i32
+            || y < 0
+            || y >= height as i32
+            || y as u32 / frame_height != frame
+        {
+            return false;
+        }
+        let pixel = original.get_pixel(x as u32, y as u32);
+        let (_, saturation, luminance) = color([pixel[0], pixel[1], pixel[2]]);
+        metal(pixel)
+            && (armor
+                || colored == 0
+                || saturation >= 0.22
+                || luminance >= 90.0
+                || distances[index(x as u32, y as u32)] <= 2 * step as u32)
+    };
+    for (x, y, pixel) in image.enumerate_pixels_mut() {
+        if pixel[3] <= 2 {
+            continue;
+        }
+        let (hue, saturation, luminance) = color([pixel[0], pixel[1], pixel[2]]);
         let brightness = if high - low >= 8.0 {
             ((luminance - low) / (high - low)).clamp(0.0, 1.0)
         } else {
             (luminance / 255.0).clamp(0.0, 1.0)
         };
-        let position = brightness * (palette.len() - 1) as f64;
-        let index = (position.floor() as usize).min(palette.len() - 2);
-        let fraction = position - index as f64;
+        let frame = y / frame_height;
+        let px = x as i32;
+        let py = y as i32;
+        let is_metal = material(px, py, frame) && !grip;
+        let upper = !material(px - step, py, frame) || !material(px, py - step, frame);
+        let lower = !material(px + step, py, frame) || !material(px, py + step, frame);
+        let highlight =
+            !upper && (!material(px - 2 * step, py, frame) || !material(px, py - 2 * step, frame));
+        let mixed = |left: [u8; 3], right: [u8; 3], weight: f64| {
+            std::array::from_fn(|channel| {
+                (f64::from(left[channel]) * (1.0 - weight) + f64::from(right[channel]) * weight)
+                    .round() as u8
+            })
+        };
+        let rgb = if is_metal {
+            let base = ramp(&palette, 0.12 + brightness * 0.83);
+            if upper && !lower {
+                mixed(base, [74, 41, 64], 0.78)
+            } else if lower && !upper {
+                mixed(base, [35, 16, 18], 0.7)
+            } else if highlight {
+                mixed(base, [134, 123, 134], 0.48)
+            } else {
+                let band = ((x / step as u32 + (y % frame_height) / step as u32) % 5) as f64 / 4.0;
+                mixed(
+                    base,
+                    ramp(&[[74.0, 41.0, 64.0], [79.0, 60.0, 62.0]], band),
+                    0.13,
+                )
+            }
+        } else if !armor && (grip || warm(hue, saturation) || saturation < 0.22) {
+            if luminance < 20.0
+                && (material(px + step, py, frame) || material(px, py + step, frame))
+            {
+                [59, 30, 50]
+            } else if luminance < 12.0 && !grip {
+                [pixel[0], pixel[1], pixel[2]]
+            } else {
+                let band = (x / step as u32 + (y % frame_height) / step as u32) % 4;
+                let detail = if band == 0 { 0.22 } else { 0.0 };
+                ramp(
+                    &handle_palette,
+                    (luminance / 210.0 * 0.68 + detail).clamp(0.0, 0.95),
+                )
+            }
+        } else {
+            [pixel[0], pixel[1], pixel[2]]
+        };
         for channel in 0..3 {
-            pixel[channel] = (palette[index][channel] * (1.0 - fraction)
-                + palette[index + 1][channel] * fraction)
-                .round() as u8;
+            pixel[channel] = rgb[channel];
         }
     }
     image
@@ -242,13 +364,10 @@ impl ClonePack<'_> {
                 reference
             });
         }
-        if reference != self.primary
+        let grip = reference != self.primary
             && ["handle", "grip", "hilt", "wood"].iter().any(|word| {
                 label.contains(word) || reference.rsplit('/').next().unwrap_or("").contains(word)
-            })
-        {
-            return Ok(reference);
-        }
+            });
         if let Some(mapped) = self.images.get(&reference) {
             return Ok(mapped.clone());
         }
@@ -267,7 +386,7 @@ impl ClonePack<'_> {
         };
         let output = path(self.root, &destination, "textures", "png").unwrap();
         if !output.is_file() {
-            save(self.root, &output, &recolor(open(&input)?))?;
+            save(self.root, &output, &recolor(open(&input)?, false, grip))?;
             metadata(&input, &output)?;
         }
         self.images.insert(reference, destination.clone());
@@ -471,7 +590,7 @@ pub(super) fn migrate(root: &Path, target: u32, report: &mut AssetReport) -> Res
             })
             .find(|path| path.is_file());
         if let Some(source) = source {
-            save(root, &output, &recolor(open(&source)?))?;
+            save(root, &output, &recolor(open(&source)?, true, false))?;
             metadata(&source, &output)?;
             armor += 1;
         }
