@@ -7,7 +7,7 @@ use fast_pack::{
 };
 use iced::widget::{
     self, button, checkbox, column, container, mouse_area, pick_list, progress_bar, row,
-    scrollable, slider, space, text, text_input, tooltip,
+    scrollable, space, text, text_input, tooltip,
 };
 use iced::{
     Alignment, Background, Border, Color, Element, Font, Length, Padding, Shadow, Size,
@@ -35,11 +35,6 @@ enum Message {
     CommitExportDirectory,
     BrowseOutput,
     OutputPicked(Option<PathBuf>),
-    BackgroundPicker,
-    BackgroundPicked(Option<PathBuf>),
-    BackgroundEnabled(bool),
-    GlassEnabled(bool),
-    GlassStrength(f32),
     Zip(bool),
     Description(String),
     PreserveLang(bool),
@@ -81,7 +76,6 @@ enum WorkEvent {
     Progress(String, u8),
     Finished(Box<std::result::Result<ConversionReport, String>>),
     Mapping(std::result::Result<Vec<(String, String)>, String>),
-    Background(std::result::Result<(PathBuf, widget::image::Handle), String>),
     Preferences(std::result::Result<(), String>),
 }
 
@@ -206,11 +200,6 @@ struct App {
     info: Option<PackInfo>,
     sky_preview: Option<widget::image::Handle>,
     sky_layers: usize,
-    background_handle: Option<widget::image::Handle>,
-    background_path: Option<PathBuf>,
-    background_enabled: bool,
-    glass_enabled: bool,
-    glass_strength: f32,
     source_version: String,
     target: String,
     target_selected: bool,
@@ -290,10 +279,6 @@ impl App {
         let auto_save = preferences.auto_save;
         let auto_save_path = preferences.auto_save_path;
         let saved_export_directory = preferences.export_directory;
-        let background_path = preferences.background_path;
-        let background_enabled = preferences.background_enabled;
-        let glass_enabled = preferences.glass_enabled;
-        let glass_strength = preferences.glass_strength.clamp(0.0, 1.0);
         let active_glint_color = if preferences.custom_glint {
             preferences.glint_color
         } else {
@@ -325,11 +310,6 @@ impl App {
             info: None,
             sky_preview: None,
             sky_layers: 0,
-            background_handle: None,
-            background_path,
-            background_enabled,
-            glass_enabled,
-            glass_strength,
             source_version: "自动检测".into(),
             target: saved_target
                 .as_ref()
@@ -397,11 +377,6 @@ impl App {
         };
         if let Some(path) = std::env::var_os("FAST_PACK_SMOKE_INPUT") {
             app.load(PathBuf::from(path));
-        }
-        if app.background_enabled {
-            if let Some(path) = app.background_path.clone() {
-                app.request_background(path);
-            }
         }
         if app.capture_stage == "advanced" {
             app.advanced = true;
@@ -592,10 +567,6 @@ impl App {
                     export_directory: self.saved_export_directory.clone(),
                     custom_glint: self.custom_glint,
                     glint_color: self.glint_color,
-                    background_enabled: self.background_enabled,
-                    background_path: self.background_path.clone(),
-                    glass_enabled: self.glass_enabled,
-                    glass_strength: self.glass_strength,
                 })
                 .is_ok()
             {
@@ -606,27 +577,6 @@ impl App {
         }
     }
 
-    fn request_background(&self, path: PathBuf) {
-        let sender = self.sender.clone();
-        std::thread::spawn(move || {
-            let result = std::fs::read(&path)
-                .map_err(|error| format!("{error:#}"))
-                .and_then(|bytes| {
-                    image::load_from_memory(&bytes)
-                        .map_err(|error| format!("{error:#}"))
-                        .map(|image| {
-                            let image = image::imageops::thumbnail(&image, 1920, 1080);
-                            widget::image::Handle::from_rgba(
-                                image.width(),
-                                image.height(),
-                                image.into_raw(),
-                            )
-                        })
-                })
-                .map(|handle| (path, handle));
-            let _ = sender.send(WorkEvent::Background(result));
-        });
-    }
     fn log(&mut self, value: String) {
         if self.logs.len() >= 500 {
             self.logs.drain(..100);
@@ -860,14 +810,6 @@ impl App {
                                 Err(error) => self.error = Some(error),
                             }
                         }
-                        WorkEvent::Background(result) => match result {
-                            Ok((path, handle)) => {
-                                if self.background_path.as_ref() == Some(&path) {
-                                    self.background_handle = Some(handle);
-                                }
-                            }
-                            Err(error) => self.log(format!("背景图片：{error}")),
-                        },
                         WorkEvent::Preferences(result) => {
                             self.preferences_pending = self.preferences_pending.saturating_sub(1);
                             if let Err(error) = result {
@@ -1135,37 +1077,6 @@ impl App {
                 self.update_output();
                 self.remember_export_directory();
                 self.error = None;
-            }
-            Message::BackgroundPicker if !self.busy() => {
-                return Task::perform(
-                    async {
-                        rfd::AsyncFileDialog::new()
-                            .set_title("Fast Pack · 选择背景图片")
-                            .add_filter("图片", &["png", "jpg", "jpeg", "webp"])
-                            .pick_file()
-                            .await
-                            .map(|file| file.path().to_owned())
-                    },
-                    Message::BackgroundPicked,
-                );
-            }
-            Message::BackgroundPicked(Some(path)) if !self.busy() => {
-                self.background_path = Some(path.clone());
-                self.background_enabled = true;
-                self.request_background(path);
-                self.save_preferences();
-            }
-            Message::BackgroundEnabled(value) if !self.busy() => {
-                self.background_enabled = value;
-                self.save_preferences();
-            }
-            Message::GlassEnabled(value) if !self.busy() => {
-                self.glass_enabled = value;
-                self.save_preferences();
-            }
-            Message::GlassStrength(value) if !self.busy() => {
-                self.glass_strength = value.clamp(0.0, 1.0);
-                self.save_preferences();
             }
             Message::Advanced => {
                 self.advanced = !self.advanced;
@@ -1436,15 +1347,11 @@ impl App {
 
     fn panel<'a>(&self, content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         let c = self.colors();
-        let mut panel = c.panel;
-        if self.background_enabled && self.glass_enabled && self.background_handle.is_some() {
-            panel.a = (0.9 - self.glass_strength * 0.34).clamp(0.5, 0.9);
-        }
         container(content)
             .padding(24)
             .width(Length::Fill)
             .style(move |_| container::Style {
-                background: Some(panel.into()),
+                background: Some(c.panel.into()),
                 text_color: Some(c.foreground),
                 border: Border {
                     color: c.line,
@@ -1966,49 +1873,6 @@ impl App {
         .into()
     }
 
-    fn background_controls(&self) -> Element<'_, Message> {
-        let name = self
-            .background_path
-            .as_ref()
-            .map(|path| shorten(&path.display().to_string(), 42))
-            .unwrap_or_else(|| "未选择背景图片".into());
-        let glass = row![
-            checkbox(self.glass_enabled)
-                .label("磨砂玻璃")
-                .size(17)
-                .text_size(13)
-                .on_toggle_maybe((!self.busy()).then_some(Message::GlassEnabled)),
-            self.label("强度"),
-            slider(0.0..=1.0, self.glass_strength, Message::GlassStrength)
-                .step(0.01_f32)
-                .width(Length::Fill),
-            self.label(format!("{}%", (self.glass_strength * 100.0).round() as u8)),
-        ]
-        .spacing(12)
-        .align_y(Alignment::Center);
-        column![
-            row![
-                checkbox(self.background_enabled)
-                    .label("自定义背景")
-                    .size(17)
-                    .text_size(13)
-                    .on_toggle_maybe((!self.busy()).then_some(Message::BackgroundEnabled)),
-                self.action(
-                    36,
-                    "选择图片",
-                    (!self.busy()).then_some(Message::BackgroundPicker),
-                    false,
-                ),
-                self.label(name),
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center),
-            glass,
-        ]
-        .spacing(12)
-        .into()
-    }
-
     fn advanced_view(&self) -> Element<'_, Message> {
         let amount = self.advanced_motion.value(self.now);
         if amount < 0.001 {
@@ -2051,7 +1915,6 @@ impl App {
             self.label("材质包描述"),
             input,
             options,
-            self.background_controls(),
             self.glint_controls(),
             row![
                 self.action(
@@ -2070,7 +1933,7 @@ impl App {
             .height(if amount >= 0.999 {
                 Length::Shrink
             } else {
-                Length::Fixed((if self.width < 940.0 { 520.0 } else { 410.0 }) * amount)
+                Length::Fixed((if self.width < 940.0 { 448.0 } else { 334.0 }) * amount)
             })
             .clip(true)
             .into()
@@ -2332,15 +2195,7 @@ impl App {
         )
         .width(Length::Fill)
         .height(Length::Fill);
-        let mut base_color = c.background;
-        if self.background_enabled && self.background_handle.is_some() {
-            base_color.a = if self.glass_enabled {
-                (0.3 + (1.0 - self.glass_strength) * 0.25).clamp(0.22, 0.55)
-            } else {
-                0.76
-            };
-        }
-        let surface: Element<'_, Message> = container(column![
+        let base: Element<'_, Message> = container(column![
             header,
             widget::rule::horizontal(1),
             main,
@@ -2351,27 +2206,11 @@ impl App {
         .height(Length::Fill)
         .width(Length::Fill)
         .style(move |_| container::Style {
-            background: Some(base_color.into()),
+            background: Some(c.background.into()),
             text_color: Some(c.foreground),
             ..Default::default()
         })
         .into();
-        let base: Element<'_, Message> = if self.background_enabled {
-            if let Some(background) = &self.background_handle {
-                widget::stack![
-                    widget::image(background.clone())
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .content_fit(iced::ContentFit::Cover),
-                    surface
-                ]
-                .into()
-            } else {
-                surface
-            }
-        } else {
-            surface
-        };
         if self.glint_picker || self.glint_picker_motion.value(self.now) > 0.001 {
             let amount = self.glint_picker_motion.value(self.now);
             let overlay = container(self.glint_dialog())

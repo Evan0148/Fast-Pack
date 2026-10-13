@@ -21,11 +21,6 @@ pub struct Preferences {
     pub export_directory: Option<PathBuf>,
     pub custom_glint: bool,
     pub glint_color: [u8; 3],
-    pub background_enabled: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub background_path: Option<PathBuf>,
-    pub glass_enabled: bool,
-    pub glass_strength: f32,
 }
 
 impl Default for Preferences {
@@ -37,10 +32,6 @@ impl Default for Preferences {
             export_directory: None,
             custom_glint: false,
             glint_color: [255, 255, 255],
-            background_enabled: false,
-            background_path: None,
-            glass_enabled: true,
-            glass_strength: 0.62,
         }
     }
 }
@@ -98,9 +89,6 @@ pub fn load() -> Preferences {
     preferences.export_directory = preferences
         .export_directory
         .filter(|path| path.is_absolute());
-    preferences.background_path = preferences
-        .background_path
-        .filter(|path| path.is_absolute() && path.is_file());
     preferences
 }
 
