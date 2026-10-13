@@ -25,6 +25,17 @@ fn profile(target: u32) -> Option<&'static Profile> {
         .map(|(_, profile)| profile)
 }
 
+pub(super) fn model_reference(target: u32, reference: &str) -> Option<Value> {
+    profile(target)?
+        .models
+        .get(reference.strip_prefix("minecraft:")?)
+        .cloned()
+}
+
+pub(super) fn definition_reference(target: u32, name: &str) -> Option<Value> {
+    profile(target)?.definitions.get(name).cloned()
+}
+
 fn id(reference: &str) -> Option<String> {
     let (namespace, path) = reference
         .split_once(':')

@@ -13,6 +13,7 @@ mod legacy_effect_icons;
 mod legacy_gui;
 mod modern_gui;
 mod modern_items;
+mod netherite;
 mod players;
 pub mod properties;
 mod recent_resources;

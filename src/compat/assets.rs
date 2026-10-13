@@ -1615,6 +1615,7 @@ pub fn migrate_with_glint(
     super::equipment::migrate(root, source, target, &mut report)?;
     super::players::migrate(root, source, target, &mut report)?;
     super::recent_resources::migrate(root, source, target, &mut report)?;
+    super::netherite::migrate(root, target, &mut report)?;
     super::modern_gui::prepare(root, source, target, &mut report)?;
     super::modern_gui::migrate(root, source, target, &mut report)?;
     gui(root, source, target, &mut report)?;
