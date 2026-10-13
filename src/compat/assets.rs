@@ -547,7 +547,7 @@ fn entities(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> 
     Ok(())
 }
 
-fn nine_slice(source: &RgbaImage, width: u32, height: u32, border: u32) -> RgbaImage {
+pub(super) fn nine_slice(source: &RgbaImage, width: u32, height: u32, border: u32) -> RgbaImage {
     let mut out = RgbaImage::new(width, height);
     for y in 0..height {
         for x in 0..width {
@@ -925,6 +925,11 @@ fn gui(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Resul
         let mut rebuilt = BTreeMap::<String, RgbaImage>::new();
         let mut count = 0;
         for recipe in recipes {
+            if target < 4
+                && recipe.target == "gui/sprites/container/inventory/effect_background_small.png"
+            {
+                continue;
+            }
             let source = textures.join(&recipe.target);
             if !source.exists() {
                 continue;
@@ -1164,6 +1169,7 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
         return Ok(());
     }
     let mut count = 0;
+    let mut inherited_items = 0;
     let mut merged = BTreeMap::<String, serde_json::Map<String, Value>>::new();
     let paths: Vec<_> = WalkDir::new(&assets)
         .min_depth(1)
@@ -1175,6 +1181,11 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
         })
         .map(|entry| entry.into_path())
         .collect();
+    let resolver = if source >= 2 && target < 2 {
+        Some(super::item_display::ModelResolver::load(root, &paths)?)
+    } else {
+        None
+    };
     for path in paths {
         let relative = path
             .strip_prefix(root)?
@@ -1191,7 +1202,12 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
         } else {
             false
         };
+        let materialized = resolver
+            .as_ref()
+            .is_some_and(|resolver| resolver.materialize(&mut value, &relative));
         let mut changed = rewrite_model(&mut value, source, target, &relative);
+        changed |= materialized;
+        inherited_items += usize::from(materialized);
         changed |= recovered;
         if recovered {
             report
@@ -1427,6 +1443,9 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
         fs::write(path, serde_json::to_vec_pretty(&value)?)?;
         count += 1;
     }
+    if inherited_items > 0 {
+        report.converted.push(format!("物品手持姿态：解析 {inherited_items} 个平面物品的父模型继承，补齐旋转、位移与缩放后换算为 1.8.9 姿态"));
+    }
     if source < 4 && target >= 4 {
         let directory = root.join("assets/minecraft/models/item");
         for (old, aliases) in &crate::tables::legacy_items().aliases {
@@ -1582,8 +1601,11 @@ pub fn migrate_with_glint(
     entities(root, source, target, &mut report)?;
     item_resources(root, source, target, &mut report)?;
     super::item_bindings::migrate(root, source, target, &mut report)?;
+    super::item_display::bind_definitions(root, source, target, &mut report)?;
     models(root, source, target, &mut report)?;
+    super::legacy_blocks::migrate(root, source, target, &mut report)?;
     gui(root, source, target, &mut report)?;
+    super::legacy_gui::migrate(root, source, target, &mut report)?;
     super::glint::migrate(root, source, target, glint_color, &mut report)?;
     fonts(root, source, target, &mut report)?;
     Ok(report)

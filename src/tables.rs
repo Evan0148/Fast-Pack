@@ -220,7 +220,8 @@ pub fn legacy_texture_name(stem: &str, kind: &str) -> Option<String> {
     } else {
         &tables().legacy_stable_item
     };
-    whitelist.contains(&name).then(|| stem.into())
+    (whitelist.contains(&name) || kind == "block" && legacy_blocks().source_names.contains(&name))
+        .then(|| stem.into())
 }
 
 pub fn parse_drop_data(data: &str) -> Vec<String> {

@@ -17,6 +17,10 @@ static BINDINGS: LazyLock<Bindings> = LazyLock::new(|| {
         .expect("物品模型绑定参考表无效")
 });
 
+pub(super) fn reference(name: &str) -> Option<&'static Value> {
+    BINDINGS.models.get(name)
+}
+
 fn provided_texture(root: &Path, model: &Value) -> bool {
     model
         .get("textures")
