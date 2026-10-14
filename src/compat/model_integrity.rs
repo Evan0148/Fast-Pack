@@ -382,14 +382,21 @@ fn repair(graph: &mut Graph<'_>) -> Result<usize> {
         if name.starts_with("minecraft:block/")
             && value.get("parent").is_none()
             && value["elements"].is_array()
-            && graph.profile.models.get(name).is_some_and(|native| {
-                matches!(
-                    native["parent"].as_str(),
-                    Some("block/block" | "minecraft:block/block")
-                )
-            })
+            && graph
+                .resolve(name, true, &mut BTreeSet::new())
+                .parents
+                .iter()
+                .any(|parent| parent == "minecraft:block/block")
         {
-            value["parent"] = json!("minecraft:block/block");
+            let parent = graph.profile.models[name]["parent"]
+                .as_str()
+                .and_then(id)
+                .filter(|parent| {
+                    let resolved = graph.resolve(parent, false, &mut BTreeSet::new());
+                    resolved.missing.is_empty() && !resolved.parents.contains(name)
+                })
+                .unwrap_or_else(|| "minecraft:block/block".into());
+            value["parent"] = json!(parent);
             adjusted = true;
         }
         let keys: BTreeSet<_> = value["textures"]
@@ -640,6 +647,166 @@ fn atlas(graph: &Graph<'_>, target: u32, report: &mut AssetReport) -> Result<usi
     Ok(needed.len())
 }
 
+fn vector(value: &Value) -> Option<[f64; 3]> {
+    let values = value.as_array()?;
+    if values.len() != 3 {
+        return None;
+    }
+    let result = [
+        values[0].as_f64()?,
+        values[1].as_f64()?,
+        values[2].as_f64()?,
+    ];
+    result
+        .iter()
+        .all(|value| value.is_finite())
+        .then_some(result)
+}
+
+fn rotate(mut point: [f64; 3], rotation: [f64; 3]) -> [f64; 3] {
+    for axis in [2, 1, 0] {
+        let a = (axis + 1) % 3;
+        let b = (axis + 2) % 3;
+        let (sin, cos) = rotation[axis].to_radians().sin_cos();
+        let first = cos * point[a] - sin * point[b];
+        point[b] = sin * point[a] + cos * point[b];
+        point[a] = first;
+    }
+    point
+}
+
+fn vertices(value: &Value) -> Option<Vec<[f64; 3]>> {
+    let mut points = Vec::new();
+    for element in value["elements"].as_array()? {
+        let from = vector(&element["from"])?;
+        let to = vector(&element["to"])?;
+        for x in [from[0], to[0]] {
+            for y in [from[1], to[1]] {
+                for z in [from[2], to[2]] {
+                    let mut point = [x, y, z];
+                    if let Some(element_rotation) = element.get("rotation") {
+                        let origin = vector(&element_rotation["origin"])?;
+                        let axis = match element_rotation["axis"].as_str()? {
+                            "x" => 0,
+                            "y" => 1,
+                            "z" => 2,
+                            _ => return None,
+                        };
+                        let angle = element_rotation["angle"].as_f64()?;
+                        let mut rotation = [0.0; 3];
+                        rotation[axis] = angle;
+                        for component in 0..3 {
+                            point[component] -= origin[component];
+                            if component != axis && element_rotation["rescale"] == true {
+                                point[component] /= angle.to_radians().cos();
+                            }
+                        }
+                        point = rotate(point, rotation);
+                        for component in 0..3 {
+                            point[component] += origin[component];
+                        }
+                    }
+                    points.push(point);
+                }
+            }
+        }
+    }
+    (!points.is_empty()).then_some(points)
+}
+
+fn gui_bounds(points: &[[f64; 3]], display: &Value) -> Option<[[f64; 2]; 2]> {
+    let rotation = display
+        .get("rotation")
+        .map(vector)
+        .unwrap_or(Some([0.0; 3]))?;
+    let scale = display.get("scale").map(vector).unwrap_or(Some([1.0; 3]))?;
+    let translation = display
+        .get("translation")
+        .map(vector)
+        .unwrap_or(Some([0.0; 3]))?;
+    let mut minimum = [f64::INFINITY; 2];
+    let mut maximum = [f64::NEG_INFINITY; 2];
+    for point in points {
+        let point = rotate(
+            std::array::from_fn(|axis| (point[axis] - 8.0) * scale[axis]),
+            rotation,
+        );
+        for axis in 0..2 {
+            minimum[axis] = minimum[axis].min(point[axis] + translation[axis]);
+            maximum[axis] = maximum[axis].max(point[axis] + translation[axis]);
+        }
+    }
+    Some([minimum, maximum])
+}
+
+fn bed_icons(graph: &mut Graph<'_>) -> Result<usize> {
+    let mut edits = BTreeMap::new();
+    for (name, value) in &graph.models {
+        let Some(item) = name.strip_prefix("minecraft:item/") else {
+            continue;
+        };
+        if item != "bed" && !item.ends_with("_bed") {
+            continue;
+        }
+        let resolved = graph.resolve(name, false, &mut BTreeSet::new());
+        if !resolved
+            .parents
+            .iter()
+            .any(|parent| parent == "minecraft:block/bed_inventory")
+        {
+            continue;
+        }
+        let Some(points) = resolved
+            .parents
+            .iter()
+            .rev()
+            .find_map(|parent| graph.models.get(parent).and_then(vertices))
+        else {
+            continue;
+        };
+        let gui = resolved
+            .parents
+            .iter()
+            .rev()
+            .find_map(|parent| graph.models.get(parent)?.get("display")?.get("gui"))
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        let Some([minimum, maximum]) = gui_bounds(&points, &gui) else {
+            continue;
+        };
+        let rotation = gui.get("rotation").and_then(vector).unwrap_or([0.0; 3]);
+        let edge_on = rotation[0].to_radians().sin().abs() < 0.1
+            && rotation[2].to_radians().sin().abs() < 0.1;
+        if !edge_on && (0..2).all(|axis| minimum[axis] >= -7.75 && maximum[axis] <= 7.75) {
+            continue;
+        }
+        let rotation = [30.0, 225.0, 0.0];
+        let [minimum, maximum] = gui_bounds(&points, &json!({"rotation": rotation})).unwrap();
+        let span = (maximum[0] - minimum[0]).max(maximum[1] - minimum[1]);
+        if !span.is_finite() || span <= f64::EPSILON {
+            continue;
+        }
+        let scale = 14.0 / span;
+        let translation = [
+            -(minimum[0] + maximum[0]) * 0.5 * scale,
+            -(minimum[1] + maximum[1]) * 0.5 * scale,
+            0.0,
+        ];
+        let mut model = value.clone();
+        if !model["display"].is_object() {
+            model["display"] = json!({});
+        }
+        model["display"]["gui"] = json!({"rotation": rotation, "translation": translation, "scale": [scale, scale, scale]});
+        edits.insert(name.clone(), model);
+    }
+    let count = edits.len();
+    for (name, value) in edits {
+        write(graph.root, &model_path(graph.root, &name), &value)?;
+        graph.models.insert(name, value);
+    }
+    Ok(count)
+}
+
 pub(super) fn migrate(root: &Path, target: u32, report: &mut AssetReport) -> Result<()> {
     if target < 4 || !root.join("assets").is_dir() {
         return Ok(());
@@ -650,6 +817,10 @@ pub(super) fn migrate(root: &Path, target: u32, report: &mut AssetReport) -> Res
     let profile: Profile = serde_json::from_str(line)?;
     let mut graph = load(root, &profile, report)?;
     let repaired = repair(&mut graph)?;
+    let beds = bed_icons(&mut graph)?;
+    if beds > 0 {
+        report.converted.push(format!("床物品显示：为 {beds} 个旧版立体床图标修正背包视角，按模型实际尺寸居中并缩放，保留几何、UV、贴图与手持姿态"));
+    }
     let sprites = atlas(&graph, target, report)?;
     let mut unresolved = 0;
     for name in &graph.roots {
