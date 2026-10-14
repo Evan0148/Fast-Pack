@@ -1,0 +1,18 @@
+Minecraft Java resource names, model inheritance, texture bindings and atlas
+metadata are derived from official Mojang Studios / Microsoft reference clients.
+Minecraft is not affiliated with or endorsed by ColdEternity Team / Fast Pack.
+
+Reference client families: 1.8.9, 1.9.4, 1.12.2, 1.14.4, 1.15.2, 1.16.5,
+1.19.3, 1.20.1, 1.21.4, 1.21.5, 1.21.6, 1.21.8, 1.21.10, 1.21.11,
+26.1.2, 26.2, 26.3 and 26.4 snapshot 3.
+
+The embedded summaries omit client code, image content and model geometry.
+They provide resource identifiers and bindings for independent compatibility
+checks. Original Minecraft resources retain their respective ownership.
+
+Legacy block-state identifiers are interoperability facts from ViaVersion:
+https://github.com/ViaVersion/Mappings
+
+Connected-texture file format reference:
+https://github.com/sp614x/optifine/blob/master/OptiFineDoc/doc/ctm.properties
+The connected-texture adapter is independent Rust code and embeds no OptiFine code.

@@ -59,7 +59,7 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.13.exe`。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.14.exe`。
 2. 双击下载的程序，把材质包 ZIP 或文件夹拖入窗口。
 3. 选择目标版本与导出目录，点击“开始转换”。资源适配默认自动执行。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
@@ -100,7 +100,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.13.exe`、`fast-pack-cli-v1.2.13.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.14.exe`、`fast-pack-cli-v1.2.14.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -126,6 +126,9 @@ flowchart LR
 | 旗帜 / 盾牌 | 将旧图案掩码转为 alpha，结合上传的底图 RGB；降级时生成旧式灰度掩码 |
 | 末影龙 | 清理 1.15 删除的龙翼底面 UV，并保留原图 |
 | 模型 / 方块状态 | 旧手持姿态基准换算、降级时展开平面物品父模型继承、补齐缺省姿态、左右手显示结构、旧转换备份修复、普通状态键、模型名称与引用、1.21.4+ 默认物品定义绑定 |
+| 模型引用检查 | 转换后检查实际方块与物品模型继承、贴图变量和有效几何；依据官方资源补齐可确定的绑定或父模型，保留正常自定义几何与贴图 |
+| 方块图集 | 1.19.3+ 自动登记模型实际使用但未进入方块图集的贴图，处理物品模型引用实体目录贴图导致的紫黑问题，保留已有图集与动态纹饰 |
+| 连接纹理 | 旧 MCPatcher CTM 路径与图块引用迁移到现代 OptiFine 格式，显式转换纹理名称、旧数字方块 ID 和颜色匹配，保留图块及规则优先级 |
 | 发射器 / 投掷器 | 六方向旧版 variants、水平与垂直模型补齐、朝向纹理引用修复、1.8.9 parent / elements 冲突修复、物品栏显示参数适配 |
 | 游戏模式 GUI | 在实际 UV 的 `y=75` 行将两个 25px 槽位适配为 26px |
 | 背包 GUI | 从原效果列表的边框生成窄版效果背景，保留材质风格 |
@@ -141,6 +144,14 @@ flowchart LR
 | 天体 | 26.x 太阳路径与八张月相资源的拆分、旧式月相图合并 |
 | 天空 | 路径与纹理引用重写、六面朝向、可表达的淡入淡出和条件迁移、静态天空格式转换、原始层缓存 |
 | 材质包着色器 | 代际识别、目标版本变体匹配、已识别的 import 规则处理、跨代覆盖的自动备份与回退 |
+
+v1.2.14 起，模型引用检查会在模型迁移与跨协议物品资源生成后自动执行，检查实际方块、物品及其条件变体的父模型、贴图变量和图集登记。它使用随程序提供的官方资源摘要，按目标资源格式选择对应或最近的较低格式参考，不需要玩家安装目标版本客户端或额外下载参考文件。
+
+旧包把模型模板放在新版具体模型的同名位置时，会补齐能够根据官方结构确定的贴图绑定；缺失或循环的原版父模型会恢复正确继承。有效的自定义几何、UV 和明确设置的显示姿态保留。目标版本无法解析的原版同名模型会先备份，再使用客户端对应原生模型；没有官方对应的未知自定义资源会保留并在详情说明，程序不会凭空生成作者缺失的素材。
+
+1.19.3+ 的图集检查会为模型实际使用、文件存在却未被方块图集收录的贴图增加精确登记，尤其是实体目录中的贴图被用于物品模型的情况。已有图集条目、普通方块 / 物品目录及动态纹饰资源继续保留。
+
+MCPatcher 连接纹理会迁移到现代 OptiFine CTM 目录，规范含空格或大写的路径，转换图块引用与旧数字方块 / 颜色选择，并保留原规则的匹配顺序。普通 CTM 规则按 47 个图块输出；缺少必要图块或无法解析的规则备份后停用，避免把正常基础材质覆盖成缺失贴图。连接纹理效果仍依赖客户端已有的 CTM 支持，转换器不会给原版客户端新增渲染功能。
 
 ## 支持的版本标签
 
@@ -224,7 +235,7 @@ ViaBackwards 启动时将用户 NBT 与内置映射合并。运行中的游戏�
 独立维护入口仍保留，普通玩家使用默认开关即可：
 
 ```powershell
-.\fast-pack-cli-v1.2.13.exe --client-audio "E:\MCLDownload\Game\.minecraft"
+.\fast-pack-cli-v1.2.14.exe --client-audio "E:\MCLDownload\Game\.minecraft"
 ```
 
 此命令现仅配置官方名称与附魔，不改写模组，也不启用原声音效。`--restore-client-audio` 仅用于恢复以前版本留下的模组改写，校验原始备份后还原；当前已经被启动器恢复的原版模组无需处理。
@@ -233,19 +244,19 @@ ViaBackwards 启动时将用户 NBT 与内置映射合并。运行中的游戏�
 
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.13 为例，命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.14 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli-v1.2.13.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.2.13.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.2.13.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.2.13.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.2.13.exe old.zip --probe
-.\fast-pack-cli-v1.2.13.exe --versions
-.\fast-pack-cli-v1.2.13.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.2.13.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.2.13.exe old.zip --to 1.20.1 --vanilla-glint
-.\fast-pack-cli-v1.2.13.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.2.14.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.2.14.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.2.14.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.2.14.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.2.14.exe old.zip --probe
+.\fast-pack-cli-v1.2.14.exe --versions
+.\fast-pack-cli-v1.2.14.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.2.14.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.2.14.exe old.zip --to 1.20.1 --vanilla-glint
+.\fast-pack-cli-v1.2.14.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--from auto` 默认自动识别源版本。`--report-json` 仅在指定时将详情另存到提供的路径，不会把 `转换报告.txt` 塞入输出 ZIP。自定义映射采用 JSON 对象，例如 `{"custom_texture":"replacement_texture"}`。
