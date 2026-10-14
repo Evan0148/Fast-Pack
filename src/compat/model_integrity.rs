@@ -2,11 +2,12 @@ use super::assets::{AssetReport, backup};
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, OnceLock};
 
 #[derive(Deserialize)]
 struct Profile {
@@ -17,7 +18,12 @@ struct Profile {
     sprites: BTreeSet<String>,
 }
 
-static PROFILES: LazyLock<BTreeMap<u32, &'static str>> = LazyLock::new(|| {
+struct ProfileSource {
+    data: &'static str,
+    parsed: OnceLock<Profile>,
+}
+
+static PROFILES: LazyLock<BTreeMap<u32, ProfileSource>> = LazyLock::new(|| {
     include_str!("../../assets/model-integrity.jsonl")
         .lines()
         .filter_map(|line| {
@@ -27,7 +33,13 @@ static PROFILES: LazyLock<BTreeMap<u32, &'static str>> = LazyLock::new(|| {
                 .next()?
                 .parse()
                 .ok()?;
-            Some((number, line))
+            Some((
+                number,
+                ProfileSource {
+                    data: line,
+                    parsed: OnceLock::new(),
+                },
+            ))
         })
         .collect()
 });
@@ -53,11 +65,6 @@ fn id(value: &str) -> Option<String> {
 fn model_path(root: &Path, name: &str) -> PathBuf {
     let (namespace, path) = name.split_once(':').unwrap();
     root.join(format!("assets/{namespace}/models/{path}.json"))
-}
-
-fn texture_path(root: &Path, name: &str) -> PathBuf {
-    let (namespace, path) = name.split_once(':').unwrap();
-    root.join(format!("assets/{namespace}/textures/{path}.png"))
 }
 
 fn write(root: &Path, path: &Path, value: &Value) -> Result<bool> {
@@ -113,7 +120,7 @@ fn slots(value: &Value) -> Option<Vec<String>> {
     })
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Resolved {
     textures: Map<String, Value>,
     slots: Vec<String>,
@@ -126,30 +133,45 @@ struct Graph<'a> {
     profile: &'a Profile,
     models: BTreeMap<String, Value>,
     roots: BTreeSet<String>,
+    textures: BTreeSet<String>,
+    cache: [RefCell<BTreeMap<String, Arc<Resolved>>>; 2],
 }
 
 impl Graph<'_> {
-    fn resolve(&self, name: &str, native: bool, seen: &mut BTreeSet<String>) -> Resolved {
+    fn resolve(&self, name: &str, native: bool, seen: &mut BTreeSet<String>) -> Arc<Resolved> {
         if name.starts_with("minecraft:builtin/") {
-            return Resolved::default();
+            return Arc::default();
         }
         if seen.len() >= 64 || !seen.insert(name.into()) {
-            return Resolved {
+            return Arc::new(Resolved {
                 missing: BTreeSet::from([name.into()]),
                 ..Default::default()
-            };
+            });
+        }
+        let cache = &self.cache[usize::from(native)];
+        if let Some(result) = cache.borrow().get(name).filter(|result| {
+            seen.len() - 1 + result.parents.len() <= 64
+                && result
+                    .parents
+                    .iter()
+                    .filter(|parent| parent.as_str() != name)
+                    .all(|parent| !seen.contains(parent))
+        }) {
+            seen.remove(name);
+            return Arc::clone(result);
         }
         let provided = (!native).then(|| self.models.get(name)).flatten();
         let Some(value) = provided.or_else(|| self.profile.models.get(name)) else {
-            return Resolved {
+            seen.remove(name);
+            return Arc::new(Resolved {
                 missing: BTreeSet::from([name.into()]),
                 ..Default::default()
-            };
+            });
         };
         let mut result = value["parent"]
             .as_str()
             .and_then(id)
-            .map(|parent| self.resolve(&parent, native, seen))
+            .map(|parent| self.resolve(&parent, native, seen).as_ref().clone())
             .unwrap_or_default();
         if let Some(values) = value["textures"].as_object() {
             result.textures.extend(values.clone());
@@ -167,6 +189,10 @@ impl Graph<'_> {
         }
         result.parents.push(name.into());
         seen.remove(name);
+        let result = Arc::new(result);
+        if result.missing.is_empty() {
+            cache.borrow_mut().insert(name.into(), Arc::clone(&result));
+        }
         result
     }
 
@@ -183,7 +209,7 @@ impl Graph<'_> {
     }
 
     fn texture_exists(&self, name: &str) -> bool {
-        self.profile.textures.contains(name) || texture_path(self.root, name).is_file()
+        self.textures.contains(name)
     }
 
     fn used(&self, resolved: &Resolved) -> Vec<String> {
@@ -283,23 +309,41 @@ fn load<'a>(root: &'a Path, profile: &'a Profile, report: &mut AssetReport) -> R
         profile,
         models: BTreeMap::new(),
         roots: profile.roots.clone(),
+        textures: profile.textures.clone(),
+        cache: Default::default(),
     };
     let mut pending = vec![];
-    for entry in walkdir::WalkDir::new(root.join("assets")).min_depth(1) {
+    let assets = root.join("assets");
+    for entry in walkdir::WalkDir::new(&assets).min_depth(1) {
         let entry = entry?;
         if !entry.file_type().is_file()
             || entry
                 .path()
                 .extension()
-                .is_none_or(|extension| extension != "json")
+                .is_none_or(|extension| extension != "json" && extension != "png")
         {
             continue;
         }
         let relative = entry
             .path()
-            .strip_prefix(root.join("assets"))?
+            .strip_prefix(&assets)?
             .to_string_lossy()
             .replace('\\', "/");
+        if entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == "png")
+        {
+            if let Some((namespace, name)) = relative.split_once("/textures/") {
+                if let Some(name) = name
+                    .strip_suffix(".png")
+                    .and_then(|name| id(&format!("{namespace}:{name}")))
+                {
+                    graph.textures.insert(name);
+                }
+            }
+            continue;
+        }
         if let Some((namespace, name)) = relative.split_once("/models/") {
             if namespace.contains('/') {
                 continue;
@@ -425,6 +469,9 @@ fn repair(graph: &mut Graph<'_>) -> Result<usize> {
             initial.insert(name.clone(), value);
         }
     }
+    if !initial.is_empty() {
+        graph.cache[0].get_mut().clear();
+    }
     for (name, value) in initial {
         write(graph.root, &model_path(graph.root, &name), &value)?;
         graph.models.insert(name.clone(), value);
@@ -524,6 +571,7 @@ fn repair(graph: &mut Graph<'_>) -> Result<usize> {
         if edits.is_empty() {
             break;
         }
+        graph.cache[0].get_mut().clear();
         for (name, model) in edits {
             if write(graph.root, &model_path(graph.root, &name), &model)? {
                 changed.insert(name.clone());
@@ -571,28 +619,9 @@ fn atlas(graph: &Graph<'_>, target: u32, report: &mut AssetReport) -> Result<usi
     if target < 12 {
         return Ok(0);
     }
-    let mut available = graph.profile.textures.clone();
-    for entry in walkdir::WalkDir::new(graph.root.join("assets")).min_depth(1) {
-        let entry = entry?;
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let relative = entry
-            .path()
-            .strip_prefix(graph.root.join("assets"))?
-            .to_string_lossy()
-            .replace('\\', "/");
-        if let Some((namespace, name)) = relative.split_once("/textures/") {
-            if let Some(name) = name
-                .strip_suffix(".png")
-                .and_then(|name| id(&format!("{namespace}:{name}")))
-            {
-                available.insert(name);
-            }
-        }
-    }
+    let available = &graph.textures;
     let mut registered = graph.profile.sprites.clone();
-    for texture in &available {
+    for texture in available {
         let (_, path) = texture.split_once(':').unwrap();
         if path.starts_with("block/") || path.starts_with("item/") {
             registered.insert(texture.clone());
@@ -616,7 +645,7 @@ fn atlas(graph: &Graph<'_>, target: u32, report: &mut AssetReport) -> Result<usi
             .push("图集自检：原包 blocks.json 的 sources 不是数组，已保留".into());
         return Ok(0);
     }
-    sources(&definition, &available, &mut registered);
+    sources(&definition, available, &mut registered);
     let mut needed = BTreeSet::new();
     for name in &graph.roots {
         let resolved = graph.resolve(name, false, &mut BTreeSet::new());
@@ -800,6 +829,9 @@ fn bed_icons(graph: &mut Graph<'_>) -> Result<usize> {
         edits.insert(name.clone(), model);
     }
     let count = edits.len();
+    if count > 0 {
+        graph.cache[0].get_mut().clear();
+    }
     for (name, value) in edits {
         write(graph.root, &model_path(graph.root, &name), &value)?;
         graph.models.insert(name, value);
@@ -811,11 +843,13 @@ pub(super) fn migrate(root: &Path, target: u32, report: &mut AssetReport) -> Res
     if target < 4 || !root.join("assets").is_dir() {
         return Ok(());
     }
-    let Some((_, line)) = PROFILES.range(..=target).next_back() else {
+    let Some((_, reference)) = PROFILES.range(..=target).next_back() else {
         return Ok(());
     };
-    let profile: Profile = serde_json::from_str(line)?;
-    let mut graph = load(root, &profile, report)?;
+    let profile = reference
+        .parsed
+        .get_or_init(|| serde_json::from_str(reference.data).expect("模型自检参考表无效"));
+    let mut graph = load(root, profile, report)?;
     let repaired = repair(&mut graph)?;
     let beds = bed_icons(&mut graph)?;
     if beds > 0 {
@@ -847,7 +881,7 @@ pub(super) fn migrate(root: &Path, target: u32, report: &mut AssetReport) -> Res
                 report.warnings.push(format!(
                     "模型自检：{name} 仍有无法根据现有资源确定的贴图或父模型（{}；{}），已保留自定义内容",
                     unresolved_slots.join(", "),
-                    resolved.missing.into_iter().collect::<Vec<_>>().join(", ")
+                    resolved.missing.iter().cloned().collect::<Vec<_>>().join(", ")
                 ));
             }
         }

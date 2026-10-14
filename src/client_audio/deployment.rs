@@ -4,8 +4,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
-use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipWriter};
+use zip::ZipWriter;
 
 fn preserve(client: &Path, path: &Path) -> Result<()> {
     if path.is_file() {
@@ -128,9 +127,8 @@ pub(super) fn activate(
     } else {
         let mut temporary = tempfile::NamedTempFile::new_in(&folder)?;
         {
-            let mut zip = ZipWriter::new(temporary.as_file_mut());
-            let settings =
-                SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+            let mut zip =
+                ZipWriter::new(crate::archive::ArchiveWriter::new(temporary.as_file_mut())?);
             for entry in WalkDir::new(root).sort_by_file_name() {
                 let entry = entry?;
                 if !entry.file_type().is_file() {
@@ -141,10 +139,10 @@ pub(super) fn activate(
                     .strip_prefix(root)?
                     .to_string_lossy()
                     .replace('\\', "/");
-                zip.start_file(name, settings)?;
+                zip.start_file(name, crate::converter::archive_options(entry.path()))?;
                 std::io::copy(&mut File::open(entry.path())?, &mut zip)?;
             }
-            zip.finish()?;
+            zip.finish()?.flush()?;
         }
         temporary.as_file_mut().sync_all()?;
         preserve(client, &path)?;

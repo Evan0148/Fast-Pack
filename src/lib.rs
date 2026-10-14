@@ -12,3 +12,4 @@ pub use tables::{
     LATEST_VERSION, LEGACY_VERSION, NEW_META_MIN_FORMAT, flatten_texture_name, legacy_texture_name,
     pack_format_of, tables, version_label_of,
 };
+mod archive;

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use tempfile::{TempDir, tempdir};
 use walkdir::WalkDir;
@@ -1145,6 +1146,20 @@ fn validate_output(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn archive_options(path: &Path) -> SimpleFileOptions {
+    let method = match path.extension().and_then(|extension| extension.to_str()) {
+        Some(extension)
+            if ["png", "jpg", "jpeg", "ogg", "webp", "gif", "zip"]
+                .iter()
+                .any(|compressed| extension.eq_ignore_ascii_case(compressed)) =>
+        {
+            CompressionMethod::Stored
+        }
+        _ => CompressionMethod::Deflated,
+    };
+    SimpleFileOptions::default().compression_method(method)
+}
+
 fn save_output(root: &Path, destination: &Path, as_zip: bool) -> Result<()> {
     if destination.exists() {
         if destination.is_dir() {
@@ -1162,17 +1177,18 @@ fn save_output(root: &Path, destination: &Path, as_zip: bool) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     if as_zip {
-        let mut archive = ZipWriter::new(File::create(destination)?);
-        let settings = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        let mut archive = ZipWriter::new(crate::archive::ArchiveWriter::new(File::create(
+            destination,
+        )?)?);
         for path in walk_files(root)? {
             let name = path
                 .strip_prefix(root)?
                 .to_string_lossy()
                 .replace('\\', "/");
-            archive.start_file(name, settings)?;
+            archive.start_file(name, archive_options(&path))?;
             std::io::copy(&mut File::open(path)?, &mut archive)?;
         }
-        archive.finish()?;
+        archive.finish()?.flush()?;
     } else {
         copy_tree(root, destination)?;
     }
