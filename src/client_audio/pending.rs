@@ -303,12 +303,17 @@ pub fn finish_pending() -> Result<bool> {
             if pending.finished() {
                 break;
             }
-            if fingerprint(&pending.destination).ok().as_ref() != Some(&pending.output_sha256) {
+            let output_check = fingerprint(&pending.destination);
+            if output_check
+                .as_ref()
+                .is_ok_and(|hash| hash != &pending.output_sha256)
+            {
                 pending.state = "cancelled-output-changed".into();
                 write(&path, &pending)?;
                 break;
             }
             let result = (|| -> Result<()> {
+                output_check?;
                 ensure!(
                     pending.client.join("heypixel").is_dir()
                         && super::compatible_version(&pending.client),
@@ -327,10 +332,12 @@ pub fn finish_pending() -> Result<bool> {
             })();
             pending.state = match result {
                 Ok(()) => "complete".into(),
-                Err(error) => format!("failed: {error:#}"),
+                Err(error) => format!("retrying: {error:#}"),
             };
             write(&path, &pending)?;
-            break;
+            if pending.state == "complete" {
+                break;
+            }
         }
         if started.elapsed() > Duration::from_secs(14400) {
             pending.state = "cancelled-timeout".into();
