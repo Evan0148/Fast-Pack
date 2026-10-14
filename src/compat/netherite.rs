@@ -480,7 +480,12 @@ impl ClonePack<'_> {
     }
 }
 
-pub(super) fn migrate(root: &Path, target: u32, report: &mut AssetReport) -> Result<()> {
+pub(super) fn migrate(
+    root: &Path,
+    target: u32,
+    auto_sword: bool,
+    report: &mut AssetReport,
+) -> Result<()> {
     if target < 6 {
         return Ok(());
     }
@@ -497,6 +502,9 @@ pub(super) fn migrate(root: &Path, target: u32, report: &mut AssetReport) -> Res
         "leggings",
         "boots",
     ] {
+        if kind == "sword" && !auto_sword {
+            continue;
+        }
         let destination = format!("netherite_{kind}");
         let output = root.join(format!("assets/minecraft/textures/item/{destination}.png"));
         let output_model = root.join(format!("assets/minecraft/models/item/{destination}.json"));

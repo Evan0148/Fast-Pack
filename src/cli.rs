@@ -24,6 +24,8 @@ struct Arguments {
     no_heypixel: bool,
     #[arg(long, help = "仅生成兼容资源，不修改或导入本机客户端")]
     no_client_setup: bool,
+    #[arg(long, help = "关闭缺失下界合金剑材质的自动生成，保留原包已有材质")]
+    no_netherite_sword: bool,
     #[arg(value_name = "SRC", help = "源 ZIP 或材质包文件夹")]
     source: Option<PathBuf>,
     #[arg(
@@ -127,6 +129,7 @@ pub fn run() -> Result<()> {
         restore_vanilla_glint: args.vanilla_glint,
         heypixel_compat: !args.no_heypixel,
         auto_client_setup: !args.no_client_setup,
+        auto_netherite_sword: !args.no_netherite_sword,
         as_zip,
         lowercase: !args.no_lowercase,
         convert_lang: !args.no_lang,

@@ -23,6 +23,7 @@ pub struct Preferences {
     pub custom_glint: bool,
     pub glint_color: [u8; 3],
     pub heypixel_compat: bool,
+    pub auto_netherite_sword: bool,
 }
 
 impl Default for Preferences {
@@ -35,6 +36,7 @@ impl Default for Preferences {
             custom_glint: false,
             glint_color: [255, 255, 255],
             heypixel_compat: true,
+            auto_netherite_sword: true,
         }
     }
 }
