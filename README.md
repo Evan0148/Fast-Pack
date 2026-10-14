@@ -59,7 +59,7 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.10.exe`。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.11.exe`。
 2. 双击下载的程序，把材质包 ZIP 或文件夹拖入窗口。
 3. 选择目标版本与导出目录，点击“开始转换”。资源适配默认自动执行。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
@@ -100,7 +100,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.10.exe`、`fast-pack-cli-v1.2.10.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.11.exe`、`fast-pack-cli-v1.2.11.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -200,6 +200,17 @@ v1.2.10 起，转换到 1.20.x 等受支持的旧客户端时，还会自动补�
 
 **声音资源与声音触发需要分别处理。** ViaBackwards 会把重锤声音改成普通攻击事件；风弹爆裂声转到 1.20.1 的过程中可能被取消。已经被合并或丢弃的事件不包含足够的信息，材质包无法还原其来源。转换器生成 `fastpack:item.mace.smash_air`、`fastpack:item.mace.smash_ground`、`fastpack:item.mace.smash_ground_heavy`、`fastpack:entity.wind_charge.throw`、`fastpack:entity.wind_charge.wind_burst` 和 `fastpack:entity.breeze.wind_burst` 六个入口，供能够保留原声的服务器适配使用；这些入口委托给原包对应的 Minecraft 声音事件。仅升级转换器不能让未传递正确事件的服务器自动恢复声音。
 
+**网易 1.20.1 / 布吉岛的本地声音适配。** v1.2.11 提供独立的 Rust 安装入口，用于已核对的网易 1.20.1、HeyPixel 和 ViaForge 4.3.1-SNAPSHOT 组合。该客户端会在本地把 1.20.5–1.20.6 协议转成 1.20.1；安装器在声音转换前，把重锤和风弹的原始编号转换成 `fastpack` 命名空间的直接声音事件，使后续协议保留它们。位置声音和实体声音使用同一适配路径；普通声音及其他协议的数字编号继续按原规则处理。此功能修改本地 ViaForge 的两个声音处理类，保留其余文件，并在客户端的 `heypixel/fastpack-backups/audio-bridge` 保存带 SHA256 的原始模组备份，不分发修改后的第三方模组。
+
+下面的目录应填写网易游戏的实际 `.minecraft` 路径。退出游戏后执行，随后重新启动游戏；已启用的材质包需要包含 Fast Pack 生成的原声音频与事件入口。重复安装不会重复改写，回滚会恢复原模组的完整字节。安装器会拒绝带数字签名的模组、未知声音处理结构或不匹配的客户端版本。此入口不修改服务器，也不处理在到达本机前已由服务器端代理丢弃的事件。
+
+```powershell
+.\fast-pack-cli-v1.2.11.exe --client-audio "E:\MCLDownload\Game\.minecraft"
+.\fast-pack-cli-v1.2.11.exe --client-audio "E:\MCLDownload\Game\.minecraft" --restore-client-audio
+```
+
+网易更新器可能重新下载 ViaForge；更新后需重新检查适配状态，安装器不会绕过更新器或模组签名检查。独立 JVM 验证可由 `cargo run --release --example verify_client_audio -- <输出目录>` 生成探针类，配合目标 ViaForge 的依赖执行，覆盖目标编号、原生命名事件、普通声音和其他协议隔离。
+
 Minecraft 1.20.1 的换手抬起与攻击冷却造成的手部动画由客户端渲染代码控制，物品模型 JSON 没有关闭该动画的开关。转换器保留已经正常的重锤模型；不会写入旧客户端不识别的参数，或改变所有下界合金斧的表现来模拟关闭动画。
 
 参考：[ViaBackwards 配置](https://github.com/ViaVersion/ViaBackwards/blob/master/common/src/main/resources/assets/viabackwards/config.yml)、[物品协议映射](https://github.com/ViaVersion/Mappings)、[原项目说明](https://github.com/ViaVersionAddons/ViaBackwards-Plus/blob/main/.github/README.md)。
@@ -208,19 +219,19 @@ Minecraft 1.20.1 的换手抬起与攻击冷却造成的手部动画由客户端
 
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.10 为例，命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.11 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli-v1.2.10.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.2.10.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.2.10.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.2.10.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.2.10.exe old.zip --probe
-.\fast-pack-cli-v1.2.10.exe --versions
-.\fast-pack-cli-v1.2.10.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.2.10.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.2.10.exe old.zip --to 1.20.1 --vanilla-glint
-.\fast-pack-cli-v1.2.10.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.2.11.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.2.11.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.2.11.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.2.11.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.2.11.exe old.zip --probe
+.\fast-pack-cli-v1.2.11.exe --versions
+.\fast-pack-cli-v1.2.11.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.2.11.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.2.11.exe old.zip --to 1.20.1 --vanilla-glint
+.\fast-pack-cli-v1.2.11.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--from auto` 默认自动识别源版本。`--report-json` 仅在指定时将详情另存到提供的路径，不会把 `转换报告.txt` 塞入输出 ZIP。自定义映射采用 JSON 对象，例如 `{"custom_texture":"replacement_texture"}`。

@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod client_audio;
 pub mod compat;
 pub mod converter;
 pub mod tables;

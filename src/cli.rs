@@ -12,6 +12,14 @@ use std::path::PathBuf;
     about = "Fast Pack · Minecraft Java 材质包转换器"
 )]
 struct Arguments {
+    #[arg(
+        long,
+        value_name = "MINECRAFT",
+        help = "为网易 1.20.1 的本地 ViaForge 安装原声音效适配，自动备份"
+    )]
+    client_audio: Option<PathBuf>,
+    #[arg(long, requires = "client_audio", help = "恢复 ViaForge 原始备份")]
+    restore_client_audio: bool,
     #[arg(value_name = "SRC", help = "源 ZIP 或材质包文件夹")]
     source: Option<PathBuf>,
     #[arg(
@@ -53,6 +61,21 @@ struct Arguments {
 
 pub fn run() -> Result<()> {
     let args = Arguments::parse();
+    if let Some(client) = args.client_audio {
+        if args.restore_client_audio {
+            println!(
+                "已恢复：{}",
+                crate::client_audio::restore(&client)?.display()
+            );
+        } else {
+            let installed = crate::client_audio::install(&client)?;
+            println!("{}", serde_json::to_string_pretty(&installed)?);
+            println!(
+                "已保留重锤和风弹的原声事件；请彻底退出并重新启动游戏使模组生效，材质包需包含 Fast Pack 原声音频。"
+            );
+        }
+        return Ok(());
+    }
     if args.versions {
         for (label, format) in &tables().pack_formats {
             println!("{label}\t{format}");
