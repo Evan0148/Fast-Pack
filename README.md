@@ -62,7 +62,7 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.19.exe`。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.20.exe`。
 2. 双击下载的程序，把材质包 ZIP 或文件夹拖入窗口。
 3. 选择目标版本与导出目录，点击“开始转换”。资源适配默认自动执行。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
@@ -80,6 +80,20 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 两个开关的状态均在重启后保留，旧版已经保存的版本自动兼容。“减少动态效果”会关闭开关过渡动画。长目录在输入框内显示，文件名预览缩短显示，完整导出路径可悬停查看。
 
 设置文件缺失、损坏或保存的版本不再受支持时，程序使用默认版本；首次运行且尚未选择版本时保留原有自动推荐逻辑。
+
+### 自定义准星
+
+展开 **“更多转换选项”**，勾选 **“自定义准星”**。点击 **“导入预设”** 可一次选择多个准星 ZIP 或 PNG；也可以点击 **“导入文件夹”** 选择已解压的准星包。程序自动识别旧版 `gui/icons.png` 图集中的准星、新版 `gui/sprites/hud/crosshair.png` 和独立准星 PNG，不要求玩家手动拆图。不同目录下的准星可分别导入，相同图案按内容合并。
+
+**“使用预设”** 以缩略图与名称显示保存的准星，点击卡片即可选择。预设较多时可以在列表内滚动；悬停显示完整名称。点击 **“删除选中预设”** 只删除 Fast Pack 保存的副本，原始准星包保持原样。
+
+**“自动绘制”** 提供十字、圆点、圆环和菱形，可调整尺寸、粗细、间距、描边和 HEX 颜色，实时更新预览。点击 **“保存为预设”** 可将当前图案加入预设库。
+
+预设存放在 C 盘用户配置目录 `%LOCALAPPDATA%\Fast Pack\crosshairs`，每个预设单独保存 PNG 与名称；选中的预设和绘制参数记在 `settings.json`。**自定义准星默认关闭，每次转换结束、转换另一个包及重新打开软件后都会关闭。** 预设不会随关闭而删除，需要应用时重新勾选即可。
+
+开启后，旧版本只替换 HUD 图集中预留的准星区域，保留血量、饥饿值、护甲等其他图标；包内没有旧版图集时补入官方参考图集。1.20.2+ 使用独立准星精灵，按目标版本自动选择布局。修改前的资源保存在输出包的 `fastpack/original-assets/`。关闭时沿用输入包本身的准星，不添加额外准星资源。
+
+预览为静态图，最终颜色和明暗取决于游戏背景与客户端的准星混合方式。包含多帧的独立 PNG 使用第一帧作为静态准星；不导入准星包中无关的字体、模型或 HUD 文件。导入和删除预设时由后台处理，当前转换使用开始时选定的准星副本。
 
 ### 自定义附魔闪烁颜色
 
@@ -103,7 +117,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.19.exe`、`fast-pack-cli-v1.2.19.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.20.exe`、`fast-pack-cli-v1.2.20.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -238,7 +252,7 @@ ViaBackwards 启动时将用户 NBT 与内置映射合并。运行中的游戏�
 独立维护入口仍保留，普通玩家使用默认开关即可：
 
 ```powershell
-.\fast-pack-cli-v1.2.19.exe --client-audio "E:\MCLDownload\Game\.minecraft"
+.\fast-pack-cli-v1.2.20.exe --client-audio "E:\MCLDownload\Game\.minecraft"
 ```
 
 此命令现仅配置官方名称与附魔，不改写模组，也不启用原声音效。`--restore-client-audio` 仅用于恢复以前版本留下的模组改写，校验原始备份后还原；当前已经被启动器恢复的原版模组无需处理。
@@ -247,21 +261,24 @@ ViaBackwards 启动时将用户 NBT 与内置映射合并。运行中的游戏�
 
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.19 为例，命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.20 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli-v1.2.19.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.2.19.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.2.19.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.2.19.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.2.19.exe old.zip --probe
-.\fast-pack-cli-v1.2.19.exe --versions
-.\fast-pack-cli-v1.2.19.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.2.19.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.2.19.exe old.zip --to 1.20.1 --vanilla-glint
-.\fast-pack-cli-v1.2.19.exe old.zip --to 1.20.1 --no-netherite
-.\fast-pack-cli-v1.2.19.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.2.20.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.2.20.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.2.20.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.2.20.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.2.20.exe old.zip --probe
+.\fast-pack-cli-v1.2.20.exe --versions
+.\fast-pack-cli-v1.2.20.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.2.20.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.2.20.exe old.zip --to 1.20.1 --vanilla-glint
+.\fast-pack-cli-v1.2.20.exe old.zip --to 1.20.1 --no-netherite
+.\fast-pack-cli-v1.2.20.exe old.zip --to 1.20.1 --crosshair crosshair-pack.zip
+.\fast-pack-cli-v1.2.20.exe old.zip new.zip --renames names.json --report-json report.json
 ```
+
+`--crosshair <准星包或PNG>` 为本次转换使用指定准星，不改写 GUI 预设库；不传参数时保留原包准星。Rust 库通过 `ConversionOptions.crosshair` 接收准星，`examples/crosshair_presets.rs` 提供独立预设库的导入、列出、生成和删除入口。
 
 `--no-netherite` 仅关闭本次缺失下界合金剑、工具和盔甲材质的自动制作，保留已有资源。原有 `--no-netherite-sword` 继续支持仅关闭剑的制作；参数不会保存到桌面版设置。
 

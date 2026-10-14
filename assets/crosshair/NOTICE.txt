@@ -1,0 +1,3 @@
+legacy-icons.png is the original Minecraft Java Edition 1.20.1 GUI icon atlas, used only when a converted legacy resource pack supplies no icon atlas. Existing pack atlases take precedence. The converter replaces only the crosshair region and preserves the remaining HUD graphics.
+Source: Mojang's official Minecraft Java Edition 1.20.1 client assets/minecraft/textures/gui/icons.png.
+Minecraft assets and their original copyright belong to Mojang Studios / Microsoft. This reference asset is not covered by the project's source license.

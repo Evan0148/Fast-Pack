@@ -23,6 +23,9 @@ pub struct Preferences {
     pub custom_glint: bool,
     pub glint_color: [u8; 3],
     pub heypixel_compat: bool,
+    pub crosshair_selection: Option<String>,
+    pub crosshair_automatic: bool,
+    pub crosshair_generator: fast_pack::crosshair::Generator,
 }
 
 impl Default for Preferences {
@@ -35,6 +38,9 @@ impl Default for Preferences {
             custom_glint: false,
             glint_color: [255, 255, 255],
             heypixel_compat: true,
+            crosshair_selection: None,
+            crosshair_automatic: true,
+            crosshair_generator: fast_pack::crosshair::Generator::default(),
         }
     }
 }
@@ -71,6 +77,12 @@ fn config_path() -> Result<PathBuf> {
         })
         .context("无法找到用户配置目录")?;
     Ok(folder.join("Fast Pack").join("settings.json"))
+}
+
+pub fn crosshair_store() -> Result<fast_pack::crosshair::Store> {
+    Ok(fast_pack::crosshair::Store::new(
+        config_path()?.parent().unwrap().join("crosshairs"),
+    ))
 }
 
 fn supported(version: &str) -> bool {

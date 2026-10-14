@@ -26,7 +26,7 @@ struct Sprite {
     height: u32,
 }
 
-pub(super) fn backup(root: &Path, path: &Path) -> Result<()> {
+pub(crate) fn backup(root: &Path, path: &Path) -> Result<()> {
     let relative = path.strip_prefix(root)?;
     let destination = root.join("fastpack/original-assets").join(relative);
     if !destination.exists() {
@@ -36,7 +36,7 @@ pub(super) fn backup(root: &Path, path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn save(root: &Path, path: &Path, image: &RgbaImage) -> Result<()> {
+pub(crate) fn save(root: &Path, path: &Path, image: &RgbaImage) -> Result<()> {
     if path.exists() {
         backup(root, path)?;
     }

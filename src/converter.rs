@@ -32,6 +32,7 @@ pub struct ConversionOptions {
     pub auto_client_setup: bool,
     pub auto_netherite: bool,
     pub auto_netherite_sword: bool,
+    pub crosshair: Option<crate::crosshair::Crosshair>,
 }
 
 impl Default for ConversionOptions {
@@ -51,6 +52,7 @@ impl Default for ConversionOptions {
             auto_client_setup: true,
             auto_netherite: true,
             auto_netherite_sword: true,
+            crosshair: None,
         }
     }
 }
@@ -1309,6 +1311,9 @@ pub fn convert_pack(
         )?;
     }
     report.compatibility.warnings.extend(sky_notes);
+    if let Some(crosshair) = &options.crosshair {
+        crate::crosshair::apply(&root, options.tgt_format, crosshair, &mut report.assets)?;
+    }
     report.compatibility.warnings.sort();
     report.compatibility.warnings.dedup();
     if !report.compatibility.is_empty() {

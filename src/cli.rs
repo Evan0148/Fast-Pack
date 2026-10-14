@@ -31,6 +31,12 @@ struct Arguments {
     no_netherite: bool,
     #[arg(long, help = "关闭缺失下界合金剑材质的自动生成，保留原包已有材质")]
     no_netherite_sword: bool,
+    #[arg(
+        long,
+        value_name = "PACK_OR_PNG",
+        help = "使用准星包或 PNG 中的准星，仅替换准星区域"
+    )]
+    crosshair: Option<PathBuf>,
     #[arg(value_name = "SRC", help = "源 ZIP 或材质包文件夹")]
     source: Option<PathBuf>,
     #[arg(
@@ -136,6 +142,12 @@ pub fn run() -> Result<()> {
         auto_client_setup: !args.no_client_setup,
         auto_netherite: !args.no_netherite,
         auto_netherite_sword: !args.no_netherite_sword,
+        crosshair: args
+            .crosshair
+            .as_deref()
+            .map(crate::crosshair::import)
+            .transpose()?
+            .and_then(|mut entries| entries.drain(..).next()),
         as_zip,
         lowercase: !args.no_lowercase,
         convert_lang: !args.no_lang,

@@ -1,6 +1,6 @@
 [package]
 name = "fast-pack"
-version = "1.2.19"
+version = "1.2.20"
 authors = ["ColdEternity Team", "Long_Cold", "Wind_"]
 description = "Fast Pack: automatic Minecraft Java resource pack version conversion"
 license-file = "LICENSE"

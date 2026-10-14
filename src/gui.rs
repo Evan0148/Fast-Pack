@@ -7,7 +7,7 @@ use fast_pack::{
 };
 use iced::widget::{
     self, button, checkbox, column, container, mouse_area, pick_list, progress_bar, row,
-    scrollable, space, text, text_input, tooltip,
+    scrollable, slider, space, text, text_input, tooltip,
 };
 use iced::{
     Alignment, Background, Border, Color, Element, Font, Length, Padding, Shadow, Size,
@@ -42,6 +42,20 @@ enum Message {
     PreserveLang(bool),
     PreserveCase(bool),
     CustomGlint(bool),
+    CustomCrosshair(bool),
+    CrosshairImport,
+    CrosshairFolder,
+    CrosshairFiles(Vec<PathBuf>),
+    CrosshairSelected(String),
+    CrosshairAutomatic(bool),
+    CrosshairStyle(fast_pack::crosshair::Style),
+    CrosshairLength(u8),
+    CrosshairThickness(u8),
+    CrosshairGap(u8),
+    CrosshairOutline(bool),
+    CrosshairColor(String),
+    CrosshairSave,
+    CrosshairDelete,
     GlintPicker,
     CloseGlintPicker,
     GlintPreset([u8; 3]),
@@ -79,6 +93,9 @@ enum WorkEvent {
     Finished(Box<std::result::Result<ConversionReport, String>>),
     Mapping(std::result::Result<Vec<(String, String)>, String>),
     Preferences(std::result::Result<(), String>),
+    Crosshairs(
+        std::result::Result<(Vec<fast_pack::crosshair::Preset>, Option<String>, String), String>,
+    ),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -219,6 +236,16 @@ struct App {
     preserve_lang: bool,
     preserve_case: bool,
     custom_glint: bool,
+    custom_crosshair: bool,
+    crosshair_automatic: bool,
+    crosshair_generator: fast_pack::crosshair::Generator,
+    crosshair_color: String,
+    crosshair_selected: Option<String>,
+    crosshair_presets: Vec<fast_pack::crosshair::Preset>,
+    crosshair_previews: Vec<widget::image::Handle>,
+    crosshair_preview: widget::image::Handle,
+    crosshair_pending: bool,
+    crosshair_note: String,
     glint_color: [u8; 3],
     glint_hsv: [f32; 3],
     glint_hex: String,
@@ -334,6 +361,20 @@ impl App {
             preserve_lang: false,
             preserve_case: false,
             custom_glint: false,
+            custom_crosshair: false,
+            crosshair_automatic: preferences.crosshair_automatic,
+            crosshair_color: fast_pack::compat::glint::color_hex(
+                preferences.crosshair_generator.color,
+            ),
+            crosshair_preview: Self::crosshair_handle(
+                &preferences.crosshair_generator.render().image,
+            ),
+            crosshair_generator: preferences.crosshair_generator,
+            crosshair_selected: preferences.crosshair_selection,
+            crosshair_presets: Vec::new(),
+            crosshair_previews: Vec::new(),
+            crosshair_pending: false,
+            crosshair_note: String::new(),
             glint_color: preferences.glint_color,
             glint_hsv: rgb_hsv(active_glint_color, 0.0),
             glint_hex: fast_pack::compat::glint::color_hex(active_glint_color),
@@ -385,9 +426,31 @@ impl App {
         if let Some(path) = std::env::var_os("FAST_PACK_SMOKE_INPUT") {
             app.load(PathBuf::from(path));
         }
-        if app.capture_stage == "advanced" {
+        if matches!(app.capture_stage.as_str(), "advanced" | "crosshair") {
             app.advanced = true;
             app.advanced_motion.set(1.0, now, true);
+        }
+        if app.capture_stage == "crosshair" {
+            app.custom_crosshair = true;
+        }
+        if !smoke && app.capture.is_none() {
+            app.crosshair_pending = true;
+            let sender = app.sender.clone();
+            std::thread::spawn(move || {
+                let result = crate::preferences::crosshair_store()
+                    .and_then(|store| store.load())
+                    .map(|presets| (presets, None, String::new()))
+                    .map_err(|error| format!("{error:#}"));
+                let _ = sender.send(WorkEvent::Crosshairs(result));
+            });
+        } else if let Some(directory) = std::env::var_os("FAST_PACK_CROSSHAIR_PRESETS") {
+            if let Ok(presets) = fast_pack::crosshair::Store::new(PathBuf::from(directory)).load() {
+                app.set_crosshair_presets(presets, None);
+                if !app.crosshair_presets.is_empty() {
+                    app.crosshair_automatic = false;
+                    app.sync_crosshair_preview();
+                }
+            }
         }
         (app, Task::none())
     }
@@ -576,6 +639,9 @@ impl App {
                     custom_glint: self.custom_glint,
                     glint_color: self.glint_color,
                     heypixel_compat: self.heypixel_compat,
+                    crosshair_selection: self.crosshair_selected.clone(),
+                    crosshair_automatic: self.crosshair_automatic,
+                    crosshair_generator: self.crosshair_generator.clone(),
                 })
                 .is_ok()
             {
@@ -591,6 +657,52 @@ impl App {
             self.logs.drain(..100);
         }
         self.logs.push(value);
+    }
+    fn crosshair_handle(image: &image::RgbaImage) -> widget::image::Handle {
+        let preview = image::imageops::resize(image, 90, 90, image::imageops::FilterType::Nearest);
+        widget::image::Handle::from_rgba(preview.width(), preview.height(), preview.into_raw())
+    }
+    fn selected_crosshair(&self) -> Option<fast_pack::crosshair::Crosshair> {
+        if self.crosshair_automatic {
+            Some(self.crosshair_generator.render())
+        } else {
+            self.crosshair_presets
+                .iter()
+                .find(|preset| Some(&preset.id) == self.crosshair_selected.as_ref())
+                .map(|preset| preset.crosshair.clone())
+        }
+    }
+    fn sync_crosshair_preview(&mut self) {
+        let crosshair = self
+            .selected_crosshair()
+            .unwrap_or_else(|| self.crosshair_generator.render());
+        self.crosshair_preview = Self::crosshair_handle(&crosshair.image);
+    }
+    fn set_crosshair_presets(
+        &mut self,
+        presets: Vec<fast_pack::crosshair::Preset>,
+        selected: Option<String>,
+    ) {
+        if let Some(selected) = selected {
+            self.crosshair_selected = Some(selected);
+            self.crosshair_automatic = false;
+        }
+        if !presets
+            .iter()
+            .any(|preset| Some(&preset.id) == self.crosshair_selected.as_ref())
+        {
+            self.crosshair_selected = presets.first().map(|preset| preset.id.clone());
+        }
+        self.crosshair_previews = presets
+            .iter()
+            .map(|preset| Self::crosshair_handle(&preset.crosshair.image))
+            .collect();
+        self.crosshair_presets = presets;
+        self.sync_crosshair_preview();
+    }
+    fn edit_crosshair(&mut self) {
+        self.sync_crosshair_preview();
+        self.save_preferences();
     }
     fn active_glint_color(&self) -> [u8; 3] {
         if self.custom_glint {
@@ -667,6 +779,19 @@ impl App {
             self.error = Some("目标版本无效".into());
             return;
         };
+        let crosshair = if self.custom_crosshair {
+            if self.crosshair_pending {
+                self.error = Some("准星预设正在处理，请稍候再转换".into());
+                return;
+            }
+            let Some(crosshair) = self.selected_crosshair() else {
+                self.error = Some("请先导入并选择准星预设，或选择自动绘制".into());
+                return;
+            };
+            Some(crosshair)
+        } else {
+            None
+        };
         let options = ConversionOptions {
             src_format: source_format,
             tgt_format: target_format,
@@ -683,6 +808,7 @@ impl App {
             auto_client_setup: !self.smoke && self.capture.is_none(),
             auto_netherite: self.auto_netherite,
             auto_netherite_sword: true,
+            crosshair,
         };
         self.phase = Phase::Running;
         self.error = None;
@@ -821,11 +947,14 @@ impl App {
                                 Err(error) => self.fail(error),
                             }
                             self.auto_netherite = true;
+                            self.custom_crosshair = false;
                             self.custom_glint = false;
                             self.glint_edited = None;
                             self.sync_glint_color();
                             self.save_preferences();
-                            if self.closing && self.preferences_pending == 0
+                            if self.closing
+                                && self.preferences_pending == 0
+                                && !self.crosshair_pending
                                 || self.smoke && self.capture.is_none()
                             {
                                 return iced::exit();
@@ -842,6 +971,24 @@ impl App {
                             self.preferences_pending = self.preferences_pending.saturating_sub(1);
                             if let Err(error) = result {
                                 self.log(format!("偏好设置未能保存：{error}"));
+                            }
+                            if self.closing
+                                && !self.busy()
+                                && self.preferences_pending == 0
+                                && !self.crosshair_pending
+                            {
+                                return iced::exit();
+                            }
+                        }
+                        WorkEvent::Crosshairs(result) => {
+                            self.crosshair_pending = false;
+                            match result {
+                                Ok((presets, selected, note)) => {
+                                    self.set_crosshair_presets(presets, selected);
+                                    self.crosshair_note = note;
+                                    self.save_preferences();
+                                }
+                                Err(error) => self.crosshair_note = error,
                             }
                             if self.closing && !self.busy() && self.preferences_pending == 0 {
                                 return iced::exit();
@@ -862,7 +1009,7 @@ impl App {
                     "running" => self.busy(),
                     "done" => self.phase == Phase::Done,
                     "failed" => self.phase == Phase::Failed,
-                    "loaded" | "advanced" => self.phase == Phase::Ready,
+                    "loaded" | "advanced" | "crosshair" => self.phase == Phase::Ready,
                     _ => self.phase == Phase::Empty,
                 };
                 if self.capture.is_some()
@@ -907,12 +1054,12 @@ impl App {
                     self.commit_glint_color();
                     self.directory_edited = None;
                     self.remember_export_directory();
-                    if self.busy() || self.preferences_pending > 0 {
+                    if self.busy() || self.preferences_pending > 0 || self.crosshair_pending {
                         self.closing = true;
                         self.log(if self.busy() {
                             "转换完成并清理临时文件后关闭窗口".into()
                         } else {
-                            "设置保存完成后关闭窗口".into()
+                            "设置与准星预设保存完成后关闭窗口".into()
                         });
                     } else {
                         return iced::exit();
@@ -1012,6 +1159,150 @@ impl App {
                 self.sync_glint_color();
                 self.glint_edited = None;
                 self.save_preferences();
+            }
+            Message::CustomCrosshair(value) if !self.busy() => self.custom_crosshair = value,
+            Message::CrosshairImport if !self.busy() && !self.crosshair_pending => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .set_title("Fast Pack · 导入准星预设")
+                            .add_filter("准星包 / 图片", &["zip", "png"])
+                            .pick_files()
+                            .await
+                            .map(|files| {
+                                files
+                                    .into_iter()
+                                    .map(|file| file.path().to_owned())
+                                    .collect()
+                            })
+                            .unwrap_or_default()
+                    },
+                    Message::CrosshairFiles,
+                );
+            }
+            Message::CrosshairFolder if !self.busy() && !self.crosshair_pending => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .set_title("Fast Pack · 选择准星包文件夹")
+                            .pick_folder()
+                            .await
+                            .map(|file| vec![file.path().to_owned()])
+                            .unwrap_or_default()
+                    },
+                    Message::CrosshairFiles,
+                );
+            }
+            Message::CrosshairFiles(paths)
+                if !paths.is_empty() && !self.busy() && !self.crosshair_pending =>
+            {
+                self.crosshair_pending = true;
+                self.crosshair_note = "正在导入准星…".into();
+                let sender = self.sender.clone();
+                std::thread::spawn(move || {
+                    let result = (|| -> Result<_> {
+                        let store = crate::preferences::crosshair_store()?;
+                        let mut selected = None;
+                        let mut count = 0;
+                        let mut errors = Vec::new();
+                        for path in paths {
+                            match fast_pack::crosshair::import(&path) {
+                                Ok(crosshairs) => {
+                                    for crosshair in crosshairs {
+                                        match store.save(&crosshair) {
+                                            Ok(id) => {
+                                                selected = Some(id);
+                                                count += 1;
+                                            }
+                                            Err(error) => errors
+                                                .push(format!("{}：{error:#}", crosshair.name)),
+                                        }
+                                    }
+                                }
+                                Err(error) => errors.push(format!(
+                                    "{}：{error:#}",
+                                    path.file_name().unwrap_or_default().to_string_lossy()
+                                )),
+                            }
+                        }
+                        let mut note = format!("已导入 {count} 个准星，相同图案自动合并。");
+                        if !errors.is_empty() {
+                            note.push_str(&format!(" {}", errors.join("；")));
+                        }
+                        Ok((store.load()?, selected, note))
+                    })()
+                    .map_err(|error| format!("{error:#}"));
+                    let _ = sender.send(WorkEvent::Crosshairs(result));
+                });
+            }
+            Message::CrosshairSelected(id) if !self.busy() && !self.crosshair_pending => {
+                self.crosshair_selected = Some(id);
+                self.crosshair_automatic = false;
+                self.edit_crosshair();
+            }
+            Message::CrosshairAutomatic(value) if !self.busy() => {
+                self.crosshair_automatic = value;
+                self.edit_crosshair();
+            }
+            Message::CrosshairStyle(value) if !self.busy() => {
+                self.crosshair_generator.style = value;
+                self.edit_crosshair();
+            }
+            Message::CrosshairLength(value) if !self.busy() => {
+                self.crosshair_generator.length = value;
+                self.edit_crosshair();
+            }
+            Message::CrosshairThickness(value) if !self.busy() => {
+                self.crosshair_generator.thickness = value;
+                self.edit_crosshair();
+            }
+            Message::CrosshairGap(value) if !self.busy() => {
+                self.crosshair_generator.gap = value;
+                self.edit_crosshair();
+            }
+            Message::CrosshairOutline(value) if !self.busy() => {
+                self.crosshair_generator.outline = value;
+                self.edit_crosshair();
+            }
+            Message::CrosshairColor(value) if !self.busy() => {
+                self.crosshair_color = value.clone();
+                if let Ok(color) = fast_pack::compat::glint::parse_color(&value) {
+                    self.crosshair_generator.color = color;
+                    self.edit_crosshair();
+                }
+            }
+            Message::CrosshairSave if !self.busy() && !self.crosshair_pending => {
+                self.crosshair_pending = true;
+                let crosshair = self.crosshair_generator.render();
+                let sender = self.sender.clone();
+                std::thread::spawn(move || {
+                    let result = (|| -> Result<_> {
+                        let store = crate::preferences::crosshair_store()?;
+                        let id = store.save(&crosshair)?;
+                        Ok((store.load()?, Some(id), "已保存为准星预设。".into()))
+                    })()
+                    .map_err(|error| format!("{error:#}"));
+                    let _ = sender.send(WorkEvent::Crosshairs(result));
+                });
+            }
+            Message::CrosshairDelete if !self.busy() && !self.crosshair_pending => {
+                if let Some(id) = self.crosshair_selected.clone() {
+                    self.crosshair_pending = true;
+                    let sender = self.sender.clone();
+                    std::thread::spawn(move || {
+                        let result = (|| -> Result<_> {
+                            let store = crate::preferences::crosshair_store()?;
+                            store.delete(&id)?;
+                            Ok((
+                                store.load()?,
+                                None,
+                                "已删除准星预设，原始准星包保留。".into(),
+                            ))
+                        })()
+                        .map_err(|error| format!("{error:#}"));
+                        let _ = sender.send(WorkEvent::Crosshairs(result));
+                    });
+                }
             }
             Message::GlintPicker if !self.busy() => {
                 self.glint_picker = true;
@@ -1161,6 +1452,7 @@ impl App {
             }
             Message::NewPack => {
                 self.auto_netherite = true;
+                self.custom_crosshair = false;
                 self.generation += 1;
                 self.sky_preview = None;
                 self.sky_layers = 0;
@@ -1921,6 +2213,254 @@ impl App {
         .into()
     }
 
+    fn crosshair_controls(&self) -> Element<'_, Message> {
+        let c = self.colors();
+        let enabled = !self.busy() && !self.crosshair_pending;
+        let header = row![
+            checkbox(self.custom_crosshair)
+                .label("自定义准星")
+                .size(17)
+                .text_size(13)
+                .on_toggle_maybe((!self.busy()).then_some(Message::CustomCrosshair)),
+            space().width(Length::Fill),
+            self.action(
+                60,
+                "导入预设",
+                enabled.then_some(Message::CrosshairImport),
+                false
+            ),
+            self.action(
+                61,
+                "导入文件夹",
+                enabled.then_some(Message::CrosshairFolder),
+                false
+            )
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center);
+        let mut content = column![header].spacing(12);
+        if !self.custom_crosshair {
+            content = content.push(self.label(format!(
+                "已保存 {} 个预设 · 开启后替换本次准星，转换结束自动关闭",
+                self.crosshair_presets.len()
+            )));
+        } else {
+            let controls = row![
+                self.action(
+                    62,
+                    "使用预设",
+                    enabled.then_some(Message::CrosshairAutomatic(false)),
+                    !self.crosshair_automatic
+                ),
+                self.action(
+                    63,
+                    "自动绘制",
+                    enabled.then_some(Message::CrosshairAutomatic(true)),
+                    self.crosshair_automatic
+                ),
+                space().width(Length::Fill),
+                self.label(if self.crosshair_pending {
+                    "正在处理…".into()
+                } else {
+                    format!("{} 个预设", self.crosshair_presets.len())
+                })
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center);
+            let preview = container(
+                widget::image(self.crosshair_preview.clone())
+                    .width(90)
+                    .height(90)
+                    .filter_method(widget::image::FilterMethod::Nearest),
+            )
+            .padding(12)
+            .style(move |_| container::Style {
+                background: Some(c.field.into()),
+                border: Border {
+                    color: c.line,
+                    width: 1.0,
+                    radius: 12.0.into(),
+                },
+                ..Default::default()
+            });
+            let name = self
+                .selected_crosshair()
+                .map(|crosshair| crosshair.name)
+                .unwrap_or_else(|| "尚未选择预设".into());
+            let mut details = column![
+                self.title(name, 14),
+                self.label("预览供参考，实际显示随游戏背景变化。")
+            ]
+            .spacing(12);
+            if self.crosshair_automatic {
+                let style = pick_list(
+                    fast_pack::crosshair::Style::ALL,
+                    Some(self.crosshair_generator.style),
+                    Message::CrosshairStyle,
+                )
+                .padding(8)
+                .width(110)
+                .style(|_, status| self.picker_style(status, 64));
+                let mut color = text_input("#FFFFFF", &self.crosshair_color)
+                    .size(13)
+                    .padding(8)
+                    .width(115)
+                    .style(|_, status| self.input_style(status));
+                if enabled {
+                    color = color.on_input(Message::CrosshairColor);
+                }
+                details = details.push(
+                    row![
+                        style,
+                        color,
+                        checkbox(self.crosshair_generator.outline)
+                            .label("描边")
+                            .size(16)
+                            .text_size(13)
+                            .on_toggle_maybe(enabled.then_some(Message::CrosshairOutline))
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center),
+                );
+                let length = column![
+                    self.label(format!("尺寸 {}", self.crosshair_generator.length)),
+                    slider(
+                        1..=7,
+                        self.crosshair_generator.length,
+                        Message::CrosshairLength
+                    )
+                    .step(1u8)
+                ]
+                .spacing(6)
+                .width(Length::Fill);
+                let thickness = column![
+                    self.label(format!("粗细 {}", self.crosshair_generator.thickness)),
+                    slider(
+                        1..=3,
+                        self.crosshair_generator.thickness,
+                        Message::CrosshairThickness
+                    )
+                    .step(1u8)
+                ]
+                .spacing(6)
+                .width(Length::Fill);
+                let gap = column![
+                    self.label(format!("间距 {}", self.crosshair_generator.gap)),
+                    slider(0..=4, self.crosshair_generator.gap, Message::CrosshairGap).step(1u8)
+                ]
+                .spacing(6)
+                .width(Length::Fill);
+                details = details.push(row![length, thickness, gap].spacing(18));
+                details = details.push(self.action(
+                    65,
+                    "保存为预设",
+                    enabled.then_some(Message::CrosshairSave),
+                    false,
+                ));
+            } else {
+                details = details.push(
+                    self.action(
+                        66,
+                        "删除选中预设",
+                        (enabled && self.crosshair_selected.is_some())
+                            .then_some(Message::CrosshairDelete),
+                        false,
+                    ),
+                );
+            }
+            content = content.push(controls).push(
+                row![preview, details.width(Length::Fill)]
+                    .spacing(16)
+                    .align_y(Alignment::Center),
+            );
+            if !self.crosshair_automatic {
+                if self.crosshair_presets.is_empty() {
+                    content = content
+                        .push(self.label("可以一次选择多个 ZIP / PNG，也可以导入已解压的准星包。"));
+                } else {
+                    let columns = ((self.width - 150.0) / 130.0).floor().clamp(3.0, 7.0) as usize;
+                    let mut gallery = column![].spacing(9);
+                    for chunk in (0..self.crosshair_presets.len())
+                        .collect::<Vec<_>>()
+                        .chunks(columns)
+                    {
+                        let mut tiles = row![].spacing(9);
+                        for &index in chunk {
+                            let preset = &self.crosshair_presets[index];
+                            let selected = self.crosshair_selected.as_ref() == Some(&preset.id);
+                            let card = button(
+                                column![
+                                    widget::image(self.crosshair_previews[index].clone())
+                                        .width(36)
+                                        .height(36)
+                                        .filter_method(widget::image::FilterMethod::Nearest),
+                                    text(shorten(&preset.crosshair.name, 13))
+                                        .size(11)
+                                        .color(c.foreground)
+                                ]
+                                .spacing(8)
+                                .align_x(Alignment::Center),
+                            )
+                            .padding(10)
+                            .width(120)
+                            .on_press_maybe(
+                                enabled.then(|| Message::CrosshairSelected(preset.id.clone())),
+                            )
+                            .style(move |_, status| button::Style {
+                                background: Some(
+                                    mix(
+                                        c.field,
+                                        c.accent,
+                                        if selected {
+                                            0.11
+                                        } else if status == button::Status::Hovered {
+                                            0.06
+                                        } else {
+                                            0.0
+                                        },
+                                    )
+                                    .into(),
+                                ),
+                                border: Border {
+                                    color: if selected { c.accent } else { c.line },
+                                    width: 1.0,
+                                    radius: 10.0.into(),
+                                },
+                                text_color: c.foreground,
+                                ..Default::default()
+                            });
+                            tiles = tiles.push(tooltip(
+                                card,
+                                container(text(preset.crosshair.name.clone()).size(12)).padding(8),
+                                tooltip::Position::Bottom,
+                            ));
+                        }
+                        gallery = gallery.push(tiles);
+                    }
+                    content = content.push(scrollable(gallery).height(164));
+                }
+            }
+            content =
+                content.push(self.label(
+                    "预设保存在 C 盘用户配置目录；开启状态不保存，每次转换结束和重启后关闭。",
+                ));
+        }
+        if !self.crosshair_note.is_empty() {
+            content = content.push(self.label(&self.crosshair_note));
+        }
+        container(content)
+            .padding(14)
+            .style(move |_| container::Style {
+                border: Border {
+                    color: c.line,
+                    width: 1.0,
+                    radius: 12.0.into(),
+                },
+                ..Default::default()
+            })
+            .into()
+    }
+
     fn advanced_view(&self) -> Element<'_, Message> {
         let amount = self.advanced_motion.value(self.now);
         if amount < 0.001 {
@@ -1981,6 +2521,7 @@ impl App {
             input,
             options,
             self.glint_controls(),
+            self.crosshair_controls(),
             row![
                 self.action(
                     8,
@@ -1998,7 +2539,11 @@ impl App {
             .height(if amount >= 0.999 {
                 Length::Shrink
             } else {
-                Length::Fixed((if self.width < 940.0 { 448.0 } else { 334.0 }) * amount)
+                Length::Fixed(
+                    (if self.width < 940.0 { 540.0 } else { 426.0 }
+                        + if self.custom_crosshair { 480.0 } else { 0.0 })
+                        * amount,
+                )
             })
             .clip(true)
             .into()
