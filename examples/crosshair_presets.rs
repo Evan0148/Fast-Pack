@@ -28,6 +28,16 @@ fn main() -> Result<()> {
             }
         }
         "delete" => store.delete(&args.next().context("请指定准星编号")?)?,
+        "restore" => store.restore_builtins()?,
+        "draw" => {
+            let name = args.next().context("请指定预设名字")?;
+            let path = args.next().context("请指定画布 JSON 文件")?;
+            let canvas: fast_pack::crosshair::Canvas =
+                serde_json::from_slice(&std::fs::read(path)?)?;
+            ensure!(!canvas.is_empty(), "画布不能为空");
+            let crosshair = canvas.render(&name);
+            println!("{}\t{}", store.save(&crosshair)?, crosshair.name);
+        }
         "generate" => {
             let name = args.next().context("请指定预设名字")?;
             let style = match args.next().as_deref().unwrap_or("cross") {

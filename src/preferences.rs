@@ -24,8 +24,10 @@ pub struct Preferences {
     pub glint_color: [u8; 3],
     pub heypixel_compat: bool,
     pub crosshair_selection: Option<String>,
-    pub crosshair_automatic: bool,
-    pub crosshair_generator: fast_pack::crosshair::Generator,
+    pub crosshair_drawing: bool,
+    pub crosshair_canvas: fast_pack::crosshair::Canvas,
+    pub crosshair_pen_color: [u8; 3],
+    pub crosshair_name: String,
 }
 
 impl Default for Preferences {
@@ -39,8 +41,10 @@ impl Default for Preferences {
             glint_color: [255, 255, 255],
             heypixel_compat: true,
             crosshair_selection: None,
-            crosshair_automatic: true,
-            crosshair_generator: fast_pack::crosshair::Generator::default(),
+            crosshair_drawing: false,
+            crosshair_canvas: fast_pack::crosshair::Canvas::default(),
+            crosshair_pen_color: [255; 3],
+            crosshair_name: "自绘准星".into(),
         }
     }
 }
@@ -104,6 +108,13 @@ pub fn load() -> Preferences {
     preferences.export_directory = preferences
         .export_directory
         .filter(|path| path.is_absolute());
+    preferences.crosshair_canvas = fast_pack::crosshair::Canvas::from_image(
+        &preferences
+            .crosshair_canvas
+            .render(&preferences.crosshair_name)
+            .image,
+        preferences.crosshair_canvas.size,
+    );
     preferences
 }
 

@@ -150,6 +150,20 @@ fn main() -> Result<()> {
     )?;
     let license_source = tempfile::tempdir()?;
     copy_tree(licenses, license_source.path())?;
+    let crosshair_notices = license_source.path().join("CrosshairResources");
+    fs::create_dir_all(&crosshair_notices)?;
+    for (source, name) in [
+        ("assets/crosshair/NOTICE.txt", "legacy-icons-NOTICE.txt"),
+        (
+            "assets/crosshair/builtins/NOTICE.txt",
+            "builtin-crosshairs-NOTICE.txt",
+        ),
+    ] {
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(source),
+            crosshair_notices.join(name),
+        )?;
+    }
     if let Some(upx) = &upx {
         let directory = upx.parent().context("UPX 目录无效")?;
         let notice = license_source.path().join("UPX");

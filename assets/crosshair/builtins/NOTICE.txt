@@ -1,0 +1,267 @@
+The 32 crosshair textures are extracted from resource packs explicitly provided for embedding by the project owner. Their original resource-pack credits are retained below. Original texture ownership remains with the respective authors. The project source license does not replace third-party texture rights.
+
+Crosshair Overlay 1: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "\-gymp"
+  }
+}
+
+
+Crosshair Overlay 2: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "By CrashTJD"
+  }
+}
+
+Crosshair Overlay 3: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "By CrashTJD"
+  }
+}
+
+
+Crosshair Overlay 4: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "\-gymp"
+  }
+}
+
+
+Crosshair Overlay 5: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "youtube : gymp"
+  }
+}
+
+
+Crosshair Overlay 6: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "\-gymp"
+  }
+}
+
+
+Crosshair Overlay 7: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "By CrashTJD"
+  }
+}
+
+
+Crosshair Overlay 8: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by The Tent"
+  }
+}
+
+Crosshair Overlay 9: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by The Tent"
+  }
+}
+
+Crosshair Overlay 10: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by The Tent"
+  }
+}
+
+Crosshair Overlay 11: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by The Tent"
+  }
+}
+
+Crosshair Overlay 12: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by The Tent"
+  }
+}
+
+Crosshair Overlay 13: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "\-gymp"
+  }
+}
+
+
+Crosshair Overlay 14: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "youtube : gymp"
+  }
+}
+
+
+Crosshair Overlay 15: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "By CrashTJD"
+  }
+}
+
+Crosshair Overlay 16: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "\-gymp"
+  }
+}
+
+
+Crosshair Overlay 17: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "\-gymp"
+  }
+}
+
+
+Crosshair Overlay 18: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by SharkPhizy"
+  }
+}
+
+Crosshair Overlay 19: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by SharkPhizy"
+  }
+}
+
+Crosshair Overlay 20: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by SharkPhizy"
+  }
+}
+
+Crosshair Overlay 21: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by SharkPhizy"
+  }
+}
+
+Crosshair Overlay 22: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by SharkPhizy"
+  }
+}
+
+Crosshair Overlay 23: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by SharkPhizy"
+  }
+}
+
+Crosshair Overlay 24: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by SharkPhizy"
+  }
+}
+
+Crosshair Overlay 25: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by SharkPhizy"
+  }
+}
+
+Crosshair Overlay 26: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by SharkPhizy"
+  }
+}
+
+Crosshair Overlay 27: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by SharkPhizy"
+  }
+}
+
+Crosshair Overlay 28: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by SharkPhizy"
+  }
+}
+
+Crosshair Overlay 29: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by SharkPhizy"
+  }
+}
+
+Crosshair Overlay 30: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by SharkPhizy"
+  }
+}
+
+Crosshair Overlay 31: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by SharkPhizy"
+  }
+}
+
+Crosshair Overlay 32: pack.mcmeta
+{
+  "pack": {
+    "pack_format": 1,
+    "description": "by SharkPhizy"
+  }
+}

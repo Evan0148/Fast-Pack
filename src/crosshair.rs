@@ -12,6 +12,109 @@ use zip::ZipArchive;
 const SPRITE: &str = "assets/minecraft/textures/gui/sprites/hud/crosshair.png";
 const ICONS: &str = "assets/minecraft/textures/gui/icons.png";
 
+mod builtin {
+    include!("../assets/crosshair/builtins/catalog.rs");
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct Canvas {
+    pub size: u8,
+    pub pixels: Vec<[u8; 4]>,
+}
+
+impl Default for Canvas {
+    fn default() -> Self {
+        Self {
+            size: 15,
+            pixels: vec![[0; 4]; 225],
+        }
+    }
+}
+
+impl Canvas {
+    pub fn color(&self, x: u8, y: u8) -> [u8; 4] {
+        if x >= self.size || y >= self.size {
+            return [0; 4];
+        }
+        self.pixels
+            .get(usize::from(y) * usize::from(self.size) + usize::from(x))
+            .copied()
+            .unwrap_or([0; 4])
+    }
+
+    pub fn paint(&mut self, x: u8, y: u8, color: [u8; 4]) {
+        if x < self.size && y < self.size {
+            let length = usize::from(self.size).pow(2);
+            self.pixels.resize(length, [0; 4]);
+            self.pixels[usize::from(y) * usize::from(self.size) + usize::from(x)] = color;
+        }
+    }
+
+    pub fn line(&mut self, from: (u8, u8), to: (u8, u8), color: [u8; 4]) {
+        let (mut x, mut y) = (i32::from(from.0), i32::from(from.1));
+        let (tx, ty) = (i32::from(to.0), i32::from(to.1));
+        let dx = (tx - x).abs();
+        let dy = -(ty - y).abs();
+        let sx = if x < tx { 1 } else { -1 };
+        let sy = if y < ty { 1 } else { -1 };
+        let mut error = dx + dy;
+        loop {
+            if x >= 0 && y >= 0 {
+                self.paint(x as u8, y as u8, color);
+            }
+            if x == tx && y == ty {
+                break;
+            }
+            let next = error * 2;
+            if next >= dy {
+                error += dy;
+                x += sx;
+            }
+            if next <= dx {
+                error += dx;
+                y += sy;
+            }
+        }
+    }
+
+    pub fn render(&self, name: &str) -> Crosshair {
+        let size = if self.size == 30 { 30 } else { 15 };
+        let mut image = RgbaImage::new(size, size);
+        for y in 0..size {
+            for x in 0..size {
+                image.put_pixel(x, y, Rgba(self.color(x as u8, y as u8)));
+            }
+        }
+        Crosshair {
+            name: if name.trim().is_empty() {
+                "自绘准星".into()
+            } else {
+                name.trim().into()
+            },
+            image,
+        }
+    }
+
+    pub fn from_image(image: &RgbaImage, size: u8) -> Self {
+        let size = if size == 30 { 30 } else { 15 };
+        let image = imageops::resize(
+            image,
+            u32::from(size),
+            u32::from(size),
+            imageops::FilterType::Nearest,
+        );
+        Self {
+            size,
+            pixels: image.pixels().map(|pixel| pixel.0).collect(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pixels.iter().all(|pixel| pixel[3] == 0)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub enum Style {
     #[default]
@@ -316,6 +419,23 @@ pub fn import(source: &Path) -> Result<Vec<Crosshair>> {
 pub struct Preset {
     pub id: String,
     pub crosshair: Crosshair,
+    pub builtin: bool,
+}
+
+pub fn builtin_presets() -> Result<Vec<Preset>> {
+    builtin::BUILTINS
+        .iter()
+        .map(|(id, name, bytes)| {
+            Ok(Preset {
+                id: (*id).into(),
+                crosshair: Crosshair {
+                    name: (*name).into(),
+                    image: decode(bytes)?,
+                },
+                builtin: true,
+            })
+        })
+        .collect()
 }
 
 #[derive(Deserialize, Serialize)]
@@ -342,8 +462,12 @@ impl Store {
     }
 
     pub fn load(&self) -> Result<Vec<Preset>> {
+        let mut builtins: Vec<_> = builtin_presets()?
+            .into_iter()
+            .filter(|preset| !self.directory.join(&preset.id).join("hidden").is_file())
+            .collect();
         if !self.directory.exists() {
-            return Ok(Vec::new());
+            return Ok(builtins);
         }
         let mut result = Vec::new();
         for entry in fs::read_dir(&self.directory)? {
@@ -364,6 +488,7 @@ impl Store {
                         name: meta.name,
                         image,
                     },
+                    builtin: false,
                 })
             })();
             if let Ok(preset) = preset {
@@ -371,10 +496,21 @@ impl Store {
             }
         }
         result.sort_by(|a, b| (&a.crosshair.name, &a.id).cmp(&(&b.crosshair.name, &b.id)));
-        Ok(result)
+        builtins.extend(result);
+        Ok(builtins)
     }
 
     pub fn save(&self, crosshair: &Crosshair) -> Result<String> {
+        if let Some(preset) = builtin_presets()?
+            .into_iter()
+            .find(|preset| preset.crosshair.image == crosshair.image)
+        {
+            let hidden = self.path(&preset.id)?.join("hidden");
+            if hidden.is_file() {
+                fs::remove_file(hidden)?;
+            }
+            return Ok(preset.id);
+        }
         let mut digest = Sha256::new();
         digest.update(crosshair.image.width().to_le_bytes());
         digest.update(crosshair.image.height().to_le_bytes());
@@ -402,6 +538,16 @@ impl Store {
 
     pub fn delete(&self, id: &str) -> Result<()> {
         let path = self.path(id)?;
+        if builtin::BUILTINS
+            .iter()
+            .any(|(builtin, _, _)| *builtin == id)
+        {
+            fs::create_dir_all(&path)?;
+            let temporary = tempfile::NamedTempFile::new_in(&path)?;
+            fs::write(temporary.path(), b"hidden")?;
+            temporary.persist(path.join("hidden"))?;
+            return Ok(());
+        }
         if !path.exists() {
             return Ok(());
         }
@@ -416,6 +562,16 @@ impl Store {
             }
         }
         fs::remove_dir(path).context("无法删除准星预设")
+    }
+
+    pub fn restore_builtins(&self) -> Result<()> {
+        for (id, _, _) in builtin::BUILTINS {
+            let path = self.path(id)?.join("hidden");
+            if path.is_file() {
+                fs::remove_file(path)?;
+            }
+        }
+        Ok(())
     }
 }
 
