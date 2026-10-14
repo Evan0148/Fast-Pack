@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, ensure};
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -23,7 +23,57 @@ fn preserve(client: &Path, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn options(client: &Path, name: &str, source: &Path) -> Result<()> {
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub(super) struct Selection {
+    packs: Option<Vec<String>>,
+    incompatible: Option<Vec<String>>,
+}
+
+pub(super) fn selection(client: &Path) -> Result<Selection> {
+    let path = client.join("heypixel/options.txt");
+    let original = if path.is_file() {
+        fs::read_to_string(path)?
+    } else {
+        String::new()
+    };
+    let mut selection = Selection::default();
+    for line in original.lines() {
+        if let Some(values) = line.strip_prefix("resourcePacks:") {
+            ensure!(selection.packs.is_none(), "客户端资源包设置存在重复项");
+            selection.packs =
+                Some(serde_json::from_str(values).context("客户端资源包列表无效，原设置未修改")?);
+        } else if let Some(values) = line.strip_prefix("incompatibleResourcePacks:") {
+            ensure!(
+                selection.incompatible.is_none(),
+                "客户端资源包兼容设置存在重复项"
+            );
+            selection.incompatible = Some(
+                serde_json::from_str(values).context("客户端资源包兼容列表无效，原设置未修改")?,
+            );
+        }
+    }
+    Ok(selection)
+}
+
+fn source_matches(client: &Path, source: &Path) -> bool {
+    let Some(name) = source.file_name() else {
+        return false;
+    };
+    let installed = client.join("heypixel/packs").join(name);
+    if let (Ok(source), Ok(installed)) = (source.canonicalize(), installed.canonicalize()) {
+        if source == installed {
+            return true;
+        }
+    }
+    source.is_file()
+        && installed.is_file()
+        && super::hash(source)
+            .ok()
+            .zip(super::hash(&installed).ok())
+            .is_some_and(|(source, installed)| source == installed)
+}
+
+fn options(client: &Path, name: &str, source: &Path, expected: &Selection) -> Result<bool> {
     let path = client.join("heypixel/options.txt");
     let original = if path.is_file() {
         fs::read_to_string(&path)?
@@ -33,48 +83,69 @@ fn options(client: &Path, name: &str, source: &Path) -> Result<()> {
     let active = format!("file/{name}");
     let source_name = source.file_name().unwrap_or_default().to_string_lossy();
     let source_id = format!("file/{source_name}");
+    let current = selection(client)?;
+    if &current != expected {
+        return Ok(false);
+    }
+    let Some(mut packs) = current.packs.clone() else {
+        return Ok(false);
+    };
+    let already_active = packs.iter().any(|value| value == &active);
+    let replace = !already_active
+        && packs.iter().any(|value| value == &source_id)
+        && source_matches(client, source);
+    if !replace && !already_active {
+        return Ok(false);
+    }
+    if replace {
+        let mut kept_active = false;
+        packs = packs
+            .into_iter()
+            .filter_map(|id| {
+                let id = if id == source_id { active.clone() } else { id };
+                if id == active {
+                    if kept_active {
+                        return None;
+                    }
+                    kept_active = true;
+                }
+                Some(id)
+            })
+            .collect();
+    }
+    let mut incompatible = current.incompatible.clone();
+    if let Some(values) = &mut incompatible {
+        values.retain(|id| id != &active && (!replace || id != &source_id));
+    }
+    if Some(&packs) == current.packs.as_ref() && incompatible == current.incompatible {
+        return Ok(true);
+    }
     let newline = if original.contains("\r\n") {
         "\r\n"
     } else {
         "\n"
     };
     let mut lines = vec![];
-    let mut saw_packs = false;
     for line in original.lines() {
-        if let Some(values) = line.strip_prefix("resourcePacks:") {
-            ensure!(!saw_packs, "客户端资源包设置存在重复项");
-            saw_packs = true;
-            let mut packs: Vec<Value> =
-                serde_json::from_str(values).context("客户端资源包列表无效，原设置未修改")?;
-            packs.retain(|value| {
-                value.as_str() != Some(&active) && value.as_str() != Some(&source_id)
-            });
-            if !packs.iter().any(|value| value.as_str() == Some("vanilla")) {
-                packs.insert(0, Value::String("vanilla".into()));
-            }
-            packs.push(Value::String(active.clone()));
+        if line.starts_with("resourcePacks:") {
             lines.push(format!("resourcePacks:{}", serde_json::to_string(&packs)?));
-        } else if let Some(values) = line.strip_prefix("incompatibleResourcePacks:") {
-            let mut packs: Vec<Value> =
-                serde_json::from_str(values).context("客户端资源包兼容列表无效，原设置未修改")?;
-            packs.retain(|value| value.as_str() != Some(&active));
+        } else if line.starts_with("incompatibleResourcePacks:") {
             lines.push(format!(
                 "incompatibleResourcePacks:{}",
-                serde_json::to_string(&packs)?
+                serde_json::to_string(incompatible.as_ref().unwrap())?
             ));
         } else {
             lines.push(line.to_string());
         }
     }
-    if !saw_packs {
-        lines.push(format!(
-            "resourcePacks:{}",
-            serde_json::to_string(&vec!["vanilla".to_string(), active])?
-        ));
-    }
-    let output = lines.join(newline) + newline;
+    let output = lines.join(newline)
+        + if original.ends_with('\n') {
+            newline
+        } else {
+            ""
+        };
     if output == original {
-        return Ok(());
+        return Ok(true);
     }
     preserve(client, &path)?;
     let mut temporary = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
@@ -85,7 +156,24 @@ fn options(client: &Path, name: &str, source: &Path) -> Result<()> {
         "客户端设置在导入期间变化，未修改"
     );
     temporary.persist(path).map_err(|error| error.error)?;
-    Ok(())
+    Ok(true)
+}
+
+pub(super) fn name(destination: &Path) -> Result<String> {
+    let name = destination
+        .file_name()
+        .context("导出文件名无效")?
+        .to_string_lossy();
+    Ok(
+        if destination
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
+        {
+            name.into_owned()
+        } else {
+            format!("{name}.zip")
+        },
+    )
 }
 
 pub(super) fn activate(
@@ -93,27 +181,11 @@ pub(super) fn activate(
     source: &Path,
     destination: &Path,
     root: &Path,
-) -> Result<PathBuf> {
+    expected: &Selection,
+) -> Result<(PathBuf, bool)> {
     let folder = client.join("heypixel/packs");
     fs::create_dir_all(&folder)?;
-    let name = if destination
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
-    {
-        destination
-            .file_name()
-            .context("导出文件名无效")?
-            .to_string_lossy()
-            .into_owned()
-    } else {
-        format!(
-            "{}.zip",
-            destination
-                .file_name()
-                .context("导出目录名称无效")?
-                .to_string_lossy()
-        )
-    };
+    let name = name(destination)?;
     let path = folder.join(&name);
     if source.canonicalize().ok().as_ref() == Some(&path.canonicalize().unwrap_or(path.clone())) {
         anyhow::bail!("导入名称会覆盖原始材质包，已保留原包与导出文件");
@@ -148,6 +220,6 @@ pub(super) fn activate(
         preserve(client, &path)?;
         temporary.persist(&path).map_err(|error| error.error)?;
     }
-    options(client, &name, source)?;
-    Ok(path)
+    let enabled = options(client, &name, source, expected)?;
+    Ok((path, enabled))
 }

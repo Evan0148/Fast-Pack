@@ -4,6 +4,7 @@ mod mapping_config;
 mod pending;
 
 pub use pending::finish_pending;
+pub use pending::{Imported, deploy as import_resource_pack};
 
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -226,18 +227,11 @@ pub fn automatic(
         Ok(configuration)=>report.generated.push(format!("布吉岛汉化：通过 ViaBackwards 用户映射配置写入 {} 个官方名称，保持模组原始文件不变，下一次启动时读取",configuration.translated_names)),
         Err(error)=>report.warnings.push(format!("布吉岛汉化配置未完成：{error:#}；转换包已正常导出")),
     }
-    if pending::running(client) {
-        match pending::schedule(client,source,destination) {
-            Ok(())=>report.generated.push(format!("布吉岛客户端：自动定位 {}，游戏正在运行；已安排在退出后自动导入并启用转换包，无需重复转换",client.display())),
-            Err(error)=>report.warnings.push(format!("布吉岛材质包自动导入排队失败：{error:#}")),
-        }
-        return;
-    }
-    progress("导入并启用布吉岛材质包");
-    match deployment::activate(client, source, destination, converted) {
-        Ok(pack) => report
-            .generated
-            .push(format!("布吉岛材质包：已自动导入并启用 {}", pack.display())),
+    progress("导入布吉岛材质包，保留现有选择");
+    match import_resource_pack(client, source, destination, converted) {
+        Ok(imported) if imported.queued => report.generated.push(format!("布吉岛客户端：自动定位 {}，游戏正在运行；退出后自动导入最近一次转换结果，仅替换已经启用的原包，保留玩家后续选择", client.display())),
+        Ok(imported) if imported.enabled => report.generated.push(format!("布吉岛材质包：已导入 {}，在原位置更新已启用的材质包，保留其他包的启用状态与顺序", imported.path.display())),
+        Ok(imported) => report.generated.push(format!("布吉岛材质包：已导入 {}，保留现有已加载列表，没有额外启用资源包", imported.path.display())),
         Err(error) => report
             .warnings
             .push(format!("布吉岛材质包自动导入未完成：{error:#}")),
