@@ -1146,18 +1146,10 @@ fn validate_output(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn archive_options(path: &Path) -> SimpleFileOptions {
-    let method = match path.extension().and_then(|extension| extension.to_str()) {
-        Some(extension)
-            if ["png", "jpg", "jpeg", "ogg", "webp", "gif", "zip"]
-                .iter()
-                .any(|compressed| extension.eq_ignore_ascii_case(compressed)) =>
-        {
-            CompressionMethod::Stored
-        }
-        _ => CompressionMethod::Deflated,
-    };
-    SimpleFileOptions::default().compression_method(method)
+pub(crate) fn archive_options(_: &Path) -> SimpleFileOptions {
+    SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .compression_level(Some(9))
 }
 
 fn save_output(root: &Path, destination: &Path, as_zip: bool) -> Result<()> {

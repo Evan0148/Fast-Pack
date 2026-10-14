@@ -42,8 +42,11 @@ struct Catalog {
 }
 
 static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("../../assets/via-items/catalog.json"))
-        .expect("协议物品资源表无效")
+    serde_json::from_str(&crate::embedded::text(include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/via-catalog.deflate"
+    ))))
+    .expect("协议物品资源表无效")
 });
 
 fn resource(reference: &str) -> Option<(&str, &str)> {

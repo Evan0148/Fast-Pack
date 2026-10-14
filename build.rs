@@ -1,4 +1,25 @@
 fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=assets/app.ico");
+    use std::io::Write;
+    let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    for (source, name) in [
+        ("assets/model-integrity.jsonl", "model-integrity.deflate"),
+        ("assets/modern-items.json", "modern-items.deflate"),
+        ("assets/via-items/catalog.json", "via-catalog.deflate"),
+    ] {
+        println!("cargo:rerun-if-changed={source}");
+        let original = std::fs::read(source).expect("无法读取内置资源");
+        let bytes = if std::env::var_os("CARGO_FEATURE_COMPACT_DATA").is_some() {
+            let mut encoder =
+                flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::best());
+            encoder.write_all(&original).expect("无法压缩内置资源");
+            encoder.finish().expect("内置资源压缩未完成")
+        } else {
+            original
+        };
+        std::fs::write(output.join(name), bytes).expect("无法写入内置资源");
+    }
     #[cfg(windows)]
     {
         if std::env::var("CARGO_CFG_TARGET_VENDOR").as_deref() == Ok("win7") {

@@ -7,7 +7,11 @@ fn main() -> Result<()> {
         .nth(1)
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target-win7"));
-    let status = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+    let raw_data = std::env::args_os()
+        .skip(2)
+        .any(|argument| argument == "--raw-data");
+    let mut command = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+    command
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .env("RUSTC_BOOTSTRAP", "1")
         .args([
@@ -21,9 +25,11 @@ fn main() -> Result<()> {
             "--bins",
             "--target-dir",
         ])
-        .arg(&target_dir)
-        .status()
-        .context("无法启动 Windows 兼容构建")?;
+        .arg(&target_dir);
+    if raw_data {
+        command.arg("--no-default-features");
+    }
+    let status = command.status().context("无法启动 Windows 兼容构建")?;
     ensure!(
         status.success(),
         "Windows 兼容构建失败，请确认已安装 rust-src"

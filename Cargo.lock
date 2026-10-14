@@ -653,11 +653,12 @@ dependencies = [
 
 [[package]]
 name = "fast-pack"
-version = "1.2.16"
+version = "1.2.17"
 dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "flate2",
  "iced",
  "image",
  "png",

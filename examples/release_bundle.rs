@@ -1,8 +1,10 @@
 use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
@@ -34,6 +36,42 @@ fn digest(path: &Path) -> Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+fn copy_licenses(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination.join("texts"))?;
+    let mut index = BTreeMap::new();
+    let mut stored = BTreeSet::new();
+    for entry in WalkDir::new(source).min_depth(1) {
+        let entry = entry?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let relative = entry
+            .path()
+            .strip_prefix(source)?
+            .to_string_lossy()
+            .replace('\\', "/");
+        if relative == "dependencies.json" {
+            fs::copy(entry.path(), destination.join(&relative))?;
+            continue;
+        }
+        let hash = digest(entry.path())?;
+        let path = format!("texts/{hash}.txt");
+        if stored.insert(hash) {
+            fs::copy(entry.path(), destination.join(&path))?;
+        }
+        index.insert(relative, path);
+    }
+    fs::write(
+        destination.join("index.json"),
+        serde_json::to_vec_pretty(&index)?,
+    )?;
+    fs::write(
+        destination.join("README.txt"),
+        "License texts are stored once without content changes. index.json maps each original package/license path to its full text in texts/. dependencies.json retains the package and license metadata. All copyright notices are retained.\n",
+    )?;
+    Ok(())
+}
+
 fn archive(source: &Path, output: &Path) -> Result<()> {
     let mut files = WalkDir::new(source)
         .min_depth(1)
@@ -41,7 +79,9 @@ fn archive(source: &Path, output: &Path) -> Result<()> {
         .collect::<std::result::Result<Vec<_>, _>>()?;
     files.sort_by(|left, right| left.path().cmp(right.path()));
     let mut zip = ZipWriter::new(File::create(output)?);
-    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    let options = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .compression_level(Some(9));
     for entry in files {
         if entry.file_type().is_file() {
             let name = entry
@@ -81,18 +121,47 @@ fn main() -> Result<()> {
     fs::create_dir_all(&portable)?;
     let main_name = format!("FastPack-v{version}.exe");
     let cli_name = format!("fast-pack-cli-v{version}.exe");
+    let upx = std::env::var_os("FASTPACK_UPX").map(PathBuf::from);
     for (original, name) in [
         ("FastPack.exe", &main_name),
         ("fast-pack-cli.exe", &cli_name),
     ] {
         fs::copy(binaries.join(original), stage.join(name)).context("无法复制发布程序")?;
-        fs::copy(binaries.join(original), portable.join(name))?;
+        if let Some(upx) = &upx {
+            let status = Command::new(upx)
+                .args([
+                    "--ultra-brute",
+                    "--strip-relocs=0",
+                    "--compress-icons=0",
+                    "--no-progress",
+                ])
+                .arg(stage.join(name))
+                .status()
+                .context("无法启动 UPX 压缩")?;
+            ensure!(status.success(), "发布程序压缩失败");
+            let status = Command::new(upx).arg("-t").arg(stage.join(name)).status()?;
+            ensure!(status.success(), "发布程序压缩校验失败");
+        }
+        fs::copy(stage.join(name), portable.join(name))?;
     }
     fs::copy(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("LICENSE"),
         portable.join("LICENSE"),
     )?;
-    copy_tree(licenses, &portable.join("third-party-licenses"))?;
+    let license_source = tempfile::tempdir()?;
+    copy_tree(licenses, license_source.path())?;
+    if let Some(upx) = &upx {
+        let directory = upx.parent().context("UPX 目录无效")?;
+        let notice = license_source.path().join("UPX");
+        fs::create_dir_all(&notice)?;
+        for name in ["LICENSE", "COPYING"] {
+            fs::copy(directory.join(name), notice.join(name))?;
+        }
+    }
+    copy_licenses(
+        license_source.path(),
+        &portable.join("third-party-licenses"),
+    )?;
     fs::write(
         portable.join("README.txt"),
         format!(

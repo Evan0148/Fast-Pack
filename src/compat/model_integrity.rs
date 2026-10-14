@@ -23,9 +23,15 @@ struct ProfileSource {
     parsed: OnceLock<Profile>,
 }
 
+static DATA: LazyLock<String> = LazyLock::new(|| {
+    crate::embedded::text(include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/model-integrity.deflate"
+    )))
+});
+
 static PROFILES: LazyLock<BTreeMap<u32, ProfileSource>> = LazyLock::new(|| {
-    include_str!("../../assets/model-integrity.jsonl")
-        .lines()
+    DATA.lines()
         .filter_map(|line| {
             let number = line
                 .strip_prefix("{\"format\":")?

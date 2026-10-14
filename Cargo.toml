@@ -1,6 +1,6 @@
 [package]
 name = "fast-pack"
-version = "1.2.16"
+version = "1.2.17"
 authors = ["ColdEternity Team", "Long_Cold", "Wind_"]
 description = "Fast Pack: automatic Minecraft Java resource pack version conversion"
 license-file = "LICENSE"
@@ -8,6 +8,10 @@ repository = "https://github.com/LongCold-ColdEternity-Team/Fast-Pack"
 readme = "README.md"
 edition = "2024"
 default-run = "FastPack"
+
+[features]
+default = ["compact-data"]
+compact-data = []
 
 [lib]
 name = "fast_pack"
@@ -30,6 +34,7 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 sha2 = "=0.10.9"
 tempfile = "3.27"
 walkdir = "2.5"
+flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"] }
 zip = { version = "6.0", default-features = false, features = ["deflate"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
@@ -42,8 +47,14 @@ windows-sys = { version = "=0.60.2", features = ["Win32_Foundation", "Win32_Grap
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
 
+[build-dependencies]
+flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"] }
+
 [profile.release]
 lto = true
 codegen-units = 1
 strip = true
+
+[profile.release.package.fast-pack]
+opt-level = "z"
 

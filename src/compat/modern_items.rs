@@ -15,7 +15,11 @@ struct Profile {
 }
 
 static PROFILES: LazyLock<BTreeMap<u32, Profile>> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("../../assets/modern-items.json")).expect("新版物品模板无效")
+    serde_json::from_str(&crate::embedded::text(include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/modern-items.deflate"
+    ))))
+    .expect("新版物品模板无效")
 });
 
 fn profile(target: u32) -> Option<&'static Profile> {

@@ -25,7 +25,8 @@ Fast Pack 是面向 Minecraft Java Edition 的材质包版本转换工具，由 
 - **旧版工具与装备保留材质。** 对照官方资源补齐 227 个旧版物品纹理名称，递归处理嵌套贴图与模型引用，区分方块和物品的映射。支持木质工具、弓、鱼竿、染料、药水、唱片等旧名称，以及弓 / 鱼竿状态和时钟 / 罗盘帧。
 - **旧工具轮廓与厚度。** 旧包转到 1.9+ 时，识别生成式物品贴图里大面积 alpha 为 1–2 的近透明背景，将其恢复为真正透明，让新版沿工具实际轮廓生成侧面，避免只剩正反两张薄片。保留可见像素、RGB、动画元数据和已有自定义立体模型，不改写手持角度与缩放规则。
 - **立体床图标与方块手持大小。** 识别继承旧 `block/bed_inventory` 的立体床物品，在背包视角过大、偏移或只显示侧面时，按模型实际边界居中并缩放，改用能看清床面的立体视角；保留床的几何、UV、实体贴图和手持姿态。对铁砧等自定义方块补齐缺失的原生父模型继承，使其正确取得目标版本的手持缩放、光照和物品框姿态，保留作者已有的显式显示参数。
-- **减少转换中的重复工作。** 官方模型参考按目标格式在进程内复用；每个包只扫描一次模型自检所需的贴图清单，缓存有效的模型继承结果，并在修复改变模型时清空对应缓存。ZIP 导出使用固定大小的写入缓冲，在缓冲内完成小文件头的校验和回填；PNG、JPEG、OGG 等已压缩资源直接存入 ZIP，JSON 等文本继续压缩。资源内容与兼容修复保留，部分包的 ZIP 体积可能略有增加；文件夹输出的自动导入也采用相同写入方式。
+- **减少转换中的重复工作。** 官方模型参考按目标格式在进程内复用；每个包只扫描一次模型自检所需的贴图清单，缓存有效的模型继承结果，并在修复改变模型时清空对应缓存。ZIP 导出使用固定大小的写入缓冲，在缓冲内完成小文件头的校验和回填；文件夹输出的自动导入共用相同打包逻辑。
+- **无损减小程序和输出包。** 发布构建保留 LTO、单代码生成单元和符号剥离，并针对项目代码优化体积。普通源码构建默认压缩三组大型内置参考数据；发布版对比不同数据布局后，使用官方 UPX 的 `--ultra-brute` 选择较小的 EXE 压缩结果。所有 UI、版本数据和转换修复完整保留。材质包 ZIP 自动使用 DEFLATE 9 级压缩，保留图片、模型、音频、动画及原始备份的内容和分辨率；压缩级别提高可能增加导出耗时。
 - **自动补齐同风格下界合金套装。** 目标版本为 1.16+ 时，自动为原包缺失的下界合金剑、斧、镐、锹、锄、头盔、胸甲、护腿和靴子制作材质，并补穿戴贴图。优先采用原包同类钻石装备，缺失时依次采用可用的其他材质；保留像素轮廓、短剑长度、分辨率、透明度、阴影层次和动画，按原版下界合金材质分开处理暗红底色、紫色金属包边、银紫刃口高光与暗红柄部细节，依据原图轮廓增加边缘层次。模型继承、立体几何、UV、手持大小、旋转及自定义状态变体同步适配，1.20+ 盔甲纹饰和 1.21.4+ 物品定义也会生成。已有下界合金贴图、模型或物品定义优先保留，玩家无需额外操作。原包未提供某类装备参考时沿用目标原版资源。
 - **天空图尺寸自动对齐。** 对明确使用 3×2 六面布局、因缩放或像素取整而略偏比例的天空图，按六个独立面重采样到相同的正方形尺寸，自动处理 2560×1706、3500×2334、3015×2048、2210×1535 等图集。完整保留每面的覆盖范围，避免整图缩放造成相邻面串色；标准尺寸的图集保持像素不变，预览与 OptiFine / FabricSkyBoxes / Nuit 转换使用同一套规则。
 - **跨协议物品外观自动还原。** 选择 1.16.2+ 的目标客户端时，自动补齐可表达的新版物品模型与贴图，以及 ViaBackwards 的物品识别规则。1.20.1 可识别重锤、风弹、旋风棒、沉重核心、试炼钥匙、狼铠、新版铜块和凝灰岩等；普通承载物品继续使用原包模型。原包已提供的新物品资源优先，缺失时使用官方参考资源。新版服务器可通过数字 `CustomModelData` 让旧原版客户端直接选模型；旧服务器可使用自动生成的 OptiFine CIT / Chime 标签规则。1.21.4+ 同时生成字符串选择和数字规则。适配仅涉及物品栏与手持外观，不改变服务端玩法，也不替换放置后的方块或实体渲染。
@@ -61,7 +62,7 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.16.exe`。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.17.exe`。
 2. 双击下载的程序，把材质包 ZIP 或文件夹拖入窗口。
 3. 选择目标版本与导出目录，点击“开始转换”。资源适配默认自动执行。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
@@ -102,7 +103,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.16.exe`、`fast-pack-cli-v1.2.16.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.17.exe`、`fast-pack-cli-v1.2.17.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -237,7 +238,7 @@ ViaBackwards 启动时将用户 NBT 与内置映射合并。运行中的游戏�
 独立维护入口仍保留，普通玩家使用默认开关即可：
 
 ```powershell
-.\fast-pack-cli-v1.2.16.exe --client-audio "E:\MCLDownload\Game\.minecraft"
+.\fast-pack-cli-v1.2.17.exe --client-audio "E:\MCLDownload\Game\.minecraft"
 ```
 
 此命令现仅配置官方名称与附魔，不改写模组，也不启用原声音效。`--restore-client-audio` 仅用于恢复以前版本留下的模组改写，校验原始备份后还原；当前已经被启动器恢复的原版模组无需处理。
@@ -246,19 +247,19 @@ ViaBackwards 启动时将用户 NBT 与内置映射合并。运行中的游戏�
 
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.16 为例，命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.17 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli-v1.2.16.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.2.16.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.2.16.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.2.16.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.2.16.exe old.zip --probe
-.\fast-pack-cli-v1.2.16.exe --versions
-.\fast-pack-cli-v1.2.16.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.2.16.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.2.16.exe old.zip --to 1.20.1 --vanilla-glint
-.\fast-pack-cli-v1.2.16.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.2.17.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.2.17.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.2.17.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.2.17.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.2.17.exe old.zip --probe
+.\fast-pack-cli-v1.2.17.exe --versions
+.\fast-pack-cli-v1.2.17.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.2.17.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.2.17.exe old.zip --to 1.20.1 --vanilla-glint
+.\fast-pack-cli-v1.2.17.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--from auto` 默认自动识别源版本。`--report-json` 仅在指定时将详情另存到提供的路径，不会把 `转换报告.txt` 塞入输出 ZIP。自定义映射采用 JSON 对象，例如 `{"custom_texture":"replacement_texture"}`。
@@ -292,6 +293,18 @@ target-win7/x86_64-win7-windows-msvc/release/fast-pack-cli.exe
 ```powershell
 cargo run --release --locked --example release_bundle -- target-win7/x86_64-win7-windows-msvc/release dist-releases third-party-licenses
 ```
+
+普通构建默认启用 `compact-data`，在构建阶段无损压缩大型内置参考表，运行时按需读取。为了得到更小的 UPX 发布程序，v1.2.17 对比了压缩表和原始表两种构建，最终使用原始表让 UPX 在整个程序范围内压缩。可使用官方未修改的 UPX 5.2.1 复现发布流程：
+
+```powershell
+cargo run --release --locked --example build_windows -- target-win7 --raw-data
+$env:FASTPACK_UPX = 'C:\Tools\upx-5.2.1-win64\upx.exe'
+cargo run --release --locked --example release_bundle -- target-win7/x86_64-win7-windows-msvc/release dist-releases third-party-licenses
+```
+
+`FASTPACK_UPX` 仅用于开发者打包，玩家运行 EXE 无需安装 UPX。打包入口保留重定位信息和程序图标，校验压缩结果，并在便携包中附上 UPX 许可文本。未设置该变量时仍可生成完整的未加壳构建。UPX 压缩后的程序启动方式相同，源码与构建选项公开保留。
+
+便携包将内容完全相同的第三方许可文本只保存一次，`third-party-licenses/index.json` 列出原来的每个包名 / 文件名及其完整文本位置，`dependencies.json` 保留依赖信息。不同的版权声明和许可内容分别保留；该去重只用于发布材料，转换后材质包中的资源与备份保持完整。
 
 发布文件生成到 `dist-releases/v<Cargo 版本>/`，包含带版本号的 EXE、便携 ZIP 和 `SHA256SUMS.txt`。文件名直接来自当前 Cargo 版本，后续版本无需手动改写打包命名。
 

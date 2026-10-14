@@ -13,3 +13,4 @@ pub use tables::{
     pack_format_of, tables, version_label_of,
 };
 mod archive;
+mod embedded;
