@@ -28,6 +28,7 @@ pub struct Preferences {
     pub crosshair_canvas: fast_pack::crosshair::Canvas,
     pub crosshair_pen_color: [u8; 3],
     pub crosshair_name: String,
+    pub show_attack_indicator: bool,
 }
 
 impl Default for Preferences {
@@ -45,6 +46,7 @@ impl Default for Preferences {
             crosshair_canvas: fast_pack::crosshair::Canvas::default(),
             crosshair_pen_color: [255; 3],
             crosshair_name: "自绘准星".into(),
+            show_attack_indicator: true,
         }
     }
 }

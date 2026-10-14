@@ -43,6 +43,7 @@ enum Message {
     PreserveCase(bool),
     CustomGlint(bool),
     CustomCrosshair(bool),
+    ShowAttackIndicator(bool),
     CrosshairImport,
     CrosshairFolder,
     CrosshairFiles(Vec<PathBuf>),
@@ -241,6 +242,7 @@ struct App {
     preserve_case: bool,
     custom_glint: bool,
     custom_crosshair: bool,
+    show_attack_indicator: bool,
     crosshair_drawing: bool,
     crosshair_canvas: fast_pack::crosshair::Canvas,
     crosshair_pen_color: [u8; 3],
@@ -371,6 +373,7 @@ impl App {
             preserve_case: false,
             custom_glint: false,
             custom_crosshair: false,
+            show_attack_indicator: preferences.show_attack_indicator,
             crosshair_drawing: preferences.crosshair_drawing,
             crosshair_color: fast_pack::compat::glint::color_hex(preferences.crosshair_pen_color),
             crosshair_preview: Self::crosshair_handle(
@@ -683,6 +686,7 @@ impl App {
                     crosshair_canvas: self.crosshair_canvas.clone(),
                     crosshair_pen_color: self.crosshair_pen_color,
                     crosshair_name: self.crosshair_name.clone(),
+                    show_attack_indicator: self.show_attack_indicator,
                 })
                 .is_ok()
             {
@@ -700,7 +704,44 @@ impl App {
         self.logs.push(value);
     }
     fn crosshair_handle(image: &image::RgbaImage) -> widget::image::Handle {
-        let preview = image::imageops::resize(image, 90, 90, image::imageops::FilterType::Nearest);
+        let image = fast_pack::crosshair::transparent_background(image);
+        let mut min = (image.width(), image.height());
+        let mut max = (0, 0);
+        let mut visible = false;
+        for (x, y, pixel) in image.enumerate_pixels() {
+            if pixel[3] > 0 {
+                min = (min.0.min(x), min.1.min(y));
+                max = (max.0.max(x), max.1.max(y));
+                visible = true;
+            }
+        }
+        let mut preview = image::RgbaImage::new(108, 108);
+        if visible {
+            let glyph = image::imageops::crop_imm(
+                &image,
+                min.0,
+                min.1,
+                max.0 - min.0 + 1,
+                max.1 - min.1 + 1,
+            )
+            .to_image();
+            let scale = (108.0 / image.width().max(image.height()) as f32)
+                .min(100.0 / glyph.width().max(glyph.height()) as f32);
+            let width = (glyph.width() as f32 * scale).round().clamp(1.0, 100.0) as u32;
+            let height = (glyph.height() as f32 * scale).round().clamp(1.0, 100.0) as u32;
+            let glyph = image::imageops::resize(
+                &glyph,
+                width,
+                height,
+                image::imageops::FilterType::Nearest,
+            );
+            image::imageops::replace(
+                &mut preview,
+                &glyph,
+                i64::from((108 - width) / 2),
+                i64::from((108 - height) / 2),
+            );
+        }
         widget::image::Handle::from_rgba(preview.width(), preview.height(), preview.into_raw())
     }
     fn selected_crosshair(&self) -> Option<fast_pack::crosshair::Crosshair> {
@@ -857,6 +898,7 @@ impl App {
             auto_netherite: self.auto_netherite,
             auto_netherite_sword: true,
             crosshair,
+            show_attack_indicator: self.show_attack_indicator,
         };
         self.phase = Phase::Running;
         self.error = None;
@@ -1218,6 +1260,10 @@ impl App {
                 self.save_preferences();
             }
             Message::CustomCrosshair(value) if !self.busy() => self.custom_crosshair = value,
+            Message::ShowAttackIndicator(value) if !self.busy() => {
+                self.show_attack_indicator = value;
+                self.save_preferences();
+            }
             Message::CrosshairImport if !self.busy() && !self.crosshair_pending => {
                 return Task::perform(
                     async {
@@ -1366,7 +1412,7 @@ impl App {
                     let result = (|| -> Result<_> {
                         let store = crate::preferences::crosshair_store()?;
                         store.restore_builtins()?;
-                        Ok((store.load()?, None, "已恢复 32 个内置准星预设。".into()))
+                        Ok((store.load()?, None, "已恢复全部内置准星预设。".into()))
                     })()
                     .map_err(|error| format!("{error:#}"));
                     let _ = sender.send(WorkEvent::Crosshairs(result));
@@ -2335,6 +2381,11 @@ impl App {
                     .size(17)
                     .text_size(13)
                     .on_toggle_maybe((!self.busy()).then_some(Message::CustomCrosshair)),
+                checkbox(self.show_attack_indicator)
+                    .label("显示攻击冷却进度条")
+                    .size(17)
+                    .text_size(13)
+                    .on_toggle_maybe((!self.busy()).then_some(Message::ShowAttackIndicator)),
                 space().width(Length::Fill),
                 self.action(
                     60,
@@ -2353,6 +2404,7 @@ impl App {
             .align_y(Alignment::Center)
         ]
         .spacing(12);
+        content = content.push(self.label("攻击冷却指示支持 1.9+，显示位置沿用游戏设置。"));
         if !self.custom_crosshair {
             content = content.push(self.label(format!(
                 "{} 个准星预设 · 开启后应用本次准星，转换结束自动关闭",
@@ -2391,11 +2443,15 @@ impl App {
             );
             let preview = container(
                 widget::image(self.crosshair_preview.clone())
-                    .width(90)
-                    .height(90)
+                    .width(96)
+                    .height(96)
                     .filter_method(widget::image::FilterMethod::Nearest),
             )
             .padding(12)
+            .width(120)
+            .height(120)
+            .center_x(120)
+            .center_y(120)
             .style(move |_| container::Style {
                 background: Some(c.field.into()),
                 border: Border {
@@ -2565,48 +2621,35 @@ impl App {
                 .spacing(12)
                 .width(Length::Fill);
                 content = content.push(
-                    row![preview, details]
+                    row![details, preview]
                         .spacing(16)
                         .align_y(Alignment::Center),
                 );
                 if self.crosshair_presets.is_empty() {
                     content = content.push(self.label("可以导入准星包、自己画，或恢复内置预设。"));
                 } else {
-                    let columns = ((self.width - 150.0) / 130.0).floor().clamp(3.0, 7.0) as usize;
-                    let mut gallery = column![].spacing(9);
+                    let columns = ((self.width - 170.0) / 106.0).floor().clamp(3.0, 8.0) as usize;
+                    let mut gallery = column![].spacing(10);
                     for start in (0..self.crosshair_presets.len()).step_by(columns) {
-                        let mut tiles = row![].spacing(9);
+                        let mut tiles = row![].spacing(10);
                         for index in start..(start + columns).min(self.crosshair_presets.len()) {
                             let preset = &self.crosshair_presets[index];
                             let selected = self.crosshair_selected.as_ref() == Some(&preset.id);
-                            let name = if preset.builtin {
-                                format!(
-                                    "内置准星 {:02}",
-                                    preset
-                                        .crosshair
-                                        .name
-                                        .rsplit(' ')
-                                        .next()
-                                        .unwrap_or("")
-                                        .parse::<u8>()
-                                        .unwrap_or(0)
-                                )
-                            } else {
-                                shorten(&preset.crosshair.name, 13)
-                            };
                             let card = button(
-                                column![
+                                container(
                                     widget::image(self.crosshair_previews[index].clone())
-                                        .width(36)
-                                        .height(36)
+                                        .width(46)
+                                        .height(46)
                                         .filter_method(widget::image::FilterMethod::Nearest),
-                                    text(name).size(11).color(c.foreground)
-                                ]
-                                .spacing(8)
-                                .align_x(Alignment::Center),
+                                )
+                                .width(96)
+                                .height(96)
+                                .center_x(Length::Fill)
+                                .center_y(Length::Fill),
                             )
-                            .padding(10)
-                            .width(120)
+                            .padding(0)
+                            .width(96)
+                            .height(96)
                             .on_press_maybe(
                                 enabled.then(|| Message::CrosshairSelected(preset.id.clone())),
                             )
@@ -2633,17 +2676,23 @@ impl App {
                                 text_color: c.foreground,
                                 ..Default::default()
                             });
-                            tiles = tiles.push(tooltip(
-                                card,
-                                container(text(preset.crosshair.name.clone()).size(12)).padding(8),
-                                tooltip::Position::Bottom,
-                            ));
+                            tiles = tiles.push(card);
                         }
                         gallery = gallery.push(tiles);
                     }
-                    let height =
-                        (self.crosshair_presets.len().div_ceil(columns) as f32 * 86.0).min(180.0);
-                    content = content.push(scrollable(gallery).height(height));
+                    let height = (self.crosshair_presets.len().div_ceil(columns) as f32 * 106.0
+                        - 10.0)
+                        .min(212.0);
+                    content = content.push(
+                        scrollable(gallery)
+                            .direction(scrollable::Direction::Vertical(
+                                scrollable::Scrollbar::new()
+                                    .width(6)
+                                    .scroller_width(6)
+                                    .spacing(12),
+                            ))
+                            .height(height),
+                    );
                 }
             }
             content = content.push(self.label(

@@ -33,6 +33,7 @@ pub struct ConversionOptions {
     pub auto_netherite: bool,
     pub auto_netherite_sword: bool,
     pub crosshair: Option<crate::crosshair::Crosshair>,
+    pub show_attack_indicator: bool,
 }
 
 impl Default for ConversionOptions {
@@ -53,6 +54,7 @@ impl Default for ConversionOptions {
             auto_netherite: true,
             auto_netherite_sword: true,
             crosshair: None,
+            show_attack_indicator: true,
         }
     }
 }
@@ -1314,6 +1316,12 @@ pub fn convert_pack(
     if let Some(crosshair) = &options.crosshair {
         crate::crosshair::apply(&root, options.tgt_format, crosshair, &mut report.assets)?;
     }
+    crate::compat::attack_indicator::apply(
+        &root,
+        options.tgt_format,
+        options.show_attack_indicator,
+        &mut report.assets,
+    )?;
     report.compatibility.warnings.sort();
     report.compatibility.warnings.dedup();
     if !report.compatibility.is_empty() {

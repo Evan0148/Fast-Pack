@@ -265,3 +265,5 @@ Crosshair Overlay 32: pack.mcmeta
     "description": "by SharkPhizy"
   }
 }
+
+Vanilla: the original Minecraft Java Edition 1.20.1 crosshair from the official GUI icon atlas. Original rights belong to Mojang Studios / Microsoft; the project source license does not replace those rights.

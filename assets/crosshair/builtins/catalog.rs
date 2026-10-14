@@ -1,4 +1,5 @@
 pub(super) const BUILTINS: &[(&str, &str, &[u8])] = &[
+    ("0dcbc600daf7af03a1e5eadbc85cf18e27dec6e52074aefbc39d3267922e1681", "Vanilla", include_bytes!("vanilla.png")),
     ("001383caf1ac5a5b17287b52445a6ecaa12c968a6acf2f6a3ab4330be9c3135c", "Crosshair Overlay 1", include_bytes!("overlay-01.png")),
     ("892535c352d2e6f2db7fa83f02b8c6299dd4f78aa4c8a3e8bd0b40b570797a92", "Crosshair Overlay 2", include_bytes!("overlay-02.png")),
     ("53156e7c3e29c981cada81435efb2fb372f7639cfe16c490a6099d314d53e33f", "Crosshair Overlay 3", include_bytes!("overlay-03.png")),

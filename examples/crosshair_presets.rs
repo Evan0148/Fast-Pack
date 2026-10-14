@@ -29,6 +29,16 @@ fn main() -> Result<()> {
         }
         "delete" => store.delete(&args.next().context("请指定准星编号")?)?,
         "restore" => store.restore_builtins()?,
+        "export" => {
+            let id = args.next().context("请指定准星编号")?;
+            let path = args.next().context("请指定 PNG 路径")?;
+            let preset = store
+                .load()?
+                .into_iter()
+                .find(|preset| preset.id == id)
+                .context("没有找到准星预设")?;
+            preset.crosshair.image.save(path)?;
+        }
         "draw" => {
             let name = args.next().context("请指定预设名字")?;
             let path = args.next().context("请指定画布 JSON 文件")?;

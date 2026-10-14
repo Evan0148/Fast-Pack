@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod atlas;
+pub(crate) mod attack_indicator;
 mod beds;
 mod connected_textures;
 mod effect_panels;

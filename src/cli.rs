@@ -37,6 +37,8 @@ struct Arguments {
         help = "使用准星包或 PNG 中的准星，仅替换准星区域"
     )]
     crosshair: Option<PathBuf>,
+    #[arg(long, help = "隐藏 1.9+ 的准星与快捷栏攻击冷却指示")]
+    hide_attack_indicator: bool,
     #[arg(value_name = "SRC", help = "源 ZIP 或材质包文件夹")]
     source: Option<PathBuf>,
     #[arg(
@@ -142,6 +144,7 @@ pub fn run() -> Result<()> {
         auto_client_setup: !args.no_client_setup,
         auto_netherite: !args.no_netherite,
         auto_netherite_sword: !args.no_netherite_sword,
+        show_attack_indicator: !args.hide_attack_indicator,
         crosshair: args
             .crosshair
             .as_deref()

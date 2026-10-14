@@ -245,6 +245,28 @@ fn decode(bytes: &[u8]) -> Result<RgbaImage> {
     Ok(reader.decode()?.to_rgba8())
 }
 
+pub fn transparent_background(image: &RgbaImage) -> RgbaImage {
+    let mut image = image.clone();
+    let mut border = 0u64;
+    let mut black = 0u64;
+    for (x, y, pixel) in image.enumerate_pixels() {
+        if x == 0 || y == 0 || x + 1 == image.width() || y + 1 == image.height() {
+            border += 1;
+            if pixel[3] > 0 && pixel[0].max(pixel[1]).max(pixel[2]) <= 2 {
+                black += 1;
+            }
+        }
+    }
+    if border > 0 && black * 4 >= border * 3 {
+        for pixel in image.pixels_mut() {
+            if pixel[0].max(pixel[1]).max(pixel[2]) <= 2 {
+                *pixel = Rgba([0; 4]);
+            }
+        }
+    }
+    image
+}
+
 fn normalized(image: RgbaImage, atlas: bool) -> Result<RgbaImage> {
     let image = if atlas {
         ensure!(
@@ -261,6 +283,7 @@ fn normalized(image: RgbaImage, atlas: bool) -> Result<RgbaImage> {
         image
     };
     ensure!(image.width() > 0 && image.height() > 0, "准星图片为空");
+    let image = transparent_background(&image);
     ensure!(image.pixels().any(|pixel| pixel[3] > 0), "准星区域完全透明");
     let side = image.width().max(image.height()).div_ceil(15).clamp(1, 64) * 15;
     let mut out = RgbaImage::new(side, side);
@@ -430,7 +453,7 @@ pub fn builtin_presets() -> Result<Vec<Preset>> {
                 id: (*id).into(),
                 crosshair: Crosshair {
                     name: (*name).into(),
-                    image: decode(bytes)?,
+                    image: transparent_background(&decode(bytes)?),
                 },
                 builtin: true,
             })
@@ -501,6 +524,10 @@ impl Store {
     }
 
     pub fn save(&self, crosshair: &Crosshair) -> Result<String> {
+        let crosshair = Crosshair {
+            name: crosshair.name.clone(),
+            image: transparent_background(&crosshair.image),
+        };
         if let Some(preset) = builtin_presets()?
             .into_iter()
             .find(|preset| preset.crosshair.image == crosshair.image)
@@ -509,6 +536,13 @@ impl Store {
             if hidden.is_file() {
                 fs::remove_file(hidden)?;
             }
+            return Ok(preset.id);
+        }
+        if let Some(preset) = self
+            .load()?
+            .into_iter()
+            .find(|preset| !preset.builtin && preset.crosshair.image == crosshair.image)
+        {
             return Ok(preset.id);
         }
         let mut digest = Sha256::new();
