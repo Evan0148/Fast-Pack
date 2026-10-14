@@ -2619,7 +2619,7 @@ impl App {
                     .spacing(10)
                 ]
                 .spacing(12)
-                .width(Length::Fill);
+                .width(260);
                 content = content.push(
                     row![details, preview]
                         .spacing(16)
