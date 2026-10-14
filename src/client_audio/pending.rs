@@ -111,7 +111,7 @@ pub fn finish_pending() -> Result<bool> {
     let start = Instant::now();
     loop {
         let mut pending: Pending = serde_json::from_slice(&fs::read(&path)?)?;
-        if pending.state == "complete" {
+        if pending.state == "complete" || pending.state.starts_with("cancelled") {
             break;
         }
         if !running(&pending.client) {

@@ -15,7 +15,7 @@ struct Arguments {
     #[arg(
         long,
         value_name = "MINECRAFT",
-        help = "为网易 1.20.1 的本地 ViaForge 安装原声音效适配，自动备份"
+        help = "通过网易 1.20.1 的 ViaBackwards 用户映射配置汉化名称与附魔"
     )]
     client_audio: Option<PathBuf>,
     #[arg(long, requires = "client_audio", help = "恢复 ViaForge 原始备份")]
@@ -78,7 +78,7 @@ pub fn run() -> Result<()> {
             let installed = crate::client_audio::install(&client)?;
             println!("{}", serde_json::to_string_pretty(&installed)?);
             println!(
-                "已保留重锤和风弹的原声事件；请彻底退出并重新启动游戏使模组生效，材质包需包含 Fast Pack 原声音频。"
+                "已配置官方名称与附魔汉化，保持模组不变；下一次启动读取配置。原声音效尚未启用，不能通过普通映射配置恢复被合并或取消的声音。"
             );
         }
         return Ok(());

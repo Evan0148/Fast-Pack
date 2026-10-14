@@ -59,7 +59,7 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.12.exe`。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.13.exe`。
 2. 双击下载的程序，把材质包 ZIP 或文件夹拖入窗口。
 3. 选择目标版本与导出目录，点击“开始转换”。资源适配默认自动执行。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
@@ -100,7 +100,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.12.exe`、`fast-pack-cli-v1.2.12.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.13.exe`、`fast-pack-cli-v1.2.13.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -184,62 +184,68 @@ flowchart LR
 
 ## 旧客户端连接新服务器时的物品外观
 
-材质包的目标版本仍选择**客户端版本**。例如客户端是 1.20.1，即使服务器开放了重锤或其他新物品，也应转换为 1.20.1。选择 **1.20.1** 时，主页显示“**布吉岛高版本材质包适配**”开关，首次使用默认开启，并自动保存开关状态；选择其他版本时隐藏。开启后只需导入材质包并转换，程序自动添加新版物品与原声音效、定位本机网易客户端、安装声音适配、复制转换包并启用，不需要填写游戏目录、运行额外命令或手动导入兼容包。手动设置的导出目录仍会正常保留一份结果。
+目标版本选择**客户端版本**。客户端为 1.20.1 时，主页显示“布吉岛高版本材质包适配”开关，首次默认开启并保存状态；选择其他版本时隐藏。开启后自动添加可表达的新物品模型、识别规则及声音资源，并定位网易客户端、配置官方名称汉化、导入和启用转换包。手动选择的导出目录仍保留一份结果。
 
-定位优先读取网易启动器保存的实际下载位置，支持不同盘符与自定义文件夹；还会检查源包 / 导出路径、已验证的用户缓存和常见安装位置，必要时进行有时间与深度限制的本地目录查找。客户端必须有 HeyPixel、兼容的 1.20.1 版本资料和唯一的 ViaForge 模组；不会把普通 Java 或其他游戏目录当作网易客户端处理。如果有多个匹配的网易客户端，优先使用当前启动器记录的位置，再按最近修改的游戏设置选择。不会扫描网络共享目录。
+### 名称与附魔汉化
 
-游戏正在运行时，程序会在后台排队，等游戏退出后自动安装适配并启用转换包，避免游戏退出时把设置写回旧值；玩家无需再次转换。已运行的 Java 客户端不能通过修改磁盘上的模组立即更新，原声适配在下一次正常启动游戏时加载。后台等待最长四小时；受保护的模组、未知处理结构、未安装客户端或无写入权限等情况会在转换详情说明，正常导出的材质包会保留。网易启动器更新替换模组后，再次转换会重新检查并补齐适配。
+v1.2.13 改用 ViaBackwards 已提供的**用户映射配置入口**，保持客户端 JAR 原始字节不变。程序读取原始映射中对应的实际 ID，并在 `heypixel/ViaForge/ViaLoader/mappings-1.20.5to1.20.3.nbt` 合并以下官方简体中文名称：
 
-关闭开关后，本次不添加布吉岛物品资源、不安装本地声音适配、不自动导入或启用转换包。输入是 Fast Pack 已适配的包时，会恢复由 Fast Pack 包装的原始物品载体规则并移除自动 CIT / Chime 选择规则；原包素材继续保留。关闭开关不会卸载此前已安装的本地声音适配。
+| 原名称 | 显示名称 |
+| --- | --- |
+| 1.21 Mace | 重锤 |
+| 1.21 Wind Charge | 风弹 |
+| Wind Burst | 风爆 |
+| Density | 致密 |
+| Breach | 破甲 |
 
-布吉岛适配同时汉化直写在物品名称和附魔说明中的新版英文：`1.21 Mace` → **重锤**、`1.21 Wind Charge` → **风弹**、`Wind Burst` → **风爆**、`Density` → **致密**、`Breach` → **破甲**。使用 Minecraft 官方简体中文名称，保留罗马数字 / 数字等级、颜色和其他文本样式；名称不再附带 `1.21` 前缀。处理嵌套文本组件及分开的等级组件，不把玩家自定义名称中的英文片段批量替换。原始名称和附魔说明由 ViaBackwards 现有备份与恢复流程保留，发回服务器时恢复原始数据。资源包中同时补齐对应的官方语言键。
+当前已核对的物品 ID 为 1093 / 1090，附魔 ID 为 39 / 37 / 38。配置只修改名称字段，保留物品承载、CustomModelData、协议注册表与其他映射。已有用户映射中的其他字段保留，修改前自动备份。附魔等级、样式以及玩家自定义名称由原来的协议实现处理；此功能不对自定义名称中的英文片段做全文替换，也不重命名服务器明确发送的自定义名称。
 
-适配根据 ViaBackwards 实际传递的数据生效：
+ViaBackwards 启动时将用户 NBT 与内置映射合并。运行中的游戏不会重新读取已加载的映射，新配置需下一次正常启动加载。已通过原版 ViaBackwards 的 NBT 读取与合并流程验证配置，但尚未验证用户这份网易启动器在重启后是否保留额外的用户映射文件；若启动器连用户配置也清理，需要官方支持，不能保证靠本地文件实现。
 
-- 新版 ViaBackwards 开启 `pass-original-item-name-to-resource-packs` 时，可向旧客户端写入数字 `CustomModelData`。生成的原版模型规则能直接读取它，不依赖 CIT。当前上游默认开启此项，旧服务器版本或管理员修改过配置时可能不同。
-- 不提供数字模型值的旧版代理，可由客户端已有的 OptiFine CIT 或 Chime 读取协议 NBT 标签。两套规则都会自动生成；按隐藏标记匹配，物品改名不会让规则失效。
-- 服务器若既不传递数字模型值，也不留下可读取的协议标签，资源包无法判断某把普通斧头实际是不是重锤。转换器不会把所有斧头都替换掉，也不会自动修改服务器或安装客户端模组。
+### 原声音效的实际限制
 
-以重锤为例，已核对的映射为 `netherite_axe` 承载、数字模型值 `647`，或 `VB|Protocol1_20_5To1_20_3|id=1093`。数字匹配范围会在下一个值恢复原包的模型及条件，避免其他自定义物品被一并替换；若原包已经显式使用同一个数字模型值，优先保留原规则，并继续生成协议标签规则。
+**重锤与风弹原声仍未解决，程序会明确显示“原声音效尚未启用”。** 转换包包含对应 Ogg、原声事件和 `fastpack` 事件别名；这些资源可供服务器发送独立命名声音时播放。网易启动器每次启动会校验并还原模组，v1.2.11–v1.2.12 通过改写 ViaForge 声音处理类的方式无法持久生效，已从当前程序移除。
 
-该功能还原物品栏和手持模型。放置后的方块、实体、物品行为、攻击机制和客户端没有的渲染功能属于不同范围。无法在旧模型格式中表达的特殊实体物品会继续使用代理的替代外观，避免输出空模型。适配器为独立 Rust 实现，协议字段来自公开互操作数据，缺失外观参考官方客户端资源，未嵌入 ViaBackwards-Plus 的包文件或代码。
+现有协议会把重锤音效合并为普通攻击事件，并可能把风弹爆裂事件取消。资源包和普通名称映射配置无法还原被合并或丢弃的声音。需要布吉岛服务器保留独立声音事件，或客户端提供受支持的音效扩展。Fast Pack 不覆盖所有普通攻击、弓箭或烈焰弹的声音来冒充按物品识别的修复，不修改受校验的模组、不干预启动校验。
 
-v1.2.10 起，转换到 1.20.x 等受支持的旧客户端时，还会自动补齐重锤的三类猛击音效、风弹的发射与爆裂音效、旋风人的风弹爆裂音效，包括 Ogg 文件、声音事件及中英文字幕。原包已有的事件定义、音频和字幕优先保留，不覆盖普通攻击、弓箭或烈焰弹的共用声音。风弹发射声在官方资源中使用 `random/bow`，风弹爆裂声则有独立音频。
+### 自动定位与导入
 
-**声音资源与声音触发需要分别处理。** ViaBackwards 会把重锤声音改成普通攻击事件；风弹爆裂声转到 1.20.1 的过程中可能被取消。已经被合并或丢弃的事件不包含足够的信息，材质包无法还原其来源。转换器生成 `fastpack:item.mace.smash_air`、`fastpack:item.mace.smash_ground`、`fastpack:item.mace.smash_ground_heavy`、`fastpack:entity.wind_charge.throw`、`fastpack:entity.wind_charge.wind_burst` 和 `fastpack:entity.breeze.wind_burst` 六个入口，供能够保留原声的服务器适配使用；这些入口委托给原包对应的 Minecraft 声音事件。仅升级转换器不能让未传递正确事件的服务器自动恢复声音。
+自动定位优先读取网易启动器保存的实际下载路径，支持不同盘符和自定义目录，并检查源包 / 导出位置、缓存与常见安装位置；必要时进行有时间和深度限制的本地目录查找。仅处理有 HeyPixel、1.20.1 版本资料和唯一 ViaForge 模组的客户端。没有找到匹配客户端或无写入权限时，正常导出的材质包保留，详情说明未完成的配置或导入。
 
-**网易 1.20.1 / 布吉岛的本地声音适配。** v1.2.11 起提供 Rust 安装器，v1.2.12 将它接入上述自动处理流程并增加名称附魔汉化，适用于已核对的网易 1.20.1、HeyPixel 和 ViaForge 4.3.1-SNAPSHOT 组合。该客户端会在本地把 1.20.5–1.20.6 协议转成 1.20.1；安装器在声音转换前，把重锤和风弹的原始编号转换成 `fastpack` 命名空间的直接声音事件，使后续协议保留它们。位置声音和实体声音使用同一适配路径；普通声音及其他协议的数字编号继续按原规则处理。此功能修改本地 ViaForge 的两个声音处理类和一个物品文本处理类，保留其余文件，并在客户端的 `heypixel/fastpack-backups/audio-bridge` 保存带 SHA256 的原始模组备份，不分发修改后的第三方模组。安装器会从校验过的原模组备份自动升级旧版声音适配；自动导入前也会备份将被替换的同名材质包与游戏设置。
+游戏运行时，汉化配置可以写入用户数据目录；材质包导入与启用等待游戏退出后自动完成，避免游戏退出时覆盖设置。后台等待最长四小时，玩家无需再次转换。关闭开关后，本次不生成布吉岛选择规则、不配置汉化、不自动导入；输入是旧版 Fast Pack 适配包时恢复原始载体规则，原包素材保留。关闭开关不会删除已写入的用户映射配置。
 
-普通玩家使用默认开关即可，以下命令仅用于单独维护和回滚。目录填写网易游戏的实际 `.minecraft` 路径。重复安装不会重复改写，回滚会恢复原模组的完整字节。安装器会拒绝带数字签名的模组、未知声音处理结构或不匹配的客户端版本。此入口不修改服务器，也不处理在到达本机前已由服务器端代理丢弃的事件。
+### 物品识别与范围
+
+- 支持原版数字 CustomModelData，以及客户端已有的 OptiFine CIT / Chime 隐藏协议标签识别。原包已提供的新物品资源优先，缺失时使用官方参考资源。
+- 1.20.1 重锤由 netherite_axe 承载，数字模型值 647，协议 ID 1093。普通承载物品保留原包外观；数字冲突时优先保留原规则。
+- 识别范围是物品栏和手持模型，不改变物品玩法或放置后的方块 / 实体。服务器不提供可区分标记时，资源包无法推断普通斧头是不是重锤。
+- Minecraft 1.20.1 的抬手动画由客户端渲染代码控制，此版本未关闭该动画。
+
+独立维护入口仍保留，普通玩家使用默认开关即可：
 
 ```powershell
-.\fast-pack-cli-v1.2.12.exe --client-audio "E:\MCLDownload\Game\.minecraft"
-.\fast-pack-cli-v1.2.12.exe --client-audio "E:\MCLDownload\Game\.minecraft" --restore-client-audio
+.\fast-pack-cli-v1.2.13.exe --client-audio "E:\MCLDownload\Game\.minecraft"
 ```
 
-网易更新器可能重新下载 ViaForge；更新后需重新检查适配状态，安装器不会绕过更新器或模组签名检查。独立 JVM 验证可由 `cargo run --release --example verify_client_audio -- <输出目录>` 生成探针类，配合目标 ViaForge 的依赖执行，覆盖目标编号、原生命名事件、普通声音和其他协议隔离。
+此命令现仅配置官方名称与附魔，不改写模组，也不启用原声音效。`--restore-client-audio` 仅用于恢复以前版本留下的模组改写，校验原始备份后还原；当前已经被启动器恢复的原版模组无需处理。
 
-Minecraft 1.20.1 的换手抬起与攻击冷却造成的手部动画由客户端渲染代码控制，物品模型 JSON 没有关闭该动画的开关。转换器保留已经正常的重锤模型；不会写入旧客户端不识别的参数，或改变所有下界合金斧的表现来模拟关闭动画。
-
-参考：[ViaBackwards 配置](https://github.com/ViaVersion/ViaBackwards/blob/master/common/src/main/resources/assets/viabackwards/config.yml)、[物品协议映射](https://github.com/ViaVersion/Mappings)、[原项目说明](https://github.com/ViaVersionAddons/ViaBackwards-Plus/blob/main/.github/README.md)。
-
-声音映射：[1.20.5 → 1.20.3](https://github.com/ViaVersion/Mappings/blob/master/mappings/diff/mapping-1.20.5to1.20.3.json)、[1.20.3 → 1.20.2](https://github.com/ViaVersion/Mappings/blob/master/mappings/diff/mapping-1.20.3to1.20.2.json)。
+参考：[ViaBackwards 用户 NBT 合并实现](https://github.com/ViaVersion/ViaBackwards/blob/master/common/src/main/java/com/viaversion/viabackwards/api/data/BackwardsMappingDataLoader.java)、[配置](https://github.com/ViaVersion/ViaBackwards/blob/master/common/src/main/resources/assets/viabackwards/config.yml)、[公开协议映射](https://github.com/ViaVersion/Mappings)、[1.20.5 → 1.20.3 声音映射](https://github.com/ViaVersion/Mappings/blob/master/mappings/diff/mapping-1.20.5to1.20.3.json)、[1.20.3 → 1.20.2 声音映射](https://github.com/ViaVersion/Mappings/blob/master/mappings/diff/mapping-1.20.3to1.20.2.json)。
 
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.12 为例，命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.13 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli-v1.2.12.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.2.12.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.2.12.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.2.12.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.2.12.exe old.zip --probe
-.\fast-pack-cli-v1.2.12.exe --versions
-.\fast-pack-cli-v1.2.12.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.2.12.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.2.12.exe old.zip --to 1.20.1 --vanilla-glint
-.\fast-pack-cli-v1.2.12.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.2.13.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.2.13.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.2.13.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.2.13.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.2.13.exe old.zip --probe
+.\fast-pack-cli-v1.2.13.exe --versions
+.\fast-pack-cli-v1.2.13.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.2.13.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.2.13.exe old.zip --to 1.20.1 --vanilla-glint
+.\fast-pack-cli-v1.2.13.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--from auto` 默认自动识别源版本。`--report-json` 仅在指定时将详情另存到提供的路径，不会把 `转换报告.txt` 塞入输出 ZIP。自定义映射采用 JSON 对象，例如 `{"custom_texture":"replacement_texture"}`。

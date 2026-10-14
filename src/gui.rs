@@ -227,6 +227,7 @@ struct App {
     glint_preview_started: Instant,
     extra: Vec<(String, String)>,
     report: Option<String>,
+    result_note: Option<String>,
     logs: Vec<String>,
     error: Option<String>,
     step: String,
@@ -341,6 +342,7 @@ impl App {
             glint_preview_started: now,
             extra: Vec::new(),
             report: None,
+            result_note: None,
             logs: Vec::new(),
             error: None,
             step: String::new(),
@@ -681,6 +683,7 @@ impl App {
         self.error = None;
         self.report = None;
         self.logs.clear();
+        self.result_note = None;
         self.actual_progress = 0;
         self.progress.set(0.0, self.now, true);
         self.result_motion.set(0.0, self.now, true);
@@ -785,6 +788,15 @@ impl App {
                         WorkEvent::Finished(result) => {
                             match *result {
                                 Ok(report) => {
+                                    self.result_note = report
+                                        .assets
+                                        .warnings
+                                        .iter()
+                                        .any(|warning| warning.starts_with("布吉岛原声尚未启用"))
+                                        .then(|| {
+                                            "材质包已保存；布吉岛原声音效尚未启用，详见转换详情。"
+                                                .into()
+                                        });
                                     self.report = Some(report.render());
                                     self.phase = Phase::Done;
                                     reset_scroll = true;
@@ -1716,7 +1728,7 @@ impl App {
                 self.heypixel_compat,
                 self.heypixel_motion.value(self.now),
                 Message::HeyPixel(!self.heypixel_compat),
-                "自动添加新版物品与原声音效、查找网易客户端，并导入启用转换包。关闭后本次按普通材质包转换。",
+                "自动适配物品、配置官方名称汉化并导入转换包。原声音效仍需服务器或客户端支持。关闭后本次按普通材质包转换。",
             ));
         }
         self.panel(content)
@@ -1979,6 +1991,8 @@ impl App {
         let tone = if failed { c.danger } else { c.success };
         let caption = if let Some(error) = &self.error {
             error.clone()
+        } else if let Some(note) = &self.result_note {
+            note.clone()
         } else {
             "原文件已保留，转换详情可在程序内查看。".into()
         };

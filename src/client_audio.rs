@@ -1,9 +1,9 @@
-mod classfile;
 mod deployment;
+mod discover;
+mod mapping_config;
 mod pending;
 
 pub use pending::finish_pending;
-mod discover;
 
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -12,30 +12,30 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
-use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipArchive, ZipWriter};
+use zip::ZipArchive;
 
 const MARKER: &str = "fastpack/client-audio-bridge.json";
-const ITEM_CLASS: &str = "com/viaversion/viabackwards/api/rewriters/BackwardsItemRewriter.class";
-const CLASSES: &[(&str, bool)] = &[
-    (
-        "com/viaversion/viaversion/rewriter/SoundRewriter.class",
-        false,
-    ),
-    (
-        "com/viaversion/viabackwards/api/rewriters/SoundRewriter.class",
-        true,
-    ),
+const SOUND_CLASSES: &[&str] = &[
+    "com/viaversion/viaversion/rewriter/SoundRewriter.class",
+    "com/viaversion/viabackwards/api/rewriters/SoundRewriter.class",
 ];
+const MAPPINGS: &[&str] = &["mappings-1.20.5to1.20.3.nbt", "mappings-1.21to1.20.5.nbt"];
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Installation {
-    pub schema: u32,
-    pub jar: PathBuf,
-    pub backup: PathBuf,
-    pub original_sha256: String,
-    pub events: Vec<String>,
-    pub restart_required: bool,
+#[derive(Debug, Serialize)]
+pub struct Configuration {
+    pub client: PathBuf,
+    pub files: Vec<PathBuf>,
+    pub translated_names: usize,
+    pub mod_sha256: String,
+    pub mods_modified: bool,
+    pub original_sounds_enabled: bool,
+    pub next_launch_required: bool,
+}
+
+#[derive(Deserialize)]
+struct LegacyInstallation {
+    backup: PathBuf,
+    original_sha256: String,
 }
 
 fn hash(path: &Path) -> Result<String> {
@@ -56,7 +56,7 @@ fn find(client: &Path) -> Result<PathBuf> {
     let mods = client.join("mods");
     ensure!(mods.is_dir(), "未找到客户端 mods 目录");
     let mut candidates = vec![];
-    for entry in fs::read_dir(&mods)? {
+    for entry in fs::read_dir(mods)? {
         let path = entry?.path();
         if !path
             .extension()
@@ -67,16 +67,16 @@ fn find(client: &Path) -> Result<PathBuf> {
         let Ok(mut archive) = ZipArchive::new(File::open(&path)?) else {
             continue;
         };
-        if CLASSES
+        if SOUND_CLASSES
             .iter()
-            .all(|(name, _)| archive.by_name(name).is_ok())
+            .all(|name| archive.by_name(name).is_ok())
         {
             let Ok(mut entry) = archive.by_name("META-INF/mods.toml") else {
                 continue;
             };
-            let mut text = String::new();
-            entry.read_to_string(&mut text)?;
-            if text.contains("viaforge") {
+            let mut metadata = String::new();
+            entry.read_to_string(&mut metadata)?;
+            if metadata.contains("viaforge") {
                 candidates.push(path);
             }
         }
@@ -117,60 +117,6 @@ pub(super) fn compatible_version(client: &Path) -> bool {
     })
 }
 
-pub fn automatic(
-    source: &Path,
-    destination: &Path,
-    converted: &Path,
-    report: &mut crate::compat::assets::AssetReport,
-    mut progress: impl FnMut(&str),
-) {
-    progress("查找网易布吉岛客户端");
-    let clients = discover::find(source, destination);
-    let Some(client) = clients.first() else {
-        report.warnings.push("布吉岛适配：新版物品和音效已加入导出包，本机未找到网易 1.20.1 布吉岛客户端，未安装本地声音适配或自动导入".into());
-        return;
-    };
-    if pending::running(client) {
-        match pending::schedule(client,source,destination) {
-            Ok(()) => report.generated.push(format!("布吉岛客户端：自动定位 {}，游戏正在运行；已安排在游戏退出后自动安装原声适配、导入并启用转换包，无需重复转换",client.display())),
-            Err(error) => report.warnings.push(format!("布吉岛客户端自动处理排队失败：{error:#}；转换包已正常导出")),
-        }
-        return;
-    }
-    progress("安装布吉岛原声音效适配");
-    match install(client) {
-        Ok(installed) => {
-            report.generated.push(format!(
-                "布吉岛客户端：自动定位 {}，原声及名称附魔汉化已就绪，原模组备份在 {}",
-                client.display(),
-                installed.backup.display()
-            ));
-        }
-        Err(error) => {
-            report.warnings.push(format!(
-                "布吉岛客户端 {}：本地声音适配未完成：{error:#}；转换包已正常导出",
-                client.display()
-            ));
-            return;
-        }
-    }
-    progress("导入并启用布吉岛材质包");
-    match deployment::activate(client, source, destination, converted) {
-        Ok(pack) => report.generated.push(format!(
-            "布吉岛材质包：已自动导入并启用 {}；下次启动游戏时加载原声音效适配",
-            pack.display()
-        )),
-        Err(error) => report.warnings.push(format!(
-            "布吉岛材质包自动导入未完成：{error:#}；转换包已正常导出"
-        )),
-    }
-    if let Err(error) = discover::remember(client) {
-        report
-            .warnings
-            .push(format!("布吉岛客户端定位缓存未保存：{error:#}"));
-    }
-}
-
 fn atomic_copy(source: &Path, destination: &Path) -> Result<()> {
     fs::create_dir_all(destination.parent().context("缺少目标父目录")?)?;
     let mut temporary = NamedTempFile::new_in(destination.parent().unwrap())?;
@@ -182,129 +128,125 @@ fn atomic_copy(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn install(client: &Path) -> Result<Installation> {
+pub fn install(client: &Path) -> Result<Configuration> {
     let client = client.canonicalize().context("无法打开客户端目录")?;
-    let path = find(&client)?;
-    let mut archive = ZipArchive::new(File::open(&path)?)?;
-    let current_sha256 = hash(&path)?;
-    let mut upgrade = None;
-    if let Ok(mut entry) = archive.by_name(MARKER) {
-        let mut bytes = vec![];
-        entry.read_to_end(&mut bytes)?;
-        let installed: Installation = serde_json::from_slice(&bytes)?;
-        ensure!(matches!(installed.schema, 1 | 2), "未知的声音适配器版本");
-        ensure!(installed.jar == path, "声音适配器对应的模组路径已变化");
-        ensure!(
-            hash(&installed.backup)? == installed.original_sha256,
-            "原始模组备份校验失败"
-        );
-        if installed.schema == 2 {
-            return Ok(installed);
-        }
-        upgrade = Some(installed);
-    }
-    if let Some(installed) = upgrade.as_ref() {
-        archive = ZipArchive::new(File::open(&installed.backup)?)?;
-    }
-    for name in archive.file_names() {
-        let name = name.to_ascii_uppercase();
-        ensure!(
-            !(name.starts_with("META-INF/")
-                && [".SF", ".RSA", ".DSA", ".EC"]
-                    .iter()
-                    .any(|suffix| name.ends_with(suffix))),
-            "模组含数字签名，未修改"
-        );
-    }
-    ensure!(
-        archive
-            .by_name(
-                "com/viaversion/viabackwards/protocol/v1_20_5to1_20_3/Protocol1_20_5To1_20_3.class"
-            )
-            .is_ok(),
-        "未找到 1.20.5 协议适配器"
-    );
     ensure!(
         compatible_version(&client),
-        "本适配器仅适用于已核对的网易 1.20.1 客户端"
+        "本功能仅适用于网易 1.20.1 客户端"
     );
-    let original_sha256 = upgrade
-        .as_ref()
-        .map(|installed| installed.original_sha256.clone())
-        .unwrap_or_else(|| current_sha256.clone());
-    let backup = client
-        .join("heypixel/fastpack-backups/audio-bridge")
-        .join(format!("{original_sha256}.jar"));
-    let installation = Installation {
-        schema: 2,
-        jar: path.clone(),
-        backup: backup.clone(),
-        original_sha256,
-        events: classfile::RULES
-            .iter()
-            .map(|(_, event)| format!("fastpack:{event}"))
-            .collect(),
-        restart_required: true,
-    };
-    let mut patches = std::collections::BTreeMap::new();
-    for (name, backwards) in CLASSES {
-        let mut original = vec![];
-        archive.by_name(name)?.read_to_end(&mut original)?;
-        patches.insert(
-            *name,
-            classfile::patch(&original, *backwards)
-                .with_context(|| format!("未支持的声音处理类 {name}"))?,
-        );
-    }
-    let mut original = vec![];
-    archive.by_name(ITEM_CLASS)?.read_to_end(&mut original)?;
-    patches.insert(
-        ITEM_CLASS,
-        classfile::patch_localization(&original).context("未支持的物品名称与附魔汉化结构")?,
+    let jar = find(&client)?;
+    let before = hash(&jar)?;
+    let mut archive = ZipArchive::new(File::open(&jar)?)?;
+    let data = client.join("heypixel/ViaForge/ViaLoader");
+    ensure!(
+        data.join("viabackwards.yml").is_file(),
+        "未找到 ViaBackwards 用户配置目录"
     );
-    let mut temporary = NamedTempFile::new_in(path.parent().unwrap())?;
-    {
-        let mut writer = ZipWriter::new(temporary.as_file_mut());
-        for index in 0..archive.len() {
-            let entry = archive.by_index(index)?;
-            if let Some(bytes) = patches.get(entry.name()) {
-                writer.start_file(
-                    entry.name(),
-                    SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
-                )?;
-                writer.write_all(bytes)?;
-            } else {
-                writer.raw_copy_file(entry)?;
-            }
+    let mut jobs = vec![];
+    let mut total = 0;
+    for name in MAPPINGS {
+        let mut bytes = vec![];
+        archive
+            .by_name(&format!("assets/viabackwards/data/{name}"))?
+            .read_to_end(&mut bytes)?;
+        let original = mapping_config::read(&bytes)?;
+        let changes = mapping_config::official_names(&original);
+        if changes.is_empty() {
+            continue;
         }
-        writer.start_file(
-            MARKER,
-            SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
-        )?;
-        writer.write_all(&serde_json::to_vec_pretty(&installation)?)?;
-        writer.finish()?;
-    }
-    temporary.as_file_mut().sync_all()?;
-    drop(archive);
-    if backup.exists() {
-        ensure!(
-            hash(&backup)? == installation.original_sha256,
-            "备份文件冲突"
-        );
-    } else if upgrade.is_none() {
-        atomic_copy(&path, &backup)?;
-    } else {
-        bail!("升级缺少原始模组备份");
+        let path = data.join(name);
+        let mut values = if path.is_file() {
+            mapping_config::read(&fs::read(&path)?)?
+        } else {
+            std::collections::BTreeMap::new()
+        };
+        total += mapping_config::merge(&mut values, changes)?;
+        jobs.push((path, mapping_config::write(&values)?));
     }
     ensure!(
-        hash(&path)? == current_sha256,
-        "模组在处理期间变化，已停止安装"
+        total >= 5,
+        "这份 ViaBackwards 未提供已核对的五个名称配置入口"
     );
-    temporary
-        .persist(&path)
-        .map_err(|error| error.error)
-        .context("无法替换模组；请退出游戏后重试")?;
-    Ok(installation)
+    drop(archive);
+    let mut files = vec![];
+    for (path, bytes) in jobs {
+        if path.is_file() && fs::read(&path)? == bytes {
+            files.push(path);
+            continue;
+        }
+        if path.is_file() {
+            let backup = client
+                .join("heypixel/fastpack-backups/mapping-config")
+                .join(format!(
+                    "{}-{}",
+                    hash(&path)?,
+                    path.file_name().unwrap().to_string_lossy()
+                ));
+            if !backup.exists() {
+                atomic_copy(&path, &backup)?;
+            }
+        }
+        let mut temporary = NamedTempFile::new_in(&data)?;
+        temporary.write_all(&bytes)?;
+        temporary.as_file().sync_all()?;
+        temporary.persist(&path).map_err(|error| error.error)?;
+        files.push(path);
+    }
+    ensure!(hash(&jar)? == before, "模组在配置处理期间变化");
+    Ok(Configuration {
+        client,
+        files,
+        translated_names: total,
+        mod_sha256: before,
+        mods_modified: false,
+        original_sounds_enabled: false,
+        next_launch_required: true,
+    })
+}
+
+pub fn automatic(
+    source: &Path,
+    destination: &Path,
+    converted: &Path,
+    report: &mut crate::compat::assets::AssetReport,
+    mut progress: impl FnMut(&str),
+) {
+    progress("查找网易布吉岛客户端");
+    let clients = discover::find(source, destination);
+    let Some(client) = clients.first() else {
+        report.warnings.push(
+            "布吉岛适配：兼容资源已导出，本机未找到网易 1.20.1 布吉岛客户端，未自动配置汉化或导入"
+                .into(),
+        );
+        return;
+    };
+    report.warnings.push("布吉岛原声尚未启用：启动器会校验并还原模组，资源包不能恢复被本地协议合并或取消的声音；需要服务器保留原声事件或客户端提供受支持的音效扩展".into());
+    progress("配置布吉岛官方名称汉化");
+    match install(client) {
+        Ok(configuration)=>report.generated.push(format!("布吉岛汉化：通过 ViaBackwards 用户映射配置写入 {} 个官方名称，保持模组原始文件不变，下一次启动时读取",configuration.translated_names)),
+        Err(error)=>report.warnings.push(format!("布吉岛汉化配置未完成：{error:#}；转换包已正常导出")),
+    }
+    if pending::running(client) {
+        match pending::schedule(client,source,destination) {
+            Ok(())=>report.generated.push(format!("布吉岛客户端：自动定位 {}，游戏正在运行；已安排在退出后自动导入并启用转换包，无需重复转换",client.display())),
+            Err(error)=>report.warnings.push(format!("布吉岛材质包自动导入排队失败：{error:#}")),
+        }
+        return;
+    }
+    progress("导入并启用布吉岛材质包");
+    match deployment::activate(client, source, destination, converted) {
+        Ok(pack) => report
+            .generated
+            .push(format!("布吉岛材质包：已自动导入并启用 {}", pack.display())),
+        Err(error) => report
+            .warnings
+            .push(format!("布吉岛材质包自动导入未完成：{error:#}")),
+    }
+    if let Err(error) = discover::remember(client) {
+        report
+            .warnings
+            .push(format!("布吉岛定位缓存未保存：{error:#}"));
+    }
 }
 
 pub fn restore(client: &Path) -> Result<PathBuf> {
@@ -315,9 +257,9 @@ pub fn restore(client: &Path) -> Result<PathBuf> {
     if let Ok(mut entry) = archive.by_name(MARKER) {
         entry.read_to_end(&mut bytes)?;
     } else {
-        bail!("未检测到 Fast Pack 声音适配器");
+        bail!("当前模组已是原版，没有旧 Fast Pack 改写需要恢复");
     }
-    let installation: Installation = serde_json::from_slice(&bytes)?;
+    let installation: LegacyInstallation = serde_json::from_slice(&bytes)?;
     let folder = client
         .join("heypixel/fastpack-backups/audio-bridge")
         .canonicalize()?;
