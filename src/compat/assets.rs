@@ -1600,7 +1600,7 @@ pub fn migrate_with_glint(
     target: u32,
     glint_color: Option<[u8; 3]>,
 ) -> Result<AssetReport> {
-    migrate_assets(root, source, target, glint_color, true)
+    migrate_assets(root, source, target, glint_color, true, true)
 }
 
 pub fn migrate_with_netherite_sword(
@@ -1609,7 +1609,24 @@ pub fn migrate_with_netherite_sword(
     target: u32,
     auto_netherite_sword: bool,
 ) -> Result<AssetReport> {
-    migrate_assets(root, source, target, None, auto_netherite_sword)
+    migrate_with_netherite(root, source, target, true, auto_netherite_sword)
+}
+
+pub fn migrate_with_netherite(
+    root: &Path,
+    source: u32,
+    target: u32,
+    auto_netherite: bool,
+    auto_netherite_sword: bool,
+) -> Result<AssetReport> {
+    migrate_assets(
+        root,
+        source,
+        target,
+        None,
+        auto_netherite,
+        auto_netherite_sword,
+    )
 }
 
 fn migrate_assets(
@@ -1617,6 +1634,7 @@ fn migrate_assets(
     source: u32,
     target: u32,
     glint_color: Option<[u8; 3]>,
+    auto_netherite: bool,
     auto_netherite_sword: bool,
 ) -> Result<AssetReport> {
     let mut report = AssetReport::default();
@@ -1634,7 +1652,9 @@ fn migrate_assets(
     super::equipment::migrate(root, source, target, &mut report)?;
     super::players::migrate(root, source, target, &mut report)?;
     super::recent_resources::migrate(root, source, target, &mut report)?;
-    super::netherite::migrate(root, target, auto_netherite_sword, &mut report)?;
+    if auto_netherite {
+        super::netherite::migrate(root, target, auto_netherite_sword, &mut report)?;
+    }
     super::modern_gui::prepare(root, source, target, &mut report)?;
     super::modern_gui::migrate(root, source, target, &mut report)?;
     gui(root, source, target, &mut report)?;

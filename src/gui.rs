@@ -30,7 +30,7 @@ enum Message {
     AutoSave(bool),
     AutoSavePath(bool),
     HeyPixel(bool),
-    AutoNetheriteSword(bool),
+    AutoNetherite(bool),
     SourceVersion(String),
     Swap,
     Output(String),
@@ -209,7 +209,7 @@ struct App {
     saved_target: Option<String>,
     auto_save_path: bool,
     heypixel_compat: bool,
-    auto_netherite_sword: bool,
+    auto_netherite: bool,
     saved_export_directory: Option<PathBuf>,
     export_directory_input: String,
     directory_edited: Option<Instant>,
@@ -248,7 +248,6 @@ struct App {
     auto_save_motion: Tween,
     auto_save_path_motion: Tween,
     heypixel_motion: Tween,
-    netherite_sword_motion: Tween,
     hover: HashMap<u8, Tween>,
     width: f32,
     generation: u64,
@@ -286,7 +285,6 @@ impl App {
         let auto_save = preferences.auto_save;
         let auto_save_path = preferences.auto_save_path;
         let heypixel_compat = preferences.heypixel_compat;
-        let auto_netherite_sword = preferences.auto_netherite_sword;
         let saved_export_directory = preferences.export_directory;
         let active_glint_color = fast_pack::compat::glint::VANILLA_COLOR;
         let export_directory_input = saved_export_directory
@@ -326,7 +324,7 @@ impl App {
             saved_target,
             auto_save_path,
             heypixel_compat,
-            auto_netherite_sword,
+            auto_netherite: true,
             saved_export_directory,
             export_directory_input,
             directory_edited: None,
@@ -366,7 +364,6 @@ impl App {
             auto_save_motion: Tween::new(if auto_save { 1.0 } else { 0.0 }, 220),
             auto_save_path_motion: Tween::new(if auto_save_path { 1.0 } else { 0.0 }, 220),
             heypixel_motion: Tween::new(if heypixel_compat { 1.0 } else { 0.0 }, 220),
-            netherite_sword_motion: Tween::new(if auto_netherite_sword { 1.0 } else { 0.0 }, 220),
             hover: HashMap::new(),
             width: 1040.0,
             generation: 0,
@@ -411,7 +408,6 @@ impl App {
             &self.auto_save_motion,
             &self.auto_save_path_motion,
             &self.heypixel_motion,
-            &self.netherite_sword_motion,
             &self.glint_picker_motion,
         ]
         .into_iter()
@@ -580,7 +576,6 @@ impl App {
                     custom_glint: self.custom_glint,
                     glint_color: self.glint_color,
                     heypixel_compat: self.heypixel_compat,
-                    auto_netherite_sword: self.auto_netherite_sword,
                 })
                 .is_ok()
             {
@@ -686,7 +681,8 @@ impl App {
             restore_vanilla_glint: !self.custom_glint,
             heypixel_compat: self.heypixel_compat,
             auto_client_setup: !self.smoke && self.capture.is_none(),
-            auto_netherite_sword: self.auto_netherite_sword,
+            auto_netherite: self.auto_netherite,
+            auto_netherite_sword: true,
         };
         self.phase = Phase::Running;
         self.error = None;
@@ -824,6 +820,7 @@ impl App {
                                 }
                                 Err(error) => self.fail(error),
                             }
+                            self.auto_netherite = true;
                             self.custom_glint = false;
                             self.glint_edited = None;
                             self.sync_glint_color();
@@ -1009,15 +1006,7 @@ impl App {
                     .set(if value { 1.0 } else { 0.0 }, self.now, self.reduced);
                 self.save_preferences();
             }
-            Message::AutoNetheriteSword(value) if !self.busy() => {
-                self.auto_netherite_sword = value;
-                self.netherite_sword_motion.set(
-                    if value { 1.0 } else { 0.0 },
-                    self.now,
-                    self.reduced,
-                );
-                self.save_preferences();
-            }
+            Message::AutoNetherite(value) if !self.busy() => self.auto_netherite = value,
             Message::CustomGlint(value) if !self.busy() => {
                 self.custom_glint = value;
                 self.sync_glint_color();
@@ -1171,6 +1160,7 @@ impl App {
                 self.close_glint_picker();
             }
             Message::NewPack => {
+                self.auto_netherite = true;
                 self.generation += 1;
                 self.sky_preview = None;
                 self.sky_layers = 0;
@@ -1246,7 +1236,6 @@ impl App {
                     self.auto_save_motion.snap();
                     self.auto_save_path_motion.snap();
                     self.heypixel_motion.snap();
-                    self.netherite_sword_motion.snap();
                     self.glint_picker_motion.snap();
                     for motion in &mut self.glint_color_motion {
                         motion.snap();
@@ -1545,7 +1534,8 @@ impl App {
                         .width(Length::Fill)
                         .height(160)
                         .content_fit(iced::ContentFit::Contain),
-                    self.label("原始六面贴图 · 随目标版本自动转换")
+                    self.label("原始六面贴图 · 随目标版本自动转换"),
+                    self.label("天空显示可能不准确，能显示则是正常。")
                 ]
                 .spacing(8),
             );
@@ -1963,24 +1953,33 @@ impl App {
             .size(17)
             .text_size(13)
             .on_toggle_maybe((!self.busy()).then_some(Message::Zip));
+        let netherite = checkbox(self.auto_netherite)
+            .label("自动制作下界合金材质")
+            .size(17)
+            .text_size(13)
+            .on_toggle_maybe((!self.busy()).then_some(Message::AutoNetherite));
         let options: Element<'_, Message> = if self.width < 940.0 {
-            column![zip, lang, case, reduced].spacing(12).into()
+            column![
+                zip,
+                lang,
+                case,
+                row![reduced, netherite]
+                    .spacing(22)
+                    .align_y(Alignment::Center)
+            ]
+            .spacing(12)
+            .into()
         } else {
-            row![zip, lang, case, reduced].spacing(28).into()
+            row![zip, lang, case, reduced, netherite]
+                .spacing(22)
+                .align_y(Alignment::Center)
+                .into()
         };
         let content = column![
             self.title("更多转换选项", 14),
             self.label("材质包描述"),
             input,
             options,
-            self.memory_switch(
-                37,
-                "自动制作下界合金剑材质",
-                self.auto_netherite_sword,
-                self.netherite_sword_motion.value(self.now),
-                Message::AutoNetheriteSword(!self.auto_netherite_sword),
-                "原包缺少下界合金剑时，按原包剑的风格自动制作。关闭后使用原包已有材质或目标版本原版材质；其他装备仍自动适配。",
-            ),
             self.glint_controls(),
             row![
                 self.action(
@@ -1999,7 +1998,7 @@ impl App {
             .height(if amount >= 0.999 {
                 Length::Shrink
             } else {
-                Length::Fixed((if self.width < 940.0 { 504.0 } else { 390.0 }) * amount)
+                Length::Fixed((if self.width < 940.0 { 448.0 } else { 334.0 }) * amount)
             })
             .clip(true)
             .into()

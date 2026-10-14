@@ -30,6 +30,7 @@ pub struct ConversionOptions {
     pub restore_vanilla_glint: bool,
     pub heypixel_compat: bool,
     pub auto_client_setup: bool,
+    pub auto_netherite: bool,
     pub auto_netherite_sword: bool,
 }
 
@@ -48,6 +49,7 @@ impl Default for ConversionOptions {
             restore_vanilla_glint: false,
             heypixel_compat: true,
             auto_client_setup: true,
+            auto_netherite: true,
             auto_netherite_sword: true,
         }
     }
@@ -1265,10 +1267,11 @@ pub fn convert_pack(
     progress("后续版本微调", 78);
     post_renames(&root, &mut report)?;
     progress("自动适配实体、模型与界面", 80);
-    report.assets = crate::compat::assets::migrate_with_netherite_sword(
+    report.assets = crate::compat::assets::migrate_with_netherite(
         &root,
         src_format,
         options.tgt_format,
+        options.auto_netherite,
         options.auto_netherite_sword,
     )?;
     report.assets.converted.extend(default_notes);
