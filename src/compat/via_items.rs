@@ -553,6 +553,68 @@ fn modern(root: &Path, carrier: &str, rules: &[(Rule, String)]) -> Result<()> {
     write(root, &path, &value)
 }
 
+pub(super) fn disable(root: &Path, report: &mut AssetReport) -> Result<()> {
+    let metadata = root.join("fastpack/via-bridge/manifest.json");
+    if !metadata.is_file() {
+        return Ok(());
+    }
+    let mut manifest: Value = serde_json::from_slice(&fs::read(&metadata)?)?;
+    let mut carriers = BTreeSet::new();
+    for item in manifest["items"].as_array().into_iter().flatten() {
+        if let Some(carrier) = item["carrier"].as_str().filter(|name| {
+            name.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        }) {
+            carriers.insert(carrier.to_string());
+        }
+    }
+    for carrier in carriers {
+        let path = root.join(format!("assets/minecraft/models/item/{carrier}.json"));
+        let saved = root.join(format!("fastpack/via-bridge/base/{carrier}.json"));
+        if let Ok(current) = fs::read(&path).and_then(|bytes| {
+            serde_json::from_slice::<Value>(&bytes).map_err(std::io::Error::other)
+        }) {
+            if current["fastpack_via_bridge"] == json!(1) && saved.is_file() {
+                write(root, &path, &serde_json::from_slice(&fs::read(saved)?)?)?;
+            }
+        }
+        let chime = root.join(format!("assets/minecraft/overrides/item/{carrier}.json"));
+        if let Ok(bytes) = fs::read(&chime) {
+            if let Ok(mut value) = serde_json::from_slice::<Value>(&bytes) {
+                if let Some(entries) = value["overrides"].as_array_mut() {
+                    entries.retain(|entry| {
+                        !entry["model"]
+                            .as_str()
+                            .is_some_and(|model| model.starts_with("fastpack:via/"))
+                    });
+                    write(root, &chime, &value)?;
+                }
+            }
+        }
+    }
+    let cit = root.join("assets/minecraft/optifine/cit/fastpack_via");
+    if cit.is_dir() {
+        for entry in walkdir::WalkDir::new(&cit).min_depth(1) {
+            let entry = entry?;
+            if entry.file_type().is_file()
+                && entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "properties")
+            {
+                backup(root, entry.path())?;
+                fs::remove_file(entry.path())?;
+            }
+        }
+    }
+    manifest["enabled"] = json!(false);
+    write(root, &metadata, &manifest)?;
+    report
+        .converted
+        .push("已关闭本次布吉岛物品适配，恢复转换包中由 Fast Pack 添加的载体模型规则".into());
+    Ok(())
+}
+
 pub(super) fn migrate(
     root: &Path,
     target: u32,

@@ -27,6 +27,8 @@ pub struct ConversionOptions {
     pub target_version: Option<String>,
     pub glint_color: Option<[u8; 3]>,
     pub restore_vanilla_glint: bool,
+    pub heypixel_compat: bool,
+    pub auto_client_setup: bool,
 }
 
 impl Default for ConversionOptions {
@@ -42,6 +44,8 @@ impl Default for ConversionOptions {
             target_version: None,
             glint_color: None,
             restore_vanilla_glint: false,
+            heypixel_compat: true,
+            auto_client_setup: true,
         }
     }
 }
@@ -1261,6 +1265,7 @@ pub fn convert_pack(
             .as_deref()
             .unwrap_or(&version_label_of(options.tgt_format)),
         &mut report.assets,
+        options.heypixel_compat,
     )?;
     progress("自动适配天空与材质包着色器", 82);
     report.compatibility = crate::compat::migrate(
@@ -1306,6 +1311,15 @@ pub fn convert_pack(
     progress("写入输出", 95);
     save_output(&root, destination, options.as_zip)?;
     report.output = Some(destination.display().to_string());
+    if options.heypixel_compat
+        && options.auto_client_setup
+        && options.target_version.as_deref() == Some("1.20.1")
+    {
+        progress("自动适配布吉岛客户端", 97);
+        crate::client_audio::automatic(source, destination, &root, &mut report.assets, |step| {
+            progress(step, 98)
+        });
+    }
     progress("完成", 100);
     Ok(report)
 }

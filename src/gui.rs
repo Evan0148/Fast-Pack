@@ -29,6 +29,7 @@ enum Message {
     Target(String),
     AutoSave(bool),
     AutoSavePath(bool),
+    HeyPixel(bool),
     SourceVersion(String),
     Swap,
     Output(String),
@@ -206,6 +207,7 @@ struct App {
     auto_save: bool,
     saved_target: Option<String>,
     auto_save_path: bool,
+    heypixel_compat: bool,
     saved_export_directory: Option<PathBuf>,
     export_directory_input: String,
     directory_edited: Option<Instant>,
@@ -242,6 +244,7 @@ struct App {
     theme_motion: Tween,
     auto_save_motion: Tween,
     auto_save_path_motion: Tween,
+    heypixel_motion: Tween,
     hover: HashMap<u8, Tween>,
     width: f32,
     generation: u64,
@@ -278,6 +281,7 @@ impl App {
         let saved_target = preferences.target_version;
         let auto_save = preferences.auto_save;
         let auto_save_path = preferences.auto_save_path;
+        let heypixel_compat = preferences.heypixel_compat;
         let saved_export_directory = preferences.export_directory;
         let active_glint_color = fast_pack::compat::glint::VANILLA_COLOR;
         let export_directory_input = saved_export_directory
@@ -316,6 +320,7 @@ impl App {
             auto_save,
             saved_target,
             auto_save_path,
+            heypixel_compat,
             saved_export_directory,
             export_directory_input,
             directory_edited: None,
@@ -353,6 +358,7 @@ impl App {
             theme_motion: Tween::new(if dark { 1.0 } else { 0.0 }, 180),
             auto_save_motion: Tween::new(if auto_save { 1.0 } else { 0.0 }, 220),
             auto_save_path_motion: Tween::new(if auto_save_path { 1.0 } else { 0.0 }, 220),
+            heypixel_motion: Tween::new(if heypixel_compat { 1.0 } else { 0.0 }, 220),
             hover: HashMap::new(),
             width: 1040.0,
             generation: 0,
@@ -396,6 +402,7 @@ impl App {
             &self.theme_motion,
             &self.auto_save_motion,
             &self.auto_save_path_motion,
+            &self.heypixel_motion,
             &self.glint_picker_motion,
         ]
         .into_iter()
@@ -563,6 +570,7 @@ impl App {
                     export_directory: self.saved_export_directory.clone(),
                     custom_glint: self.custom_glint,
                     glint_color: self.glint_color,
+                    heypixel_compat: self.heypixel_compat,
                 })
                 .is_ok()
             {
@@ -666,6 +674,8 @@ impl App {
             extra_renames: self.extra.clone(),
             glint_color: self.custom_glint.then_some(self.glint_color),
             restore_vanilla_glint: !self.custom_glint,
+            heypixel_compat: self.heypixel_compat,
+            auto_client_setup: !self.smoke && self.capture.is_none(),
         };
         self.phase = Phase::Running;
         self.error = None;
@@ -972,6 +982,12 @@ impl App {
                 }
                 self.save_preferences();
             }
+            Message::HeyPixel(value) if !self.busy() => {
+                self.heypixel_compat = value;
+                self.heypixel_motion
+                    .set(if value { 1.0 } else { 0.0 }, self.now, self.reduced);
+                self.save_preferences();
+            }
             Message::CustomGlint(value) if !self.busy() => {
                 self.custom_glint = value;
                 self.sync_glint_color();
@@ -1199,6 +1215,7 @@ impl App {
                     self.theme_motion.snap();
                     self.auto_save_motion.snap();
                     self.auto_save_path_motion.snap();
+                    self.heypixel_motion.snap();
                     self.glint_picker_motion.snap();
                     for motion in &mut self.glint_color_motion {
                         motion.snap();
@@ -1645,7 +1662,7 @@ impl App {
             tooltip::Position::Bottom,
         )
         .style(move |_| hint_style(c));
-        let content = column![
+        let mut content = column![
             self.title("转换目标", 14),
             self.label(
                 if fast_pack::tables::version_profile(&self.target)
@@ -1692,6 +1709,16 @@ impl App {
             self.memory_controls(),
         ]
         .spacing(13);
+        if self.target == "1.20.1" {
+            content = content.push(self.memory_switch(
+                36,
+                "布吉岛高版本材质包适配",
+                self.heypixel_compat,
+                self.heypixel_motion.value(self.now),
+                Message::HeyPixel(!self.heypixel_compat),
+                "自动添加新版物品与原声音效、查找网易客户端，并导入启用转换包。关闭后本次按普通材质包转换。",
+            ));
+        }
         self.panel(content)
     }
 

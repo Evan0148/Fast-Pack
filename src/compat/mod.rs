@@ -28,8 +28,12 @@ pub(crate) fn migrate_versioned_assets(
     target: u32,
     version: &str,
     report: &mut assets::AssetReport,
+    heypixel_compat: bool,
 ) -> anyhow::Result<()> {
     beds::migrate(root, target, version, report)?;
+    if version == "1.20.1" && !heypixel_compat {
+        return via_items::disable(root, report);
+    }
     via_items::migrate(root, target, version, report)?;
     via_sounds::migrate(root, target, version, report)
 }

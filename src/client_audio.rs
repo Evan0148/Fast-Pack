@@ -1,4 +1,9 @@
 mod classfile;
+mod deployment;
+mod pending;
+
+pub use pending::finish_pending;
+mod discover;
 
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -11,6 +16,7 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 const MARKER: &str = "fastpack/client-audio-bridge.json";
+const ITEM_CLASS: &str = "com/viaversion/viabackwards/api/rewriters/BackwardsItemRewriter.class";
 const CLASSES: &[(&str, bool)] = &[
     (
         "com/viaversion/viaversion/rewriter/SoundRewriter.class",
@@ -83,6 +89,88 @@ fn find(client: &Path) -> Result<PathBuf> {
     Ok(candidates.remove(0))
 }
 
+pub(super) fn compatible_version(client: &Path) -> bool {
+    let Ok(versions) = fs::read_dir(client.join("versions")) else {
+        return false;
+    };
+    versions.filter_map(Result::ok).any(|version| {
+        let path = version.path();
+        path.is_dir()
+            && fs::read_dir(path)
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .any(|entry| {
+                    entry
+                        .path()
+                        .extension()
+                        .is_some_and(|extension| extension == "json")
+                        && fs::read(entry.path())
+                            .ok()
+                            .and_then(|bytes| {
+                                serde_json::from_slice::<serde_json::Value>(&bytes).ok()
+                            })
+                            .is_some_and(|value| {
+                                value["id"] == "1.20.1" || value["inheritsFrom"] == "1.20.1"
+                            })
+                })
+    })
+}
+
+pub fn automatic(
+    source: &Path,
+    destination: &Path,
+    converted: &Path,
+    report: &mut crate::compat::assets::AssetReport,
+    mut progress: impl FnMut(&str),
+) {
+    progress("查找网易布吉岛客户端");
+    let clients = discover::find(source, destination);
+    let Some(client) = clients.first() else {
+        report.warnings.push("布吉岛适配：新版物品和音效已加入导出包，本机未找到网易 1.20.1 布吉岛客户端，未安装本地声音适配或自动导入".into());
+        return;
+    };
+    if pending::running(client) {
+        match pending::schedule(client,source,destination) {
+            Ok(()) => report.generated.push(format!("布吉岛客户端：自动定位 {}，游戏正在运行；已安排在游戏退出后自动安装原声适配、导入并启用转换包，无需重复转换",client.display())),
+            Err(error) => report.warnings.push(format!("布吉岛客户端自动处理排队失败：{error:#}；转换包已正常导出")),
+        }
+        return;
+    }
+    progress("安装布吉岛原声音效适配");
+    match install(client) {
+        Ok(installed) => {
+            report.generated.push(format!(
+                "布吉岛客户端：自动定位 {}，原声及名称附魔汉化已就绪，原模组备份在 {}",
+                client.display(),
+                installed.backup.display()
+            ));
+        }
+        Err(error) => {
+            report.warnings.push(format!(
+                "布吉岛客户端 {}：本地声音适配未完成：{error:#}；转换包已正常导出",
+                client.display()
+            ));
+            return;
+        }
+    }
+    progress("导入并启用布吉岛材质包");
+    match deployment::activate(client, source, destination, converted) {
+        Ok(pack) => report.generated.push(format!(
+            "布吉岛材质包：已自动导入并启用 {}；下次启动游戏时加载原声音效适配",
+            pack.display()
+        )),
+        Err(error) => report.warnings.push(format!(
+            "布吉岛材质包自动导入未完成：{error:#}；转换包已正常导出"
+        )),
+    }
+    if let Err(error) = discover::remember(client) {
+        report
+            .warnings
+            .push(format!("布吉岛客户端定位缓存未保存：{error:#}"));
+    }
+}
+
 fn atomic_copy(source: &Path, destination: &Path) -> Result<()> {
     fs::create_dir_all(destination.parent().context("缺少目标父目录")?)?;
     let mut temporary = NamedTempFile::new_in(destination.parent().unwrap())?;
@@ -98,17 +186,25 @@ pub fn install(client: &Path) -> Result<Installation> {
     let client = client.canonicalize().context("无法打开客户端目录")?;
     let path = find(&client)?;
     let mut archive = ZipArchive::new(File::open(&path)?)?;
+    let current_sha256 = hash(&path)?;
+    let mut upgrade = None;
     if let Ok(mut entry) = archive.by_name(MARKER) {
         let mut bytes = vec![];
         entry.read_to_end(&mut bytes)?;
         let installed: Installation = serde_json::from_slice(&bytes)?;
-        ensure!(installed.schema == 1, "未知的声音适配器版本");
+        ensure!(matches!(installed.schema, 1 | 2), "未知的声音适配器版本");
         ensure!(installed.jar == path, "声音适配器对应的模组路径已变化");
         ensure!(
             hash(&installed.backup)? == installed.original_sha256,
             "原始模组备份校验失败"
         );
-        return Ok(installed);
+        if installed.schema == 2 {
+            return Ok(installed);
+        }
+        upgrade = Some(installed);
+    }
+    if let Some(installed) = upgrade.as_ref() {
+        archive = ZipArchive::new(File::open(&installed.backup)?)?;
     }
     for name in archive.file_names() {
         let name = name.to_ascii_uppercase();
@@ -128,18 +224,19 @@ pub fn install(client: &Path) -> Result<Installation> {
             .is_ok(),
         "未找到 1.20.5 协议适配器"
     );
-    let version = fs::read_to_string(client.join("versions/1.20/1.20.json"))?;
-    let version: serde_json::Value = serde_json::from_str(&version)?;
     ensure!(
-        version["id"] == "1.20.1",
+        compatible_version(&client),
         "本适配器仅适用于已核对的网易 1.20.1 客户端"
     );
-    let original_sha256 = hash(&path)?;
+    let original_sha256 = upgrade
+        .as_ref()
+        .map(|installed| installed.original_sha256.clone())
+        .unwrap_or_else(|| current_sha256.clone());
     let backup = client
         .join("heypixel/fastpack-backups/audio-bridge")
         .join(format!("{original_sha256}.jar"));
     let installation = Installation {
-        schema: 1,
+        schema: 2,
         jar: path.clone(),
         backup: backup.clone(),
         original_sha256,
@@ -159,6 +256,12 @@ pub fn install(client: &Path) -> Result<Installation> {
                 .with_context(|| format!("未支持的声音处理类 {name}"))?,
         );
     }
+    let mut original = vec![];
+    archive.by_name(ITEM_CLASS)?.read_to_end(&mut original)?;
+    patches.insert(
+        ITEM_CLASS,
+        classfile::patch_localization(&original).context("未支持的物品名称与附魔汉化结构")?,
+    );
     let mut temporary = NamedTempFile::new_in(path.parent().unwrap())?;
     {
         let mut writer = ZipWriter::new(temporary.as_file_mut());
@@ -188,11 +291,13 @@ pub fn install(client: &Path) -> Result<Installation> {
             hash(&backup)? == installation.original_sha256,
             "备份文件冲突"
         );
-    } else {
+    } else if upgrade.is_none() {
         atomic_copy(&path, &backup)?;
+    } else {
+        bail!("升级缺少原始模组备份");
     }
     ensure!(
-        hash(&path)? == installation.original_sha256,
+        hash(&path)? == current_sha256,
         "模组在处理期间变化，已停止安装"
     );
     temporary

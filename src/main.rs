@@ -10,6 +10,14 @@ mod preferences;
 mod windows_compat;
 
 fn main() {
+    match fast_pack::client_audio::finish_pending() {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(error) => {
+            eprintln!("Fast Pack: {error:#}");
+            std::process::exit(1);
+        }
+    }
     #[cfg(windows)]
     windows_compat::initialize();
     #[cfg(windows)]

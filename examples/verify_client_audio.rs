@@ -274,6 +274,71 @@ fn main() -> Result<()> {
         code.reference(0xb8, bool_value);
         code.reference(0xb6, print);
     }
+    let parse = pool.reference(
+        10,
+        "com/viaversion/viaversion/libs/gson/JsonParser",
+        "parseString",
+        &format!("(Ljava/lang/String;)L{JSON};"),
+    );
+    let boolean_type = pool.reference(9, "java/lang/Boolean", "TYPE", "Ljava/lang/Class;");
+    code.reference(0x13, pool.class(ITEM_REWRITER));
+    code.reference(0x13, pool.string("fastpack$localizeComponent"));
+    code.op(&[0x05]);
+    code.reference(0xbd, class_type);
+    code.op(&[0x59, 0x03]);
+    code.reference(0x13, pool.class(JSON));
+    code.op(&[0x53, 0x59, 0x04]);
+    code.reference(0xb2, boolean_type);
+    code.op(&[0x53]);
+    code.reference(0xb6, lookup);
+    code.op(&[0x59, 0x04]);
+    code.reference(0xb6, accessible);
+    code.op(&[0x4c]);
+    for (mode, json) in [
+        (
+            true,
+            r#"{"text":"1.21 Mace","color":"white","italic":false}"#,
+        ),
+        (true, r#""1.21 Wind Charge""#),
+        (
+            true,
+            r#"{"text":"","extra":[{"text":"1.21 Mace","color":"gold"}]}"#,
+        ),
+        (true, r#"{"text":"My 1.21 Mace"}"#),
+        (true, r#"{"text":"Wind Burst I"}"#),
+        (
+            false,
+            r#"{"text":"Wind Burst I","color":"gray","italic":false}"#,
+        ),
+        (false, r#"{"text":"Density V","color":"gray"}"#),
+        (false, r#"{"text":"Breach IV","color":"gray"}"#),
+        (false, r#"{"text":"§7Wind Burst I"}"#),
+        (false, r#"{"text":"1.21 Wind Burst II"}"#),
+        (
+            false,
+            r#"{"text":"","extra":[{"text":"Density","color":"gray"},{"text":" V"}]}"#,
+        ),
+        (false, r#"{"text":"Wind Burst fan club"}"#),
+        (
+            false,
+            r#"{"translate":"enchantment.minecraft.density","color":"gray"}"#,
+        ),
+    ] {
+        code.reference(0xb2, output);
+        code.reference(0x13, pool.string(&format!("localized name={mode}: {json}")));
+        code.reference(0xb6, print);
+        code.reference(0xb2, output);
+        code.op(&[0x2b, 0x01, 0x05]);
+        code.reference(0xbd, object);
+        code.op(&[0x59, 0x03]);
+        code.reference(0x13, pool.string(json));
+        code.reference(0xb8, parse);
+        code.op(&[0x53, 0x59, 0x04, 0x03 + mode as u8]);
+        code.reference(0xb8, bool_value);
+        code.op(&[0x53]);
+        code.reference(0xb6, invoke);
+        code.reference(0xb6, print);
+    }
     code.op(&[0xb1]);
     let data = code.finish(&mut pool, 10, 5)?;
     let methods = vec![Member {

@@ -22,6 +22,7 @@ pub struct Preferences {
     #[serde(skip)]
     pub custom_glint: bool,
     pub glint_color: [u8; 3],
+    pub heypixel_compat: bool,
 }
 
 impl Default for Preferences {
@@ -33,6 +34,7 @@ impl Default for Preferences {
             export_directory: None,
             custom_glint: false,
             glint_color: [255, 255, 255],
+            heypixel_compat: true,
         }
     }
 }

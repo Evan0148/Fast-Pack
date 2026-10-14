@@ -20,6 +20,10 @@ struct Arguments {
     client_audio: Option<PathBuf>,
     #[arg(long, requires = "client_audio", help = "恢复 ViaForge 原始备份")]
     restore_client_audio: bool,
+    #[arg(long, help = "关闭目标 1.20.1 的布吉岛资源与客户端自动适配")]
+    no_heypixel: bool,
+    #[arg(long, help = "仅生成兼容资源，不修改或导入本机客户端")]
+    no_client_setup: bool,
     #[arg(value_name = "SRC", help = "源 ZIP 或材质包文件夹")]
     source: Option<PathBuf>,
     #[arg(
@@ -60,6 +64,9 @@ struct Arguments {
 }
 
 pub fn run() -> Result<()> {
+    if crate::client_audio::finish_pending()? {
+        return Ok(());
+    }
     let args = Arguments::parse();
     if let Some(client) = args.client_audio {
         if args.restore_client_audio {
@@ -118,6 +125,8 @@ pub fn run() -> Result<()> {
         description: args.desc,
         glint_color: args.glint_color,
         restore_vanilla_glint: args.vanilla_glint,
+        heypixel_compat: !args.no_heypixel,
+        auto_client_setup: !args.no_client_setup,
         as_zip,
         lowercase: !args.no_lowercase,
         convert_lang: !args.no_lang,

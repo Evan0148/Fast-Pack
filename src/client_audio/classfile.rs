@@ -534,3 +534,308 @@ pub fn patch(input: &[u8], backwards: bool) -> Result<Vec<u8>> {
     write_attributes(&mut output, &class_attributes);
     Ok(output)
 }
+
+const JSON: &str = "com/viaversion/viaversion/libs/gson/JsonElement";
+const OBJECT: &str = "com/viaversion/viaversion/libs/gson/JsonObject";
+const ARRAY: &str = "com/viaversion/viaversion/libs/gson/JsonArray";
+const PRIMITIVE: &str = "com/viaversion/viaversion/libs/gson/JsonPrimitive";
+const ITEM_REWRITER: &str = "com/viaversion/viabackwards/api/rewriters/BackwardsItemRewriter";
+const TRANSLATABLE: &str = "com/viaversion/viabackwards/api/rewriters/text/TranslatableRewriter";
+const CONNECTION: &str = "com/viaversion/viaversion/api/connection/UserConnection";
+
+fn localize_string(pool: &mut Pool) -> Result<Vec<u8>> {
+    let string = pool.class("java/lang/String");
+    let replace = pool.reference(
+        10,
+        "java/lang/String",
+        "replaceAll",
+        "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+    );
+    let mut code = Code::new();
+    let lore = code.label();
+    let done = code.label();
+    code.op(&[0x1b]);
+    code.branch(0x99, lore);
+    for (english, chinese) in [("1\\.21 Mace", "重锤"), ("1\\.21 Wind Charge", "风弹")] {
+        code.op(&[0x2a]);
+        code.reference(
+            0x13,
+            pool.string(&format!("(?i)^((?:§[0-9a-fk-or])*){english}$")),
+        );
+        code.reference(0x13, pool.string(&format!("$1{chinese}")));
+        code.reference(0xb6, replace);
+        code.op(&[0x4b]);
+    }
+    code.branch(0xa7, done);
+    code.mark(lore, &[string, 0]);
+    for (english, chinese) in [
+        ("Wind Burst", "风爆"),
+        ("Density", "致密"),
+        ("Breach", "破甲"),
+    ] {
+        code.op(&[0x2a]);
+        code.reference(0x13,pool.string(&format!("(?i)^((?:§[0-9a-fk-or])*)(?:1\\.21 )?{english}(?= *(?:[IVXLCDM]+|[0-9]+)?(?:§[0-9a-fk-or])*$)")));
+        code.reference(0x13, pool.string(&format!("$1{chinese}")));
+        code.reference(0xb6, replace);
+        code.op(&[0x4b]);
+    }
+    code.mark(done, &[string, 0]);
+    code.op(&[0x2a, 0xb0]);
+    code.finish(pool, 3, 2)
+}
+
+fn localize_json(pool: &mut Pool) -> Result<Vec<u8>> {
+    let json = pool.class(JSON);
+    let array = pool.class(ARRAY);
+    let object = pool.class(OBJECT);
+    let primitive = pool.class(PRIMITIVE);
+    let iterator = pool.class("java/util/Iterator");
+    let entry = pool.class("java/util/Map$Entry");
+    let recursive = pool.reference(
+        10,
+        ITEM_REWRITER,
+        "fastpack$localizeComponent",
+        &format!("(L{JSON};Z)L{JSON};"),
+    );
+    let primitive_test = pool.reference(10, JSON, "isJsonPrimitive", "()Z");
+    let as_primitive = pool.reference(10, JSON, "getAsJsonPrimitive", &format!("()L{PRIMITIVE};"));
+    let is_string = pool.reference(10, PRIMITIVE, "isString", "()Z");
+    let get_string = pool.reference(10, JSON, "getAsString", "()Ljava/lang/String;");
+    let translate = pool.reference(
+        10,
+        ITEM_REWRITER,
+        "fastpack$localizeString",
+        "(Ljava/lang/String;Z)Ljava/lang/String;",
+    );
+    let init = pool.reference(10, PRIMITIVE, "<init>", "(Ljava/lang/String;)V");
+    let array_test = pool.reference(10, JSON, "isJsonArray", "()Z");
+    let array_size = pool.reference(10, ARRAY, "size", "()I");
+    let array_get = pool.reference(10, ARRAY, "get", &format!("(I)L{JSON};"));
+    let array_set = pool.reference(10, ARRAY, "set", &format!("(IL{JSON};)L{JSON};"));
+    let object_test = pool.reference(10, JSON, "isJsonObject", "()Z");
+    let entries = pool.reference(10, OBJECT, "entrySet", "()Ljava/util/Set;");
+    let iterate = pool.reference(11, "java/util/Set", "iterator", "()Ljava/util/Iterator;");
+    let has_next = pool.reference(11, "java/util/Iterator", "hasNext", "()Z");
+    let next = pool.reference(11, "java/util/Iterator", "next", "()Ljava/lang/Object;");
+    let key = pool.reference(11, "java/util/Map$Entry", "getKey", "()Ljava/lang/Object;");
+    let value = pool.reference(
+        11,
+        "java/util/Map$Entry",
+        "getValue",
+        "()Ljava/lang/Object;",
+    );
+    let set = pool.reference(
+        11,
+        "java/util/Map$Entry",
+        "setValue",
+        "(Ljava/lang/Object;)Ljava/lang/Object;",
+    );
+    let equals = pool.reference(10, "java/lang/String", "equals", "(Ljava/lang/Object;)Z");
+    let mut code = Code::new();
+    let original = code.label();
+    let check_array = code.label();
+    let check_object = code.label();
+    code.op(&[0x2a]);
+    code.branch(0xc6, original);
+    code.op(&[0x2a]);
+    code.reference(0xb6, primitive_test);
+    code.branch(0x99, check_array);
+    code.op(&[0x2a]);
+    code.reference(0xb6, as_primitive);
+    code.reference(0xb6, is_string);
+    code.branch(0x99, original);
+    code.reference(0xbb, primitive);
+    code.op(&[0x59, 0x2a]);
+    code.reference(0xb6, get_string);
+    code.op(&[0x1b]);
+    code.reference(0xb8, translate);
+    code.reference(0xb7, init);
+    code.op(&[0xb0]);
+    code.mark(check_array, &[json, 0]);
+    code.op(&[0x2a]);
+    code.reference(0xb6, array_test);
+    code.branch(0x99, check_object);
+    code.op(&[0x2a]);
+    code.reference(0xc0, array);
+    code.op(&[0x4d, 0x03, 0x3e]);
+    let array_loop = code.label();
+    code.mark(array_loop, &[json, 0, array, 0]);
+    code.op(&[0x1d, 0x2c]);
+    code.reference(0xb6, array_size);
+    code.branch(0xa2, original);
+    code.op(&[0x2c, 0x1d, 0x2c, 0x1d]);
+    code.reference(0xb6, array_get);
+    code.op(&[0x1b]);
+    code.reference(0xb8, recursive);
+    code.reference(0xb6, array_set);
+    code.op(&[0x57, 0x84, 0x03, 0x01]);
+    code.branch(0xa7, array_loop);
+    code.mark(check_object, &[json, 0]);
+    code.op(&[0x2a]);
+    code.reference(0xb6, object_test);
+    code.branch(0x99, original);
+    code.op(&[0x2a]);
+    code.reference(0xc0, object);
+    code.reference(0xb6, entries);
+    code.interface(iterate, 1);
+    code.op(&[0x4d]);
+    let object_loop = code.label();
+    let handle = code.label();
+    code.mark(object_loop, &[json, 0, iterator]);
+    code.op(&[0x2c]);
+    code.interface(has_next, 1);
+    code.branch(0x99, original);
+    code.op(&[0x2c]);
+    code.interface(next, 1);
+    code.reference(0xc0, entry);
+    code.op(&[0x4e]);
+    for name in ["text", "extra", "with"] {
+        code.reference(0x13, pool.string(name));
+        code.op(&[0x2d]);
+        code.interface(key, 1);
+        code.reference(0xb6, equals);
+        code.branch(0x9a, handle);
+    }
+    code.branch(0xa7, object_loop);
+    code.mark(handle, &[json, 0, iterator, entry]);
+    code.op(&[0x2d, 0x2d]);
+    code.interface(value, 1);
+    code.reference(0xc0, json);
+    code.op(&[0x1b]);
+    code.reference(0xb8, recursive);
+    code.interface(set, 2);
+    code.op(&[0x57]);
+    code.branch(0xa7, object_loop);
+    code.mark(original, &[json, 0]);
+    code.op(&[0x2a, 0xb0]);
+    code.finish(pool, 4, 4)
+}
+
+pub fn patch_localization(input: &[u8]) -> Result<Vec<u8>> {
+    let mut reader = Reader {
+        data: input,
+        offset: 0,
+    };
+    ensure!(reader.u32()? == 0xcafebabe, "不是 Java 类文件");
+    reader.bytes(4)?;
+    let header = &input[..8];
+    let mut pool = Pool::read(&mut reader)?;
+    let start = reader.offset;
+    reader.bytes(6)?;
+    let interfaces = reader.u16()?;
+    reader.bytes(interfaces as usize * 2)?;
+    let class_header = &input[start..reader.offset];
+    let fields = members(&mut reader)?;
+    let mut methods = members(&mut reader)?;
+    let class_attributes = attributes(&mut reader)?;
+    ensure!(reader.offset == input.len(), "类文件尾部异常");
+    ensure!(
+        !methods
+            .iter()
+            .any(|method| pool.text(method.name).ok() == Some("fastpack$localizeComponent")),
+        "汉化适配器已存在"
+    );
+    let process = pool.reference(
+        11,
+        TRANSLATABLE,
+        "processText",
+        &format!("(L{CONNECTION};L{JSON};)V"),
+    );
+    let wrapper_desc = format!("(L{TRANSLATABLE};L{CONNECTION};L{JSON};)L{JSON};");
+    let localize = pool.reference(
+        10,
+        ITEM_REWRITER,
+        "fastpack$localizeComponent",
+        &format!("(L{JSON};Z)L{JSON};"),
+    );
+    let mut changed = 0;
+    for method in &mut methods {
+        if pool.text(method.name)? != "handleItemToClient" {
+            continue;
+        }
+        for attribute in &mut method.attributes {
+            if pool.text(attribute.name)? != "Code" {
+                continue;
+            }
+            let mut body = Reader {
+                data: &attribute.data,
+                offset: 0,
+            };
+            let _ = body.u16()?;
+            let _ = body.u16()?;
+            let size = body.u32()? as usize;
+            let code = body.bytes(size)?;
+            let needle = [0xb9, (process >> 8) as u8, process as u8, 3, 0];
+            let hits: Vec<_> = code
+                .windows(5)
+                .enumerate()
+                .filter_map(|(index, bytes)| (bytes == needle).then_some(index))
+                .collect();
+            ensure!(hits.len() == 2, "物品文本处理结构与已核对版本不同");
+            let expected = [(113, 6u8), (225, 11u8)];
+            for (index, (end, local)) in hits.into_iter().zip(expected) {
+                ensure!(index + 5 == end, "物品名称或附魔处理位置不匹配");
+                let name = if local == 6 {
+                    "fastpack$processName"
+                } else {
+                    "fastpack$processLore"
+                };
+                let wrapper = pool.reference(10, ITEM_REWRITER, name, &wrapper_desc);
+                attribute.data[8 + index..8 + index + 5].copy_from_slice(&[
+                    0xb8,
+                    (wrapper >> 8) as u8,
+                    wrapper as u8,
+                    0x3a,
+                    local,
+                ]);
+                changed += 1;
+            }
+        }
+    }
+    ensure!(changed == 2, "未找到唯一的名称和附魔文本入口");
+    let string_data = localize_string(&mut pool)?;
+    let json_data = localize_json(&mut pool)?;
+    methods.push(Member {
+        access: 0x000a,
+        name: pool.utf("fastpack$localizeString"),
+        desc: pool.utf("(Ljava/lang/String;Z)Ljava/lang/String;"),
+        attributes: vec![Attribute {
+            name: pool.utf("Code"),
+            data: string_data,
+        }],
+    });
+    methods.push(Member {
+        access: 0x000a,
+        name: pool.utf("fastpack$localizeComponent"),
+        desc: pool.utf(&format!("(L{JSON};Z)L{JSON};")),
+        attributes: vec![Attribute {
+            name: pool.utf("Code"),
+            data: json_data,
+        }],
+    });
+    for (name, mode) in [("fastpack$processName", 1), ("fastpack$processLore", 0)] {
+        let mut code = Code::new();
+        code.op(&[0x2a, 0x2b, 0x2c]);
+        code.interface(process, 3);
+        code.op(&[0x2c, 0x03 + mode]);
+        code.reference(0xb8, localize);
+        code.op(&[0xb0]);
+        let data = code.finish(&mut pool, 3, 3)?;
+        methods.push(Member {
+            access: 0x000a,
+            name: pool.utf(name),
+            desc: pool.utf(&wrapper_desc),
+            attributes: vec![Attribute {
+                name: pool.utf("Code"),
+                data,
+            }],
+        });
+    }
+    let mut output = header.to_vec();
+    pool.write(&mut output)?;
+    output.extend(class_header);
+    write_members(&mut output, &fields);
+    write_members(&mut output, &methods);
+    write_attributes(&mut output, &class_attributes);
+    Ok(output)
+}

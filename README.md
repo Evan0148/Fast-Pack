@@ -59,7 +59,7 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.11.exe`。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.12.exe`。
 2. 双击下载的程序，把材质包 ZIP 或文件夹拖入窗口。
 3. 选择目标版本与导出目录，点击“开始转换”。资源适配默认自动执行。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
@@ -100,7 +100,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.11.exe`、`fast-pack-cli-v1.2.11.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.12.exe`、`fast-pack-cli-v1.2.12.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -184,7 +184,15 @@ flowchart LR
 
 ## 旧客户端连接新服务器时的物品外观
 
-材质包的目标版本仍选择**客户端版本**。例如客户端是 1.20.1，即使服务器开放了重锤或其他新物品，也应转换为 1.20.1。程序会自动把可表达的新物品外观和识别规则合并到结果，不需要玩家另外导入兼容包。
+材质包的目标版本仍选择**客户端版本**。例如客户端是 1.20.1，即使服务器开放了重锤或其他新物品，也应转换为 1.20.1。选择 **1.20.1** 时，主页显示“**布吉岛高版本材质包适配**”开关，首次使用默认开启，并自动保存开关状态；选择其他版本时隐藏。开启后只需导入材质包并转换，程序自动添加新版物品与原声音效、定位本机网易客户端、安装声音适配、复制转换包并启用，不需要填写游戏目录、运行额外命令或手动导入兼容包。手动设置的导出目录仍会正常保留一份结果。
+
+定位优先读取网易启动器保存的实际下载位置，支持不同盘符与自定义文件夹；还会检查源包 / 导出路径、已验证的用户缓存和常见安装位置，必要时进行有时间与深度限制的本地目录查找。客户端必须有 HeyPixel、兼容的 1.20.1 版本资料和唯一的 ViaForge 模组；不会把普通 Java 或其他游戏目录当作网易客户端处理。如果有多个匹配的网易客户端，优先使用当前启动器记录的位置，再按最近修改的游戏设置选择。不会扫描网络共享目录。
+
+游戏正在运行时，程序会在后台排队，等游戏退出后自动安装适配并启用转换包，避免游戏退出时把设置写回旧值；玩家无需再次转换。已运行的 Java 客户端不能通过修改磁盘上的模组立即更新，原声适配在下一次正常启动游戏时加载。后台等待最长四小时；受保护的模组、未知处理结构、未安装客户端或无写入权限等情况会在转换详情说明，正常导出的材质包会保留。网易启动器更新替换模组后，再次转换会重新检查并补齐适配。
+
+关闭开关后，本次不添加布吉岛物品资源、不安装本地声音适配、不自动导入或启用转换包。输入是 Fast Pack 已适配的包时，会恢复由 Fast Pack 包装的原始物品载体规则并移除自动 CIT / Chime 选择规则；原包素材继续保留。关闭开关不会卸载此前已安装的本地声音适配。
+
+布吉岛适配同时汉化直写在物品名称和附魔说明中的新版英文：`1.21 Mace` → **重锤**、`1.21 Wind Charge` → **风弹**、`Wind Burst` → **风爆**、`Density` → **致密**、`Breach` → **破甲**。使用 Minecraft 官方简体中文名称，保留罗马数字 / 数字等级、颜色和其他文本样式；名称不再附带 `1.21` 前缀。处理嵌套文本组件及分开的等级组件，不把玩家自定义名称中的英文片段批量替换。原始名称和附魔说明由 ViaBackwards 现有备份与恢复流程保留，发回服务器时恢复原始数据。资源包中同时补齐对应的官方语言键。
 
 适配根据 ViaBackwards 实际传递的数据生效：
 
@@ -200,13 +208,13 @@ v1.2.10 起，转换到 1.20.x 等受支持的旧客户端时，还会自动补�
 
 **声音资源与声音触发需要分别处理。** ViaBackwards 会把重锤声音改成普通攻击事件；风弹爆裂声转到 1.20.1 的过程中可能被取消。已经被合并或丢弃的事件不包含足够的信息，材质包无法还原其来源。转换器生成 `fastpack:item.mace.smash_air`、`fastpack:item.mace.smash_ground`、`fastpack:item.mace.smash_ground_heavy`、`fastpack:entity.wind_charge.throw`、`fastpack:entity.wind_charge.wind_burst` 和 `fastpack:entity.breeze.wind_burst` 六个入口，供能够保留原声的服务器适配使用；这些入口委托给原包对应的 Minecraft 声音事件。仅升级转换器不能让未传递正确事件的服务器自动恢复声音。
 
-**网易 1.20.1 / 布吉岛的本地声音适配。** v1.2.11 提供独立的 Rust 安装入口，用于已核对的网易 1.20.1、HeyPixel 和 ViaForge 4.3.1-SNAPSHOT 组合。该客户端会在本地把 1.20.5–1.20.6 协议转成 1.20.1；安装器在声音转换前，把重锤和风弹的原始编号转换成 `fastpack` 命名空间的直接声音事件，使后续协议保留它们。位置声音和实体声音使用同一适配路径；普通声音及其他协议的数字编号继续按原规则处理。此功能修改本地 ViaForge 的两个声音处理类，保留其余文件，并在客户端的 `heypixel/fastpack-backups/audio-bridge` 保存带 SHA256 的原始模组备份，不分发修改后的第三方模组。
+**网易 1.20.1 / 布吉岛的本地声音适配。** v1.2.11 起提供 Rust 安装器，v1.2.12 将它接入上述自动处理流程并增加名称附魔汉化，适用于已核对的网易 1.20.1、HeyPixel 和 ViaForge 4.3.1-SNAPSHOT 组合。该客户端会在本地把 1.20.5–1.20.6 协议转成 1.20.1；安装器在声音转换前，把重锤和风弹的原始编号转换成 `fastpack` 命名空间的直接声音事件，使后续协议保留它们。位置声音和实体声音使用同一适配路径；普通声音及其他协议的数字编号继续按原规则处理。此功能修改本地 ViaForge 的两个声音处理类和一个物品文本处理类，保留其余文件，并在客户端的 `heypixel/fastpack-backups/audio-bridge` 保存带 SHA256 的原始模组备份，不分发修改后的第三方模组。安装器会从校验过的原模组备份自动升级旧版声音适配；自动导入前也会备份将被替换的同名材质包与游戏设置。
 
-下面的目录应填写网易游戏的实际 `.minecraft` 路径。退出游戏后执行，随后重新启动游戏；已启用的材质包需要包含 Fast Pack 生成的原声音频与事件入口。重复安装不会重复改写，回滚会恢复原模组的完整字节。安装器会拒绝带数字签名的模组、未知声音处理结构或不匹配的客户端版本。此入口不修改服务器，也不处理在到达本机前已由服务器端代理丢弃的事件。
+普通玩家使用默认开关即可，以下命令仅用于单独维护和回滚。目录填写网易游戏的实际 `.minecraft` 路径。重复安装不会重复改写，回滚会恢复原模组的完整字节。安装器会拒绝带数字签名的模组、未知声音处理结构或不匹配的客户端版本。此入口不修改服务器，也不处理在到达本机前已由服务器端代理丢弃的事件。
 
 ```powershell
-.\fast-pack-cli-v1.2.11.exe --client-audio "E:\MCLDownload\Game\.minecraft"
-.\fast-pack-cli-v1.2.11.exe --client-audio "E:\MCLDownload\Game\.minecraft" --restore-client-audio
+.\fast-pack-cli-v1.2.12.exe --client-audio "E:\MCLDownload\Game\.minecraft"
+.\fast-pack-cli-v1.2.12.exe --client-audio "E:\MCLDownload\Game\.minecraft" --restore-client-audio
 ```
 
 网易更新器可能重新下载 ViaForge；更新后需重新检查适配状态，安装器不会绕过更新器或模组签名检查。独立 JVM 验证可由 `cargo run --release --example verify_client_audio -- <输出目录>` 生成探针类，配合目标 ViaForge 的依赖执行，覆盖目标编号、原生命名事件、普通声音和其他协议隔离。
@@ -219,22 +227,24 @@ Minecraft 1.20.1 的换手抬起与攻击冷却造成的手部动画由客户端
 
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.11 为例，命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.12 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli-v1.2.11.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.2.11.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.2.11.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.2.11.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.2.11.exe old.zip --probe
-.\fast-pack-cli-v1.2.11.exe --versions
-.\fast-pack-cli-v1.2.11.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.2.11.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.2.11.exe old.zip --to 1.20.1 --vanilla-glint
-.\fast-pack-cli-v1.2.11.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.2.12.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.2.12.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.2.12.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.2.12.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.2.12.exe old.zip --probe
+.\fast-pack-cli-v1.2.12.exe --versions
+.\fast-pack-cli-v1.2.12.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.2.12.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.2.12.exe old.zip --to 1.20.1 --vanilla-glint
+.\fast-pack-cli-v1.2.12.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--from auto` 默认自动识别源版本。`--report-json` 仅在指定时将详情另存到提供的路径，不会把 `转换报告.txt` 塞入输出 ZIP。自定义映射采用 JSON 对象，例如 `{"custom_texture":"replacement_texture"}`。
+
+命令行转换到 `--to 1.20.1` 默认也会执行布吉岛客户端自动处理。`--no-heypixel` 关闭本次布吉岛资源与客户端适配；`--no-client-setup` 仅生成兼容材质包，不安装、导入或修改本机客户端，适合批量构建资源的场景。其他目标版本不会触发本地客户端处理。
 
 `--glint-color` 接受带或不带 `#` 的 3 位 / 6 位 HEX 色值。省略时保留输入包的光效效果并自动适配目标版本；`--vanilla-glint` 将附魔光效恢复原版紫色，与 `--glint-color` 互斥；两个选项都省略时继续自动适配输入包颜色。命令行参数不会改写桌面版已保存的颜色。
 
