@@ -80,15 +80,12 @@ fn default_tab(bottom: bool, selected: bool, width: u32, scale: u32) -> RgbaImag
     })
 }
 
-fn tabs(root: &Path, target: u32, report: &mut AssetReport) -> Result<()> {
+fn tabs(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Result<()> {
     if target >= 18 {
         return Ok(());
     }
     let textures = root.join("assets/minecraft/textures");
     let sprites = textures.join("gui/sprites/container/creative_inventory");
-    if !sprites.is_dir() {
-        return Ok(());
-    }
     let mut tiles = BTreeMap::new();
     for side in ["top", "bottom"] {
         for selected in ["unselected", "selected"] {
@@ -105,6 +102,41 @@ fn tabs(root: &Path, target: u32, report: &mut AssetReport) -> Result<()> {
         let path = sprites.join(format!("{name}.png"));
         if path.is_file() {
             tiles.insert(name.into(), image::open(path)?.to_rgba8());
+        }
+    }
+    if tiles.is_empty() && source >= 12 && target < 12 {
+        let path = textures.join("gui/container/creative_inventory/tabs.png");
+        if path.is_file() {
+            let atlas = image::open(&path)?.to_rgba8();
+            let scale = atlas.width() / 256;
+            if scale > 0 && atlas.width().is_multiple_of(256) && atlas.height() >= 128 * scale {
+                for (side, state, y) in [
+                    ("top", "unselected", 0),
+                    ("top", "selected", 32),
+                    ("bottom", "unselected", 64),
+                    ("bottom", "selected", 96),
+                ] {
+                    for index in 1..=7 {
+                        tiles.insert(
+                            format!("tab_{side}_{state}_{index}"),
+                            imageops::crop_imm(
+                                &atlas,
+                                (index - 1) * 26 * scale,
+                                y * scale,
+                                26 * scale,
+                                32 * scale,
+                            )
+                            .to_image(),
+                        );
+                    }
+                }
+                for (name, x) in [("scroller", 232), ("scroller_disabled", 244)] {
+                    tiles.insert(
+                        name.into(),
+                        imageops::crop_imm(&atlas, x * scale, 0, 12 * scale, 15 * scale).to_image(),
+                    );
+                }
+            }
         }
     }
     if tiles.is_empty() {
@@ -378,7 +410,7 @@ pub(super) fn migrate(
     target: u32,
     report: &mut AssetReport,
 ) -> Result<()> {
-    tabs(root, target, report)?;
+    tabs(root, source, target, report)?;
     inventory(root, source, target, report)?;
     if source <= target {
         return Ok(());

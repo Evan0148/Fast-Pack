@@ -150,6 +150,12 @@ fn main() -> Result<()> {
     )?;
     let license_source = tempfile::tempdir()?;
     copy_tree(licenses, license_source.path())?;
+    let model_notices = license_source.path().join("MinecraftResources");
+    fs::create_dir_all(&model_notices)?;
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/model-integrity-NOTICE.txt"),
+        model_notices.join("model-resources-NOTICE.txt"),
+    )?;
     let crosshair_notices = license_source.path().join("CrosshairResources");
     fs::create_dir_all(&crosshair_notices)?;
     for (source, name) in [

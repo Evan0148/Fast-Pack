@@ -16,3 +16,7 @@ https://github.com/ViaVersion/Mappings
 Connected-texture file format reference:
 https://github.com/sp614x/optifine/blob/master/OptiFineDoc/doc/ctm.properties
 The connected-texture adapter is independent Rust code and embeds no OptiFine code.
+
+legacy-models.json contains semantic model aliases and display-transform references
+derived from the official 1.8.9 and 1.20.1 model resources. It contains no model
+geometry or texture images. Rebuild with the Rust legacy_model_catalog example.

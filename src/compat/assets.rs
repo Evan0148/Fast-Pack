@@ -1167,6 +1167,7 @@ fn model_refs(value: &mut Value, default_folder: &str) -> bool {
 }
 
 fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Result<()> {
+    let legacy_models = super::legacy_models::capture(root, source, target)?;
     let assets = root.join("assets");
     if !assets.exists() {
         return Ok(());
@@ -1447,6 +1448,9 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
         }
         fs::write(path, serde_json::to_vec_pretty(&value)?)?;
         count += 1;
+    }
+    if let Some(migration) = legacy_models {
+        migration.apply(root, report)?;
     }
     if inherited_items > 0 {
         report.converted.push(format!("物品手持姿态：解析 {inherited_items} 个平面物品的父模型继承，补齐旋转、位移与缩放后换算为 1.8.9 姿态"));

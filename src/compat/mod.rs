@@ -13,6 +13,7 @@ mod legacy_blocks;
 pub(crate) mod legacy_defaults;
 mod legacy_effect_icons;
 mod legacy_gui;
+mod legacy_models;
 mod model_integrity;
 mod modern_gui;
 mod modern_items;
