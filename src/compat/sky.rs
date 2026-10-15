@@ -12,6 +12,8 @@ use std::path::{Component, Path, PathBuf};
 use walkdir::WalkDir;
 use zip::ZipArchive;
 
+mod storage;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Layer {
     pub name: String,
@@ -682,6 +684,7 @@ fn restore_optifine(
     root: &Path,
     layers: &[Layer],
     format: u32,
+    storage: &mut storage::Storage,
     report: &mut CompatibilityReport,
 ) -> Result<()> {
     let base = if format < 4 { "mcpatcher" } else { "optifine" };
@@ -700,31 +703,15 @@ fn restore_optifine(
             *index += 1;
             name
         };
-        let target = folder.join(format!("{name}.png"));
-        if layer.decoration {
-            fs::copy(local(root, &layer.texture)?, &target)?;
-        } else {
-            let image = super::assets::open(&local(root, &layer.texture)?)?;
-            let converted = atlas::remap(
-                &image,
-                layout(&layer.layout),
-                AtlasLayout::Optifine,
-                layer.world == "world0",
-            )?;
-            if image.dimensions() != converted.dimensions() {
-                report.sky_converted.push(format!(
-                    "{}：六面分别对齐尺寸 {}×{} → {}×{}，保留完整面内容与朝向",
-                    layer.original,
-                    image.width(),
-                    image.height(),
-                    converted.width(),
-                    converted.height()
-                ));
-            }
-            converted.save(&target)?;
+        let texture = storage.materialize(root, layer, AtlasLayout::Optifine)?;
+        if let Some((before, after)) = texture.resized {
+            report.sky_converted.push(format!(
+                "{}：六面分别对齐尺寸 {}×{} → {}×{}，保留完整面内容与朝向",
+                layer.original, before.0, before.1, after.0, after.1
+            ));
         }
         let mut props = layer.properties.clone();
-        props.insert("source".into(), format!("./{name}.png"));
+        props.insert("source".into(), storage::identifier(&texture.path)?);
         fs::write(
             folder.join(format!("{name}.properties")),
             properties::write(&props),
@@ -743,7 +730,7 @@ pub fn migrate(
     runtime: SkyRuntime,
     report: &mut CompatibilityReport,
 ) -> Result<()> {
-    let (layers, warnings) = read_layers(root)?;
+    let (mut layers, warnings) = read_layers(root)?;
     report.warnings.extend(warnings);
     report.sky_layers = layers.len();
     if layers.is_empty() {
@@ -766,6 +753,11 @@ pub fn migrate(
     } else {
         layers.iter().map(|layer| layer.original.clone()).collect()
     };
+    let mut storage = storage::Storage::new(
+        root,
+        &mut layers,
+        if active_path.exists() { &previous } else { &[] },
+    )?;
     for relative in previous {
         let path = local(root, &relative)?;
         if path.is_file() {
@@ -782,7 +774,7 @@ pub fn migrate(
         target,
         SkyRuntime::Optifine | SkyRuntime::Interop | SkyRuntime::Vanilla
     ) {
-        restore_optifine(root, &layers, format, report)?;
+        restore_optifine(root, &layers, format, &mut storage, report)?;
     } else {
         let nuit = target == SkyRuntime::Nuit;
         ensure!(
@@ -820,22 +812,17 @@ pub fn migrate(
             }
             let result = (|| -> Result<()> {
                 ensure!(!layer.decoration, "太阳/月亮混合规则保留到原配置");
-                let identifier = format!("fastpack:textures/sky/layer_{index}.png");
-                let definition = native(layer, nuit, &identifier, index as i32)?;
-                let texture = root.join(format!("assets/fastpack/textures/sky/layer_{index}.png"));
-                fs::create_dir_all(texture.parent().unwrap())?;
-                let image = super::assets::open(&local(root, &layer.texture)?)?;
-                let converted = atlas::remap(
-                    &image,
-                    layout(&layer.layout),
+                let texture = storage.materialize(
+                    root,
+                    layer,
                     if nuit {
                         AtlasLayout::Nuit
                     } else {
                         AtlasLayout::FabricSkyboxes
                     },
-                    layer.world == "world0",
                 )?;
-                converted.save(&texture)?;
+                let identifier = storage::identifier(&texture.path)?;
+                let definition = native(layer, nuit, &identifier, index as i32)?;
                 let file = root.join(format!(
                     "assets/{}/sky/fastpack_layer_{index}.json",
                     if nuit { "nuit" } else { "fastpack" }
@@ -848,16 +835,13 @@ pub fn migrate(
                     target,
                     if nuit { 1 } else { 2 }
                 );
-                if image.dimensions() != converted.dimensions() {
+                if let Some((before, after)) = texture.resized {
                     description.push_str(&format!(
                         "；六面分别对齐 {}×{} → {}×{}",
-                        image.width(),
-                        image.height(),
-                        converted.width(),
-                        converted.height()
+                        before.0, before.1, after.0, after.1
                     ));
                 }
-                generated.push((layer.world.clone(), texture, file, description));
+                generated.push((layer.world.clone(), file, description));
                 Ok(())
             })();
             if let Err(error) = result {
@@ -868,9 +852,8 @@ pub fn migrate(
                 fallback_worlds.insert(layer.world.clone());
             }
         }
-        for (world, texture, definition, description) in generated {
+        for (world, definition, description) in generated {
             if fallback_worlds.contains(&world) {
-                fs::remove_file(texture)?;
                 fs::remove_file(definition)?;
             } else {
                 report.sky_converted.push(description);
@@ -882,7 +865,7 @@ pub fn migrate(
             .cloned()
             .collect();
         if !fallback.is_empty() {
-            restore_optifine(root, &fallback, format, report)?;
+            restore_optifine(root, &fallback, format, &mut storage, report)?;
             report
                 .requirements
                 .push(SkyRuntime::Interop.requirement(format));
@@ -898,6 +881,7 @@ pub fn migrate(
         .collect();
     fs::create_dir_all(active_path.parent().unwrap())?;
     fs::write(active_path, serde_json::to_vec_pretty(&active)?)?;
+    storage.finish(root, &layers, report)?;
     Ok(())
 }
 
