@@ -1,9 +1,9 @@
 [package]
 name = "fast-pack"
-version = "1.2.25"
+version = "1.2.26"
 authors = ["ColdEternity Team", "Long_Cold", "Wind_"]
 description = "Fast Pack: automatic Minecraft Java resource pack version conversion"
-license-file = "LICENSE"
+license = "GPL-3.0-only"
 repository = "https://github.com/LongCold-ColdEternity-Team/Fast-Pack"
 readme = "README.md"
 edition = "2024"

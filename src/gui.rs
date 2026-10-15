@@ -3121,8 +3121,8 @@ impl App {
                 self.title("源码地址",14),
                 text("https://github.com/LongCold-ColdEternity-Team/Fast-Pack").size(13).color(c.accent),
                 self.action(20,"打开源码仓库",Some(Message::OpenSource),true),
-                self.label("ColdEternity Team Source-Available License 1.0"),
-                self.label("允许免费非商业二改；衍生可执行文件必须同步公开完整源码并保留作者、许可证和原始仓库信息。")
+                self.label("GNU General Public License v3.0"),
+                self.label("允许使用、修改、分发与商业使用；分发程序须遵守 GPL v3，保留许可声明并提供完整对应源码。")
             ].spacing(16))).width(680);
             let overlay = container(dialog)
                 .center_x(Length::Fill)

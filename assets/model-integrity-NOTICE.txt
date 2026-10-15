@@ -18,5 +18,10 @@ https://github.com/sp614x/optifine/blob/master/OptiFineDoc/doc/ctm.properties
 The connected-texture adapter is independent Rust code and embeds no OptiFine code.
 
 legacy-models.json contains semantic model aliases and display-transform references
-derived from the official 1.8.9 and 1.20.1 model resources. It contains no model
-geometry or texture images. Rebuild with the Rust legacy_model_catalog example.
+derived from the official 1.8.9 and 1.20.1 model resources. It also includes parent
+model templates used when an uploaded pack relies on modern vanilla inheritance.
+It contains no client code or texture images. Rebuild with the Rust legacy_model_catalog example.
+
+modern-defaults.json contains normalized SHA-256 fingerprints of official model
+and block-state JSON from the 1.15.2, 1.16.5, 1.20.1, 1.21.5, 1.21.6 and 26.2 clients.
+The modern_default_catalog Rust example rebuilds this identifier-only reference.

@@ -1647,6 +1647,7 @@ fn migrate_assets(
     patterns(root, source, target, &mut report)?;
     entities(root, source, target, &mut report)?;
     item_resources(root, source, target, &mut report)?;
+    super::legacy_textures::migrate(root, source, target, &mut report)?;
     super::item_bindings::migrate(root, source, target, &mut report)?;
     super::item_display::bind_definitions(root, source, target, &mut report)?;
     super::modern_items::migrate(root, source, target, &mut report)?;

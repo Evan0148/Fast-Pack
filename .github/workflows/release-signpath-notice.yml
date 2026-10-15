@@ -1,0 +1,33 @@
+name: Release signing attribution
+on:
+  release:
+    types: [published, edited]
+permissions:
+  contents: write
+jobs:
+  notice:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Preserve SignPath Foundation attribution
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_ID: ${{ github.event.release.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          notice='This project uses SignPath Foundation for code signing of Windows executable releases.'
+          credit='Free code signing provided by SignPath.io, certificate by SignPath Foundation'
+          body="$(gh api "repos/$RELEASE_REPOSITORY/releases/$RELEASE_ID" --jq '.body // ""')"
+          if [[ "$body" == *"$notice"* && "$body" == *"$credit"* ]]; then
+            exit 0
+          fi
+          notes="$(mktemp)"
+          printf '%s\n' "$body" > "$notes"
+          if [[ "$body" != *"$notice"* ]]; then
+            printf '\n%s\n' "$notice" >> "$notes"
+          fi
+          if [[ "$body" != *"$credit"* ]]; then
+            printf '\n%s\n' "$credit" >> "$notes"
+          fi
+          gh api --method PATCH "repos/$RELEASE_REPOSITORY/releases/$RELEASE_ID" --field "body=@$notes" > /dev/null

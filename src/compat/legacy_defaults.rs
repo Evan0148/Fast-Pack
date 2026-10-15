@@ -11,6 +11,11 @@ static DEFAULTS: LazyLock<BTreeMap<String, String>> = LazyLock::new(|| {
         .expect("旧版原版资源指纹表无效")
 });
 
+static MODERN_DEFAULTS: LazyLock<BTreeMap<String, BTreeSet<String>>> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../../assets/modern-defaults.json"))
+        .expect("新版原版资源指纹表无效")
+});
+
 fn canonical(value: Value) -> Value {
     match value {
         Value::Object(values) => {
@@ -91,7 +96,8 @@ struct Resource {
 }
 
 pub(crate) fn prepare(root: &Path, source: u32, target: u32) -> Result<Vec<String>> {
-    if source != 1 || target < 4 {
+    let downgrade = source >= 4 && target < 2;
+    if !downgrade && (source != 1 || target < 4) {
         return Ok(Vec::new());
     }
     let mut resources = BTreeMap::new();
@@ -112,10 +118,17 @@ pub(crate) fn prepare(root: &Path, source: u32, target: u32) -> Result<Vec<Strin
         let Ok(value) = serde_json::from_slice::<Value>(&fs::read(entry.path())?) else {
             continue;
         };
-        let stock = DEFAULTS.get(&relative).is_some_and(|expected| {
-            let bytes = serde_json::to_vec(&canonical(value.clone())).unwrap();
-            format!("{:x}", Sha256::digest(bytes)) == *expected
-        });
+        let bytes = serde_json::to_vec(&canonical(value.clone()))?;
+        let digest = format!("{:x}", Sha256::digest(bytes));
+        let stock = if downgrade {
+            MODERN_DEFAULTS
+                .get(&relative)
+                .is_some_and(|expected| expected.contains(&digest))
+        } else {
+            DEFAULTS
+                .get(&relative)
+                .is_some_and(|expected| digest == *expected)
+        };
         let mut references = BTreeSet::new();
         dependencies(&value, relative.contains("/blockstates/"), &mut references);
         resources.insert(
@@ -178,7 +191,13 @@ pub(crate) fn prepare(root: &Path, source: u32, target: u32) -> Result<Vec<Strin
         if !resource.stock || protected.contains(&name) {
             continue;
         }
-        let destination = root.join("fastpack/legacy-defaults").join(&name);
+        let destination = root
+            .join(if downgrade {
+                "fastpack/modern-defaults"
+            } else {
+                "fastpack/legacy-defaults"
+            })
+            .join(&name);
         if !destination.exists() {
             fs::create_dir_all(destination.parent().unwrap())?;
             fs::copy(&resource.path, destination)?;
@@ -194,6 +213,7 @@ pub(crate) fn prepare(root: &Path, source: u32, target: u32) -> Result<Vec<Strin
         return Ok(Vec::new());
     }
     Ok(vec![format!(
-        "旧版原版资源：校验并备份 {model_count} 个未修改模型与 {state_count} 个未修改方块状态，使用目标版本原生资源；保留自定义模型、状态及其依赖"
+        "{}原版资源：校验并备份 {model_count} 个未修改模型与 {state_count} 个未修改方块状态，使用目标版本原生资源；保留自定义模型、状态及其依赖",
+        if downgrade { "新版" } else { "旧版" }
     )])
 }

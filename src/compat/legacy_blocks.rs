@@ -196,6 +196,11 @@ fn inventory_model(root: &Path, name: &str, source: u32, report: &mut AssetRepor
     };
     let block_path = directory.join(format!("block/{name}.json"));
     let block = serde_json::from_slice::<Value>(&fs::read(&block_path)?)?;
+    let migrated = [&model, &block].iter().any(|value| {
+        value["parent"]
+            .as_str()
+            .is_some_and(|parent| parent.starts_with("fastpack:legacy_models/"))
+    });
     let inherited = block.get("display").and_then(Value::as_object);
     if !model.get("display").is_some_and(Value::is_object) {
         model["display"] = json!({});
@@ -227,7 +232,7 @@ fn inventory_model(root: &Path, name: &str, source: u32, report: &mut AssetRepor
         let modern_default = transform
             .as_ref()
             .is_some_and(|value| modern_box_default(value, view));
-        let converted = if source >= 2 || modern_default {
+        let converted = if !migrated && (source >= 2 || modern_default) {
             transform
                 .as_ref()
                 .and_then(|value| box_transform(value, view))
@@ -244,6 +249,9 @@ fn inventory_model(root: &Path, name: &str, source: u32, report: &mut AssetRepor
     }
     let mut converted_block = block.clone();
     for view in ["gui", "firstperson", "thirdperson"] {
+        if migrated {
+            continue;
+        }
         let right = format!("{view}_righthand");
         let Some(transform) =
             inherited.and_then(|display| display.get(view).or_else(|| display.get(&right)))

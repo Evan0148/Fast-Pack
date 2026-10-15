@@ -2,10 +2,10 @@
   <img src="assets/branding/fast-pack-logo.png" width="120" alt="Fast Pack Logo">
   <h1>Fast Pack</h1>
   <p><strong>Minecraft Java 材质包转换工具</strong></p>
-  <p>纯 Rust · 多版本自动适配 · 本地处理 · 免费非商业使用</p>
+  <p>纯 Rust · 多版本自动适配 · 本地处理 · GPL v3 开源</p>
 
   <a href="https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest"><img src="https://img.shields.io/github/v/release/LongCold-ColdEternity-Team/Fast-Pack?style=flat-square&color=087b91" alt="Release"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Source--Available-087b91?style=flat-square" alt="Source-Available License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL%20v3-087b91?style=flat-square" alt="GNU GPL v3"></a>
   <a href="https://github.com/LongCold-ColdEternity-Team/Fast-Pack/stargazers"><img src="https://img.shields.io/github/stars/LongCold-ColdEternity-Team/Fast-Pack?style=flat-square&color=70d9ee" alt="Stars"></a>
 </div>
 
@@ -13,6 +13,8 @@ Fast Pack 是面向 Minecraft Java Edition 的材质包版本转换工具，由 
 
 **原始仓库：[LongCold-ColdEternity-Team/Fast-Pack](https://github.com/LongCold-ColdEternity-Team/Fast-Pack)**  
 **下载成品：[GitHub Releases](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)**
+
+This project uses SignPath Foundation for code signing of Windows executable releases.
 
 ## 项目特点
 
@@ -39,7 +41,9 @@ Fast Pack 是面向 Minecraft Java Edition 的材质包版本转换工具，由 
 - **自动处理旧原版模型覆盖。** 1.8.x 材质包升级到 1.13+ 时，使用 1,935 条官方资源的规范化 SHA-256 指纹识别包内未修改的旧原版模型和方块状态。无自定义依赖的旧文件会自动备份停用，让目标版本加载自身模型、状态分支和手持尺寸，避免整套旧原版 JSON 引起紫黑方块、缺失贴图变量及手持大小异常。作者修改过的模型、状态、自定义父模型，以及它们实际依赖的旧文件继续保留；空格、对象键顺序与等值整数写法不会影响识别。
 - **冲突时保留旧版实际使用的原图。** 旧包同时包含已知的旧名称和新版名称时，优先迁移旧版标准路径中的贴图，并备份被替换的重复文件；原模型明确引用的目标贴图优先保留，避免覆盖作者指定的资源。
 - **旧版自定义手持姿态自动换算。** 对照官方 1.8.9 与 1.20.1 模型提取 254 个平面物品模型的 8 组姿态基准，换算第一 / 第三人称的旋转、位移、缩放和左右手姿态，保留作者相对基准设置的大小。带有 Fast Pack 原模型备份的旧转换结果可自动修复，避免剑竖直、过大及左手姿态错误。
-- **整套新版方块模型降级。** 1.13+ 转到 1.7.10 / 1.8.x 时，先保留包内新版模型的完整依赖，再按官方资源语义绑定旧版入口，避免新版草植物占用旧版草方块名称。内置 941 个模型入口映射和 485 组显示参数参考，区分草方块、草植物、磨制石材和旧颜色名称；通用立方体、楼梯等模型的背包角度、第一 / 第三人称大小按旧版基准换算，保留作者自定义几何、UV、贴图和相对姿态。1.19.3–1.20.1 的七列标签图集降级时同步重建六列布局，保留原包的透明界面风格。
+- **完整补齐 1.8.x 贴图入口。** 新版降到 1.7.10 / 1.8.x 时，为木门、深色海晶石、红砂岩、深色橡树树苗、黏液块、湿海绵等资源补齐旧名称；箭、橡木告示牌、铁傀儡、雪傀儡、鱿鱼、蘑菇牛、末地水晶与默认玩家贴图恢复旧目录。只在上传包提供了对应资源且目标旧路径缺失时补齐，动画元数据一并复制。时钟与罗盘的独立模型帧自动重建为旧版动态贴图，保留原图分辨率。
+- **新版原版模型自动回退。** 高版本降到 1.7.10 / 1.8.x 时，通过 9,021 条官方模型与方块状态指纹识别未修改的原版 JSON，将这些文件备份后交给目标游戏原生资源处理，避免新版通用模型覆盖旧版箱子、栅栏、楼梯、红石元件的几何与显示参数。作者修改的模型、状态及其依赖继续保留；不同类别的物品使用各自的旧版显示参考，已经转换的方向方块参数不会再次换算。
+- **整套新版方块模型降级。** 1.13+ 转到 1.7.10 / 1.8.x 时，先保留包内新版模型的完整依赖，再按官方资源语义绑定旧版入口，避免新版草植物占用旧版草方块名称。内置 941 个模型入口映射和 930 组显示参数参考，区分草方块、草植物、磨制石材和旧颜色名称；通用立方体、楼梯等模型的背包角度、第一 / 第三人称大小按旧版基准换算，保留作者自定义几何、UV、贴图和相对姿态。1.19.3–1.20.1 的七列标签图集降级时同步重建六列布局，保留原包的透明界面风格。
 - **新版手持模型降级。** 降到 1.8.9 时，递归展开平面物品的父模型继承，合并实际生效的姿态与贴图引用，再按旧版基准换算。没有单独写 `display` 的剑、工具与食物也会补齐姿态；1.21.4+ 已识别的默认物品定义重新绑定到旧版模型入口。
 - **创造背包与药水图标还原。** 按目标版本重建标签页：1.8.9–1.19.2 使用六列 28px，1.19.3–1.20.1 使用七列 26px，同时合并滚动条。识别误切到独立精灵里的红蓝 `SEL` 占位区，从同组干净边框重建完整标签页；1.8.9 的创造人物窗口和装备格按旧坐标重定位。独立药水效果图标写回旧版背包图集，缺失且原图集未提供的符号自动补齐。
 - **创造背包升级。** 旧包转 1.20+ / 26.x 时，按原图集的六列 28px 布局重排七列 26px 标签，1.20.2+ 自动生成完整标签与滚动条精灵，避免误读右侧红蓝占位区。人物窗口与装备格迁移到新坐标，并补副手槽；旧药水图标在背包图集被重排前拆出，保留原包样式。高清和低分辨率资源按比例处理。
@@ -64,7 +68,7 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.25.exe`。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.26.exe`。
 2. 双击下载的程序，把材质包 ZIP 或文件夹拖入窗口。
 3. 选择目标版本与导出目录，点击“开始转换”。资源适配默认自动执行。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
@@ -125,7 +129,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.25.exe`、`fast-pack-cli-v1.2.25.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.26.exe`、`fast-pack-cli-v1.2.26.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -262,7 +266,7 @@ ViaBackwards 启动时将用户 NBT 与内置映射合并。运行中的游戏�
 独立维护入口仍保留，普通玩家使用默认开关即可：
 
 ```powershell
-.\fast-pack-cli-v1.2.25.exe --client-audio "E:\MCLDownload\Game\.minecraft"
+.\fast-pack-cli-v1.2.26.exe --client-audio "E:\MCLDownload\Game\.minecraft"
 ```
 
 此命令现仅配置官方名称与附魔，不改写模组，也不启用原声音效。`--restore-client-audio` 仅用于恢复以前版本留下的模组改写，校验原始备份后还原；当前已经被启动器恢复的原版模组无需处理。
@@ -271,22 +275,22 @@ ViaBackwards 启动时将用户 NBT 与内置映射合并。运行中的游戏�
 
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.25 为例，命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.26 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli-v1.2.25.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.2.25.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.2.25.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.2.25.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.2.25.exe old.zip --probe
-.\fast-pack-cli-v1.2.25.exe --versions
-.\fast-pack-cli-v1.2.25.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.2.25.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.2.25.exe old.zip --to 1.20.1 --vanilla-glint
-.\fast-pack-cli-v1.2.25.exe old.zip --to 1.20.1 --no-netherite
-.\fast-pack-cli-v1.2.25.exe old.zip --to 1.20.1 --crosshair crosshair-pack.zip
-.\fast-pack-cli-v1.2.25.exe old.zip --to 1.20.1 --hide-attack-indicator
-.\fast-pack-cli-v1.2.25.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.2.26.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.2.26.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.2.26.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.2.26.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.2.26.exe old.zip --probe
+.\fast-pack-cli-v1.2.26.exe --versions
+.\fast-pack-cli-v1.2.26.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.2.26.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.2.26.exe old.zip --to 1.20.1 --vanilla-glint
+.\fast-pack-cli-v1.2.26.exe old.zip --to 1.20.1 --no-netherite
+.\fast-pack-cli-v1.2.26.exe old.zip --to 1.20.1 --crosshair crosshair-pack.zip
+.\fast-pack-cli-v1.2.26.exe old.zip --to 1.20.1 --hide-attack-indicator
+.\fast-pack-cli-v1.2.26.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--crosshair <准星包或PNG>` 为本次转换使用指定准星，不改写 GUI 预设库；不传参数时保留原包准星。Rust 库通过 `ConversionOptions.crosshair` 接收准星，`examples/crosshair_presets.rs` 提供独立预设库的导入、列出、生成和删除入口。
@@ -419,15 +423,13 @@ $env:ICED_BACKEND = 'tiny-skia'
 
 ## 许可证
 
-本项目采用 **ColdEternity Team Source-Available License 1.0**，完整条款见 [LICENSE](LICENSE)。该许可证属于自定义源码可用许可证，未获 OSI 认可。
+本项目采用 **GNU General Public License version 3（GPL-3.0-only）**，完整条款见 [LICENSE](LICENSE)。
 
-- 二次修改、改编、重新打包与衍生发布无需事先授权。
-- 二改版本必须显著标注 **ColdEternity Team**，并保留 [本原始仓库链接](https://github.com/LongCold-ColdEternity-Team/Fast-Pack)。
-- 二改版本发布可执行文件时，必须同时在公开仓库提供可复现该程序的完整对应源码；不得闭源、仅发布混淆源码或缺失关键构建资源。
-- 原版与二改版均不得收费、提供付费下载或会员解锁、捆绑付费产品 / 服务，或用于其他直接、间接商业获利。
-- 不得删除、隐藏作者、许可证及原始仓库信息；二改版本还应说明实质性改动。
+允许使用、研究、修改、分发及商业使用。分发原版或修改后的程序时，应遵守 GPL v3，保留适用的版权和许可声明，并按许可证要求向接收者提供完整对应源码。
 
-第三方依赖遵循其各自许可证，发行包保留相应许可材料。
+第三方依赖及内置资源遵循各自许可证，发行包保留相应许可材料。
+
+[Privacy Policy](PRIVACY.md) · [Code Signing Policy](code-signing-policy.md)
 
 ## Star History
 

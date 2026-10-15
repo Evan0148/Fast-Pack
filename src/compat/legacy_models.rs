@@ -17,6 +17,8 @@ struct Display {
 struct Catalog {
     aliases: BTreeMap<String, String>,
     displays: BTreeMap<String, Display>,
+    #[serde(default)]
+    references: BTreeMap<String, Value>,
 }
 
 static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {
@@ -80,6 +82,36 @@ pub(super) fn capture(root: &Path, source: u32, target: u32) -> Result<Option<Mi
                 format!("minecraft:{}", name.trim_end_matches(".json")),
                 value,
             );
+        }
+    }
+    let mut pending: Vec<_> = models
+        .values()
+        .filter_map(|value: &Value| value["parent"].as_str().map(id))
+        .collect();
+    while let Some(name) = pending.pop() {
+        if models.contains_key(&name) {
+            continue;
+        }
+        if let Some(reference) = CATALOG.references.get(&name) {
+            let mut model = reference.clone();
+            if let Some(textures) = model["textures"].as_object_mut() {
+                for value in textures.values_mut() {
+                    if let Some(reference) = value.as_str() {
+                        let reference = reference.trim_start_matches("minecraft:");
+                        if let Some((kind, name)) = reference.split_once('/')
+                            && matches!(kind, "block" | "item")
+                        {
+                            let legacy = crate::tables::legacy_texture_name(name, kind)
+                                .unwrap_or_else(|| name.into());
+                            *value = json!(format!("{kind}s/{legacy}"));
+                        }
+                    }
+                }
+            }
+            if let Some(parent) = model["parent"].as_str() {
+                pending.push(id(parent));
+            }
+            models.insert(name, model);
         }
     }
     Ok(Some(Migration { models }))

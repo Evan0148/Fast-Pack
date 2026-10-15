@@ -148,6 +148,12 @@ fn main() -> Result<()> {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("LICENSE"),
         portable.join("LICENSE"),
     )?;
+    for name in ["PRIVACY.md", "code-signing-policy.md"] {
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(name),
+            portable.join(name),
+        )?;
+    }
     let license_source = tempfile::tempdir()?;
     copy_tree(licenses, license_source.path())?;
     let model_notices = license_source.path().join("MinecraftResources");
@@ -185,7 +191,7 @@ fn main() -> Result<()> {
     fs::write(
         portable.join("README.txt"),
         format!(
-            "Fast Pack v{version}\nWindows: Windows 7 SP1 / Windows 10 / Windows 11, x64\nDevelopers: ColdEternity Team, Long_Cold, Wind_\nSource: https://github.com/LongCold-ColdEternity-Team/Fast-Pack\nLicense: ColdEternity Team Source-Available License 1.0. Free non-commercial use only.\nGUI: {main_name}\nCLI: {cli_name} 9178.zip --to 1.20.1\nQQ: 663420633; Answer: 快手/B站/抖音\n"
+            "Fast Pack v{version}\nWindows: Windows 7 SP1 / Windows 10 / Windows 11, x64\nDevelopers: ColdEternity Team, Long_Cold, Wind_\nSource: https://github.com/LongCold-ColdEternity-Team/Fast-Pack\nLicense: GNU General Public License version 3 (GPL-3.0-only).\nGUI: {main_name}\nCLI: {cli_name} 9178.zip --to 1.20.1\nQQ: 663420633; Answer: 快手/B站/抖音\n"
         ),
     )?;
     let archive_name = format!("FastPack-v{version}-windows-x64.zip");

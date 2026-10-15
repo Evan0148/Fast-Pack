@@ -199,13 +199,22 @@ fn main() -> Result<()> {
         };
         let modern_name = format!("minecraft:item/{mapped}");
         if modern.contains_key(&modern_name) {
+            let resolved = resolve(name, &legacy, &mut BTreeSet::new());
+            displays.insert(modern_name.clone(), json!({"legacy":resolved["display"].as_object().cloned().unwrap_or_default(),"modern":modern_resolved[&modern_name]["display"].as_object().cloned().unwrap_or_default()}));
             aliases.insert(name.clone(), modern_name);
         }
     }
+    let references: BTreeMap<_, _> = modern
+        .values()
+        .filter_map(|value| value["parent"].as_str())
+        .map(id)
+        .filter(|name| name.starts_with("minecraft:block/"))
+        .filter_map(|name| modern.get(&name).map(|value| (name, value.clone())))
+        .collect();
     fs::write(
         &args[2],
         serde_json::to_vec(
-            &json!({"source":"1.20.1","target":"1.8.9","aliases":aliases,"displays":displays}),
+            &json!({"source":"1.20.1","target":"1.8.9","aliases":aliases,"displays":displays,"references":references}),
         )?,
     )
     .context("无法保存模型映射")?;
