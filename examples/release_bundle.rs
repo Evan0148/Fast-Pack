@@ -127,12 +127,12 @@ fn main() -> Result<()> {
         ("fast-pack-cli.exe", &cli_name),
     ] {
         fs::copy(binaries.join(original), stage.join(name)).context("无法复制发布程序")?;
-        if let Some(upx) = upx.as_ref().filter(|_| original == "fast-pack-cli.exe") {
+        if let Some(upx) = &upx {
             let status = Command::new(upx)
                 .args([
                     "--best",
                     "--lzma",
-                    "--filter=0",
+                    "--all-filters",
                     "--strip-relocs=0",
                     "--compress-icons=0",
                     "--no-progress",

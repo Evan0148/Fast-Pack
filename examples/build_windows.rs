@@ -10,30 +10,35 @@ fn main() -> Result<()> {
     let raw_data = std::env::args_os()
         .skip(2)
         .any(|argument| argument == "--raw-data");
-    let mut command = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
-    command
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .env("RUSTC_BOOTSTRAP", "1")
-        .args([
-            "-Z",
-            "build-std=std,panic_abort",
-            "build",
-            "--release",
-            "--locked",
-            "--target",
-            "x86_64-win7-windows-msvc",
-            "--bins",
-            "--target-dir",
-        ])
-        .arg(&target_dir);
-    if raw_data {
-        command.args(["--no-default-features", "--features", "gpu-renderer"]);
+    for (binary, compact_gui) in [("fast-pack-cli", false), ("FastPack", true)] {
+        let mut command = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+        command
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .env("RUSTC_BOOTSTRAP", "1")
+            .args(["-Z", "build-std=std,panic_abort"])
+            .arg(if compact_gui { "rustc" } else { "build" })
+            .args([
+                "--release",
+                "--locked",
+                "--target",
+                "x86_64-win7-windows-msvc",
+                "--bin",
+                binary,
+                "--target-dir",
+            ])
+            .arg(&target_dir);
+        if raw_data {
+            command.args(["--no-default-features", "--features", "gpu-renderer"]);
+        }
+        if compact_gui {
+            command.args(["--", "-C", "opt-level=z"]);
+        }
+        let status = command.status().context("无法启动 Windows 兼容构建")?;
+        ensure!(
+            status.success(),
+            "Windows 兼容构建失败，请确认已安装 rust-src"
+        );
     }
-    let status = command.status().context("无法启动 Windows 兼容构建")?;
-    ensure!(
-        status.success(),
-        "Windows 兼容构建失败，请确认已安装 rust-src"
-    );
     println!(
         "Windows 7 SP1 / 10 / 11 x64: {}",
         target_dir
