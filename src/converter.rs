@@ -36,6 +36,7 @@ pub struct ConversionOptions {
     pub auto_netherite_sword: bool,
     pub crosshair: Option<crate::crosshair::Crosshair>,
     pub show_attack_indicator: bool,
+    pub custom_items: Vec<crate::compat::custom_items::Rule>,
 }
 
 impl Default for ConversionOptions {
@@ -57,6 +58,7 @@ impl Default for ConversionOptions {
             auto_netherite_sword: true,
             crosshair: None,
             show_attack_indicator: true,
+            custom_items: Vec::new(),
         }
     }
 }
@@ -1373,6 +1375,18 @@ pub fn convert_pack(
         )?;
     }
     report.compatibility.warnings.extend(sky_notes);
+    if !options.custom_items.is_empty() {
+        progress("应用物品自定义", 83);
+        crate::compat::custom_items::apply(
+            &root,
+            options
+                .target_version
+                .as_deref()
+                .unwrap_or(&version_label_of(options.tgt_format)),
+            &options.custom_items,
+            &mut report.assets,
+        )?;
+    }
     if let Some(crosshair) = &options.crosshair {
         crate::crosshair::apply(&root, options.tgt_format, crosshair, &mut report.assets)?;
     }

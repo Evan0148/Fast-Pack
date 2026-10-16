@@ -164,6 +164,10 @@ fn main() -> Result<()> {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/model-integrity-NOTICE.txt"),
         model_notices.join("model-resources-NOTICE.txt"),
     )?;
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/custom-items-NOTICE.txt"),
+        model_notices.join("custom-items-NOTICE.txt"),
+    )?;
     let crosshair_notices = license_source.path().join("CrosshairResources");
     fs::create_dir_all(&crosshair_notices)?;
     for (source, name) in [

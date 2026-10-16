@@ -1,4 +1,6 @@
 use crate::motion::Tween;
+#[path = "item_editor.rs"]
+mod item_editor;
 use anyhow::{Context, Result, ensure};
 use fast_pack::converter::load_extra_renames;
 use fast_pack::{
@@ -20,6 +22,7 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 enum Message {
+    Items(item_editor::Event),
     Tick(Instant),
     Frame(Instant),
     WindowEvent(window::Id, window::Event),
@@ -214,6 +217,7 @@ fn hint_style(colors: Colors) -> container::Style {
 }
 
 struct App {
+    item_editor: item_editor::Editor,
     profile: Option<crate::ui_profile::Profile>,
     preview_pending: Option<u64>,
     preview_request: Option<(u64, PathBuf)>,
@@ -430,6 +434,7 @@ impl App {
             preserve_lang: false,
             preserve_case: false,
             custom_glint: false,
+            item_editor: item_editor::Editor::new(preferences.custom_item_rules),
             custom_crosshair: false,
             show_attack_indicator: preferences.show_attack_indicator,
             crosshair_drawing: preferences.crosshair_drawing,
@@ -532,7 +537,7 @@ impl App {
         }
         if matches!(
             app.capture_stage.as_str(),
-            "advanced" | "crosshair" | "canvas"
+            "advanced" | "crosshair" | "canvas" | "items"
         ) {
             app.advanced = true;
             app.advanced_motion.set(1.0, now, true);
@@ -579,7 +584,13 @@ impl App {
                 }
             }
         }
-        (app, Task::none())
+        let task = if app.capture_stage == "items" {
+            app.item_editor
+                .update(item_editor::Event::Open, &app.target, app.source.clone())
+        } else {
+            Task::none()
+        };
+        (app, task)
     }
 
     fn busy(&self) -> bool {
@@ -1215,6 +1226,7 @@ impl App {
                     crosshair_pen_color: self.crosshair_pen_color,
                     crosshair_name: self.crosshair_name.clone(),
                     show_attack_indicator: self.show_attack_indicator,
+                    custom_item_rules: self.item_editor.rules.clone(),
                 })
                 .is_ok()
             {
@@ -1427,6 +1439,7 @@ impl App {
             auto_netherite_sword: true,
             crosshair,
             show_attack_indicator: self.show_attack_indicator,
+            custom_items: self.item_editor.applied(&self.target),
         };
         self.phase = Phase::Running;
         self.error = None;
@@ -1452,6 +1465,42 @@ impl App {
         self.dispatch_queue(false);
     }
     fn update(&mut self, message: Message) -> Task<Message> {
+        if let Message::Items(event) = message {
+            if self.busy()
+                && !matches!(
+                    event,
+                    item_editor::Event::Catalog(..) | item_editor::Event::Preview(..)
+                )
+            {
+                return Task::none();
+            }
+            let save = matches!(
+                event,
+                item_editor::Event::Save | item_editor::Event::Reset | item_editor::Event::Clear
+            );
+            let scroll =
+                self.capture_stage == "items" && matches!(event, item_editor::Event::Catalog(..));
+            let task = self
+                .item_editor
+                .update(event, &self.target, self.source.clone());
+            if save {
+                self.save_preferences();
+            }
+            return if scroll {
+                Task::batch([
+                    task,
+                    widget::operation::snap_to(
+                        "fast-pack-content",
+                        widget::operation::RelativeOffset {
+                            x: Some(0.0),
+                            y: Some(1.0),
+                        },
+                    ),
+                ])
+            } else {
+                task
+            };
+        }
         self.now = Instant::now();
         match message {
             Message::Frame(now) => {
@@ -1689,6 +1738,7 @@ impl App {
                     return iced::exit();
                 }
                 let can_capture = match self.capture_stage.as_str() {
+                    "items" => self.item_editor.ready(&self.target),
                     "sky" => self.sky_preview.is_some(),
                     "running" => self.busy(),
                     "done" => self.phase == Phase::Done,
@@ -2343,7 +2393,7 @@ impl App {
             }
             _ => {}
         }
-        Task::none()
+        self.item_editor.sync(&self.target, self.source.clone())
     }
 
     fn action<'a>(
@@ -3537,6 +3587,7 @@ impl App {
             options,
             self.glint_controls(),
             self.crosshair_controls(),
+            self.items_view(),
             row![
                 self.action(
                     8,

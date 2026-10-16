@@ -29,6 +29,7 @@ pub struct Preferences {
     pub crosshair_pen_color: [u8; 3],
     pub crosshair_name: String,
     pub show_attack_indicator: bool,
+    pub custom_item_rules: Vec<fast_pack::compat::custom_items::Rule>,
 }
 
 impl Default for Preferences {
@@ -47,6 +48,7 @@ impl Default for Preferences {
             crosshair_pen_color: [255; 3],
             crosshair_name: "自绘准星".into(),
             show_attack_indicator: true,
+            custom_item_rules: Vec::new(),
         }
     }
 }

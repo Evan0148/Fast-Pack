@@ -7,6 +7,7 @@ fn main() {
         ("assets/model-integrity.jsonl", "model-integrity.deflate"),
         ("assets/modern-items.json", "modern-items.deflate"),
         ("assets/via-items/catalog.json", "via-catalog.deflate"),
+        ("assets/custom-items.json", "custom-items.deflate"),
     ] {
         println!("cargo:rerun-if-changed={source}");
         let original = std::fs::read(source).expect("无法读取内置资源");

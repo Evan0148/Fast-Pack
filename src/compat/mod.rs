@@ -4,6 +4,7 @@ pub mod atlas;
 pub(crate) mod attack_indicator;
 mod beds;
 mod connected_textures;
+pub mod custom_items;
 mod effect_panels;
 mod equipment;
 pub mod glint;

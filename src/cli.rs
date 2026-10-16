@@ -71,6 +71,12 @@ struct Arguments {
     versions: bool,
     #[arg(long, help = "自定义纹理名称映射 JSON 文件")]
     renames: Option<PathBuf>,
+    #[arg(
+        long,
+        value_name = "JSON",
+        help = "按目标版本应用物品改名、大小和贴图描边规则"
+    )]
+    custom_items: Option<PathBuf>,
     #[arg(long, help = "关闭小写规范化")]
     no_lowercase: bool,
     #[arg(long, help = "关闭语言文件转换")]
@@ -159,6 +165,16 @@ pub fn run() -> Result<()> {
             .renames
             .as_deref()
             .map(load_extra_renames)
+            .transpose()?
+            .unwrap_or_default(),
+        custom_items: args
+            .custom_items
+            .as_deref()
+            .map(|path| -> Result<Vec<crate::compat::custom_items::Rule>> {
+                Ok(serde_json::from_slice(
+                    &std::fs::read(path).context("无法读取物品自定义规则")?,
+                )?)
+            })
             .transpose()?
             .unwrap_or_default(),
     };

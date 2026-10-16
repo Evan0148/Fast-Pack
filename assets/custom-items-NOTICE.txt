@@ -1,0 +1,21 @@
+The version-specific item identifiers and availability facts in custom-items.json
+are derived from the public minecraft-data and mcmeta registries and official
+Minecraft Java resource catalogs:
+https://github.com/PrismarineJS/minecraft-data
+https://github.com/misode/mcmeta
+
+English and Simplified Chinese item names, language keys, model resources and
+reference textures are derived from official Mojang Studios / Microsoft clients
+and language assets. Original Minecraft resources retain their respective
+ownership. Fast Pack is not affiliated with or endorsed by Mojang or Microsoft.
+
+custom-item-resources.zip contains a deduplicated resource index and data blob.
+It includes model JSON and item/block reference textures, without game code.
+The uploaded pack's resources take precedence; reference resources are loaded
+only when the item editor needs a missing vanilla model or texture.
+
+Reference clients: 1.8.9, 1.12.2, 1.13.2, 1.19.4, 1.20.1, 1.21.1, 1.21.3,
+and 26.4 snapshot 3. Rebuild the resource blob with the Rust example
+custom_item_resources, passing a JSON map of era names to official client jars.
+Era names: legacy, preflatten, early, pottery, middle, transition, lastclassic,
+modern. Item availability is recorded independently for all supported versions.
