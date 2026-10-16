@@ -255,7 +255,7 @@ fn deleting_a_queued_job_skips_its_conversion_and_preserves_input() {
 }
 
 #[test]
-fn heypixel_cannot_be_enabled_by_conversion_options() {
+fn heypixel_can_be_disabled_per_conversion() {
     let work = tempfile::tempdir().unwrap();
     let input = fixture(work.path(), "disabled");
     let metadata = input.join("fastpack/via-bridge/manifest.json");
@@ -266,7 +266,7 @@ fn heypixel_cannot_be_enabled_by_conversion_options() {
     let options = ConversionOptions {
         target_version: Some("1.20.1".into()),
         tgt_format: 15,
-        heypixel_compat: true,
+        heypixel_compat: false,
         auto_client_setup: true,
         ..Default::default()
     };
@@ -286,6 +286,29 @@ fn heypixel_cannot_be_enabled_by_conversion_options() {
         crate::client_audio::install(work.path())
             .unwrap_err()
             .to_string()
-            .contains("临时停用")
+            .contains("网易 1.20.1")
+    );
+}
+
+#[test]
+fn heypixel_generates_resources_when_enabled_without_configuring_a_client() {
+    let work = tempfile::tempdir().unwrap();
+    let input = fixture(work.path(), "enabled");
+    let output = work.path().join("enabled.zip");
+    let options = ConversionOptions {
+        target_version: Some("1.20.1".into()),
+        tgt_format: 15,
+        heypixel_compat: true,
+        auto_client_setup: false,
+        ..Default::default()
+    };
+    convert_pack(&input, &output, &options, |_, _| {}).unwrap();
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(output).unwrap()).unwrap();
+    let value: serde_json::Value =
+        serde_json::from_reader(zip.by_name("fastpack/via-bridge/manifest.json").unwrap()).unwrap();
+    assert_ne!(value["enabled"], false);
+    assert!(
+        zip.file_names()
+            .any(|name| name.contains("mace") && name.ends_with(".json"))
     );
 }

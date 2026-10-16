@@ -1288,6 +1288,7 @@ impl App {
                     custom_glint: self.custom_glint,
                     glint_color: self.glint_color,
                     heypixel_compat: self.heypixel_compat,
+                    heypixel_settings_version: 1,
                     crosshair_selection: self.crosshair_selected.clone(),
                     crosshair_drawing: self.crosshair_drawing,
                     crosshair_canvas: self.crosshair_canvas.clone(),

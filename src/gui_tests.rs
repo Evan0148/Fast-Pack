@@ -199,12 +199,13 @@ fn reduced_motion_stops_all_interpolations() {
 }
 
 #[test]
-fn heypixel_stays_disabled_when_an_enable_message_is_sent() {
+fn heypixel_is_enabled_by_default_and_can_be_toggled() {
     let mut app = app();
+    assert!(app.heypixel_compat);
+    let _ = app.update(Message::HeyPixel(false));
     assert!(!app.heypixel_compat);
     let _ = app.update(Message::HeyPixel(true));
-    assert!(!app.heypixel_compat);
-    assert_eq!(app.heypixel_motion.value(app.now), 0.0);
+    assert!(app.heypixel_compat);
 }
 
 #[test]

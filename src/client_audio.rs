@@ -6,7 +6,7 @@ mod pending;
 pub use pending::finish_pending;
 pub use pending::{Imported, deploy as import_resource_pack};
 
-pub const ENABLED: bool = false;
+pub const ENABLED: bool = true;
 
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};

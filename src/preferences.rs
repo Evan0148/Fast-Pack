@@ -29,6 +29,8 @@ pub struct Preferences {
     pub custom_glint: bool,
     pub glint_color: [u8; 3],
     pub heypixel_compat: bool,
+    #[serde(default)]
+    pub heypixel_settings_version: u8,
     pub crosshair_selection: Option<String>,
     pub crosshair_drawing: bool,
     pub crosshair_canvas: fast_pack::crosshair::Canvas,
@@ -54,6 +56,7 @@ impl Default for Preferences {
             custom_glint: false,
             glint_color: [255, 255, 255],
             heypixel_compat: fast_pack::client_audio::ENABLED,
+            heypixel_settings_version: 1,
             crosshair_selection: None,
             crosshair_drawing: false,
             crosshair_canvas: fast_pack::crosshair::Canvas::default(),
@@ -112,6 +115,14 @@ fn supported(version: &str) -> bool {
         .any(|(label, _)| label == version)
 }
 
+fn restore_heypixel(preferences: &mut Preferences) {
+    if fast_pack::client_audio::ENABLED && preferences.heypixel_settings_version == 0 {
+        preferences.heypixel_compat = true;
+        preferences.heypixel_settings_version = 1;
+    }
+    preferences.heypixel_compat &= fast_pack::client_audio::ENABLED;
+}
+
 pub fn load() -> Preferences {
     let mut preferences = config_path()
         .ok()
@@ -121,7 +132,7 @@ pub fn load() -> Preferences {
     preferences.target_version = preferences
         .target_version
         .filter(|version| supported(version));
-    preferences.heypixel_compat &= fast_pack::client_audio::ENABLED;
+    restore_heypixel(&mut preferences);
     preferences.export_directory = preferences
         .export_directory
         .filter(|path| path.is_absolute());
@@ -159,4 +170,23 @@ pub fn save(preferences: &Preferences) -> Result<()> {
     temporary.as_file().sync_all()?;
     temporary.persist(&path).context("无法更新偏好设置")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restored_compatibility_defaults_on_once_then_preserves_the_user_choice() {
+        let mut old: Preferences = serde_json::from_str(r#"{"heypixel_compat":false}"#).unwrap();
+        assert_eq!(old.heypixel_settings_version, 0);
+        restore_heypixel(&mut old);
+        assert!(old.heypixel_compat);
+        old.heypixel_compat = false;
+        let mut saved: Preferences =
+            serde_json::from_slice(&serde_json::to_vec(&old).unwrap()).unwrap();
+        restore_heypixel(&mut saved);
+        assert!(!saved.heypixel_compat);
+        assert_eq!(saved.heypixel_settings_version, 1);
+    }
 }
