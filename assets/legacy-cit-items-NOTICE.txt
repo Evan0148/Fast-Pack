@@ -1,0 +1,5 @@
+Legacy numeric durability item identifiers and Minecraft item registry names.
+Factual identifier mapping, including all 52 damageable items in Java 1.12.
+Reference data: https://github.com/PrismarineJS/minecraft-data/blob/master/data/pc/1.12/items.json
+CIT rule semantics: https://github.com/sp614x/optifine/blob/master/OptiFineDoc/doc/cit_single.properties
+No implementation code from these projects is included.

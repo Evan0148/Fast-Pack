@@ -3,6 +3,7 @@ pub mod assets;
 pub mod atlas;
 pub(crate) mod attack_indicator;
 mod beds;
+mod cit;
 mod connected_textures;
 pub mod custom_items;
 mod effect_panels;
@@ -41,6 +42,7 @@ pub(crate) fn migrate_versioned_assets(
     heypixel_compat: bool,
 ) -> anyhow::Result<()> {
     beds::migrate(root, target, version, report)?;
+    cit::migrate(root, target, report)?;
     if version == "1.20.1" && !heypixel_compat {
         via_items::disable(root, report)?;
     } else {
