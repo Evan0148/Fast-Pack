@@ -76,10 +76,10 @@ fn references(value: &Value, result: &mut BTreeSet<String>) {
     match value {
         Value::Object(values) => {
             for (key, value) in values {
-                if key == "model" {
-                    if let Some(value) = value.as_str() {
-                        result.insert(id(value));
-                    }
+                if matches!(key.as_str(), "model" | "base")
+                    && let Some(value) = value.as_str()
+                {
+                    result.insert(id(value));
                 } else {
                     references(value, result);
                 }
@@ -134,10 +134,9 @@ fn main() -> Result<()> {
     let mut sprites = BTreeSet::new();
     let mut virtual_textures = BTreeSet::new();
     for collection in [&reference, &uploaded] {
-        for (_, bytes) in collection
-            .iter()
-            .filter(|(path, _)| path.ends_with("/atlases/blocks.json"))
-        {
+        for (_, bytes) in collection.iter().filter(|(path, _)| {
+            path.ends_with("/atlases/blocks.json") || path.ends_with("/atlases/items.json")
+        }) {
             let value: Value = serde_json::from_slice(bytes)?;
             for source in value["sources"].as_array().into_iter().flatten() {
                 match source["type"]
@@ -192,7 +191,7 @@ fn main() -> Result<()> {
     }
     let mut roots = BTreeMap::<String, BTreeSet<String>>::new();
     for (path, bytes) in &files {
-        if path.contains("/blockstates/") && path.ends_with(".json") {
+        if (path.contains("/blockstates/") || path.contains("/items/")) && path.ends_with(".json") {
             if let Ok(value) = serde_json::from_slice(bytes) {
                 let mut names = BTreeSet::new();
                 references(&value, &mut names);

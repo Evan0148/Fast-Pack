@@ -1,8 +1,9 @@
 use super::assets::{AssetReport, open, save};
+use crate::packfs as fs;
+use crate::packfs::PathExt;
 use anyhow::Result;
 use image::{RgbaImage, imageops};
 use serde_json::json;
-use std::fs;
 use std::path::Path;
 
 const ALIASES: &[(&str, &str)] = &[
@@ -59,7 +60,7 @@ fn source(root: &Path, name: &str) -> Option<std::path::PathBuf> {
     ]
     .into_iter()
     .map(|name| root.join(format!("{name}.png")))
-    .find(|p| p.is_file())
+    .find(|p| p.pack_is_file())
 }
 
 pub(super) fn migrate(
@@ -75,13 +76,13 @@ pub(super) fn migrate(
     let mut count = 0;
     for (legacy, modern) in ALIASES {
         let output = textures.join(format!("{legacy}.png"));
-        if output.is_file() {
+        if output.pack_is_file() {
             continue;
         }
         if let Some(input) = source(&textures, modern) {
             fs::create_dir_all(output.parent().unwrap())?;
             fs::copy(&input, &output)?;
-            if input.with_extension("png.mcmeta").is_file() {
+            if input.with_extension("png.mcmeta").pack_is_file() {
                 fs::copy(
                     input.with_extension("png.mcmeta"),
                     output.with_extension("png.mcmeta"),
@@ -92,7 +93,7 @@ pub(super) fn migrate(
     }
     for (name, frames) in [("clock", 64), ("compass", 32)] {
         let output = textures.join(format!("items/{name}.png"));
-        if output.is_file() {
+        if output.pack_is_file() {
             continue;
         }
         let mut provided = Vec::new();

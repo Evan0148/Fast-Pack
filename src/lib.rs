@@ -15,4 +15,6 @@ pub use tables::{
 };
 mod archive;
 mod embedded;
+mod packfs;
+mod parallel;
 mod probe;

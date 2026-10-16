@@ -1,8 +1,9 @@
 use super::assets::{AssetReport, backup};
+use crate::packfs as fs;
+use crate::packfs::PathExt;
 use anyhow::Result;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
-use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -16,7 +17,7 @@ static EVENTS: LazyLock<Map<String, Value>> = LazyLock::new(|| {
 });
 
 fn read(path: &Path, report: &mut AssetReport) -> Result<Option<Map<String, Value>>> {
-    if !path.is_file() {
+    if !path.pack_is_file() {
         return Ok(Some(Map::new()));
     }
     match serde_json::from_slice(&fs::read(path)?) {
@@ -33,7 +34,7 @@ fn read(path: &Path, report: &mut AssetReport) -> Result<Option<Map<String, Valu
 
 fn write(root: &Path, path: &Path, value: &Value) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(value)?;
-    if path.is_file() {
+    if path.pack_is_file() {
         if fs::read(path)? == bytes {
             return Ok(());
         }
@@ -42,7 +43,7 @@ fn write(root: &Path, path: &Path, value: &Value) -> Result<()> {
     fs::create_dir_all(path.parent().unwrap())?;
     let temporary = path.with_extension("json.fastpack-new");
     fs::write(&temporary, bytes)?;
-    if path.is_file() {
+    if path.pack_is_file() {
         fs::remove_file(path)?;
     }
     fs::rename(temporary, path)?;
@@ -69,7 +70,11 @@ pub(super) fn migrate(
     version: &str,
     report: &mut AssetReport,
 ) -> Result<()> {
-    if target >= 34 || !root.join("fastpack/via-bridge/manifest.json").is_file() {
+    if target >= 34
+        || !root
+            .join("fastpack/via-bridge/manifest.json")
+            .pack_is_file()
+    {
         return Ok(());
     }
     let path = root.join("assets/minecraft/sounds.json");
@@ -93,7 +98,7 @@ pub(super) fn migrate(
                 continue;
             };
             let destination = root.join("assets/minecraft/sounds").join(&file);
-            if destination.is_file() || file == "random/bow.ogg" {
+            if destination.pack_is_file() || file == "random/bow.ogg" {
                 continue;
             }
             fs::create_dir_all(destination.parent().unwrap())?;

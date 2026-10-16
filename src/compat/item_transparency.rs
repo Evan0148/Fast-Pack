@@ -1,10 +1,11 @@
 use super::assets::{AssetReport, open, save};
+use crate::packfs as fs;
+use crate::packfs::PathExt;
+use crate::packfs::WalkDir;
 use anyhow::Result;
 use serde_json::Value;
 use std::collections::BTreeSet;
-use std::fs;
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 
 fn model_path(root: &Path, reference: &str) -> Option<PathBuf> {
     let (namespace, name) = reference
@@ -37,7 +38,7 @@ fn generated(root: &Path, name: &str) -> bool {
         let Some(path) = model_path(root, &next) else {
             return false;
         };
-        let value = if path.is_file() {
+        let value = if path.pack_is_file() {
             let Ok(bytes) = fs::read(&path) else {
                 return false;
             };
@@ -90,7 +91,7 @@ pub(super) fn migrate(
     } else {
         "assets/minecraft/textures/items"
     });
-    if !directory.is_dir() {
+    if !directory.pack_is_dir() {
         return Ok(());
     }
     let mut count = 0;

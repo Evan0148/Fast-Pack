@@ -27,6 +27,6 @@ and block-state JSON from the 1.15.2, 1.16.5, 1.20.1, 1.21.5, 1.21.6 and 26.2 cl
 The modern_default_catalog Rust example rebuilds this identifier-only reference.
 
 item-transitions.json contains official item model and dispatch JSON references
-from the 1.20.1, 1.21.1 and 1.21.10 clients, used to preserve state transitions
+from the 1.20.1, 1.21.1, 1.21.10 and 1.21.11 clients, used to preserve state transitions
 and special-renderer compatibility. No client code or texture images are included.
 Regenerate with the item_transition_catalog Rust example.

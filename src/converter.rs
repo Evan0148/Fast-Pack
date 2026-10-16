@@ -1,3 +1,6 @@
+use crate::packfs::PathExt;
+use crate::packfs::WalkDir;
+use crate::packfs::{self as fs, File};
 use crate::tables::{
     LATEST_VERSION, LEGACY_VERSION, NEW_META_MIN_FORMAT, flatten_texture_name, legacy_texture_name,
     tables, version_label_of,
@@ -8,11 +11,10 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, File};
-use std::io::Write;
+use std::io::{Cursor, Read, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use tempfile::{TempDir, tempdir};
-use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
@@ -262,13 +264,13 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
 }
 
 pub(crate) fn find_pack_root(base: &Path) -> Result<PathBuf> {
-    if base.join("pack.mcmeta").exists() {
+    if base.join("pack.mcmeta").pack_exists() {
         return Ok(base.into());
     }
     let children = directory_entries(base)?;
     for name in ["pack.mcmeta", "assets"] {
         for child in &children {
-            if child.is_dir() && child.join(name).exists() {
+            if child.pack_is_dir() && child.join(name).pack_exists() {
                 return Ok(child.clone());
             }
         }
@@ -278,17 +280,76 @@ pub(crate) fn find_pack_root(base: &Path) -> Result<PathBuf> {
 
 pub fn load_pack(source: &Path) -> Result<(TempDir, PathBuf)> {
     let work = tempdir().context("无法创建临时工作目录")?;
-    let base = work.path().join("in");
-    if source.is_dir() {
+    let root = load_pack_into(source, &work.path().join("in"))?;
+    Ok((work, root))
+}
+
+fn load_pack_into(source: &Path, base: &Path) -> Result<PathBuf> {
+    if source.pack_is_dir() && fs::mounted(base) {
+        fs::create_dir_all(base)?;
+        let mut files = Vec::new();
+        for entry in WalkDir::new(source).min_depth(1) {
+            let entry = entry?;
+            ensure!(
+                !entry.file_type().is_symlink(),
+                "不支持符号链接: {}",
+                entry.path().display()
+            );
+            let target = base.join(entry.path().strip_prefix(source)?);
+            if entry.file_type().is_dir() {
+                fs::create_dir_all(target)?;
+            } else if entry.file_type().is_file() {
+                files.push((entry.into_path(), target));
+            }
+        }
+        let loaded = crate::parallel::map(&files, |(path, target)| {
+            Ok((target.clone(), Arc::<[u8]>::from(std::fs::read(path)?)))
+        })?;
+        for (target, bytes) in loaded {
+            fs::write_shared(&target, bytes)?;
+        }
+    } else if source.pack_is_dir() {
         copy_tree(source, &base)?;
-    } else {
-        fs::create_dir_all(&base)?;
-        let mut archive = ZipArchive::new(
-            File::open(source).with_context(|| format!("无法读取 {}", source.display()))?,
-        )
-        .context("不是有效的 ZIP 材质包")?;
+    } else if !fs::mounted(base) {
+        fs::create_dir_all(base)?;
+        let mut archive = ZipArchive::new(crate::archive::ArchiveReader::new(
+            std::fs::File::open(source)?,
+        )?)?;
         for index in 0..archive.len() {
             let mut entry = archive.by_index(index)?;
+            let name = entry.name().replace('\\', "/");
+            let relative = Path::new(&name);
+            if name.contains(':')
+                || relative.is_absolute()
+                || relative.components().any(|part| {
+                    matches!(
+                        part,
+                        Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                    )
+                })
+                || entry
+                    .unix_mode()
+                    .is_some_and(|mode| mode & 0o170000 == 0o120000)
+            {
+                continue;
+            }
+            let path = base.join(relative);
+            if entry.is_dir() {
+                fs::create_dir_all(path)?;
+            } else {
+                fs::create_dir_all(path.parent().unwrap())?;
+                std::io::copy(&mut entry, &mut File::create(path)?)?;
+            }
+        }
+    } else {
+        fs::create_dir_all(&base)?;
+        let bytes: Arc<[u8]> = std::fs::read(source)
+            .with_context(|| format!("无法读取 {}", source.display()))?
+            .into();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).context("不是有效的 ZIP 材质包")?;
+        let mut files = Vec::new();
+        for index in 0..archive.len() {
+            let entry = archive.by_index_raw(index)?;
             let name = entry.name().replace('\\', "/");
             let relative = Path::new(&name);
             if name.contains(':')
@@ -315,12 +376,41 @@ pub fn load_pack(source: &Path) -> Result<(TempDir, PathBuf)> {
                 if let Some(parent) = target.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                std::io::copy(&mut entry, &mut File::create(&target)?)?;
+                files.push((index, target));
+            }
+        }
+        let chunks: Vec<_> = files
+            .chunks(files.len().div_ceil(crate::parallel::threads()).max(1))
+            .collect();
+        let loaded = crate::parallel::map(&chunks, |chunk| {
+            let mut archive = archive.clone();
+            chunk
+                .iter()
+                .map(|(index, target)| {
+                    let mut entry = archive.by_index(*index)?;
+                    let mut bytes = Vec::new();
+                    bytes
+                        .try_reserve_exact(usize::try_from(entry.size())?)
+                        .context("材质包资源过大，内存不足")?;
+                    entry.read_to_end(&mut bytes)?;
+                    Ok((*index, target.clone(), Arc::<[u8]>::from(bytes)))
+                })
+                .collect::<Result<Vec<_>>>()
+        })?;
+        fs::set_source(base, archive);
+        for chunk in loaded {
+            for (index, target, bytes) in chunk {
+                if target
+                    .extension()
+                    .is_some_and(|ext| matches!(ext.to_str(), Some("png" | "jpg" | "jpeg" | "ogg")))
+                {
+                    fs::retain_original(&target, index, bytes.clone());
+                }
+                fs::write_shared(&target, bytes)?;
             }
         }
     }
-    let root = find_pack_root(&base)?;
-    Ok((work, root))
+    find_pack_root(base)
 }
 
 fn numeric_format(value: &Value) -> Option<u32> {
@@ -344,7 +434,7 @@ pub fn detect_format(root: &Path) -> Option<u32> {
         return Some(format);
     }
     root.join("assets/minecraft/textures/blocks")
-        .exists()
+        .pack_exists()
         .then_some(1)
 }
 
@@ -394,7 +484,7 @@ pub fn suggest_target(format: Option<u32>) -> &'static str {
 }
 
 pub fn suggest_output(source: &Path, target: &str, as_zip: bool) -> PathBuf {
-    let name = if source.is_dir() {
+    let name = if source.pack_is_dir() {
         source.file_name()
     } else {
         source.file_stem()
@@ -447,7 +537,7 @@ fn normalize_lowercase(root: &Path) -> Result<usize> {
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         let lower = name.to_lowercase();
         let target = path.with_file_name(&lower);
-        if lower != name && !target.exists() {
+        if lower != name && !target.pack_exists() {
             fs::rename(&path, target)?;
             count += 1;
         }
@@ -530,7 +620,7 @@ fn backup_texture(root: &Path, path: &Path) -> Result<()> {
     let destination = root
         .join("fastpack/original-assets")
         .join(path.strip_prefix(root)?);
-    if !destination.exists() {
+    if !destination.pack_exists() {
         fs::create_dir_all(destination.parent().unwrap())?;
         fs::copy(path, destination)?;
     }
@@ -544,7 +634,7 @@ fn migrate_textures(
     report: &mut ConversionReport,
 ) -> Result<HashMap<String, String>> {
     let assets = root.join("assets");
-    if !assets.is_dir() {
+    if !assets.pack_is_dir() {
         return Ok(HashMap::new());
     }
     let mut references = HashSet::new();
@@ -570,7 +660,7 @@ fn migrate_textures(
     };
     let mut renames = HashMap::new();
     for namespace in directory_entries(&assets)? {
-        if !namespace.is_dir() {
+        if !namespace.pack_is_dir() {
             continue;
         }
         let namespace_name = namespace.file_name().unwrap_or_default().to_string_lossy();
@@ -578,14 +668,14 @@ fn migrate_textures(
         for (old, new) in pairs {
             let source = texture.join(old);
             let target = texture.join(new);
-            if !source.is_dir() {
+            if !source.pack_is_dir() {
                 continue;
             }
             fs::create_dir_all(&target)?;
             for path in walk_files(&source)? {
                 let relative = path.strip_prefix(&source)?;
                 let destination = target.join(relative);
-                if destination.exists() {
+                if destination.pack_exists() {
                     if !reverse
                         && prefer_legacy_texture(
                             relative,
@@ -620,7 +710,7 @@ fn migrate_textures(
         };
         for (folder, kind) in folders {
             let directory = texture.join(folder);
-            if !directory.exists() {
+            if !directory.pack_exists() {
                 continue;
             }
             for path in walk_files(&directory)? {
@@ -659,7 +749,7 @@ fn migrate_textures(
                         "自定义纹理名称不合法: {new}"
                     );
                     let target = path.with_file_name(format!("{new}{suffix}"));
-                    if target.exists() {
+                    if target.pack_exists() {
                         if !reverse
                             && prefer_legacy_texture(
                                 path.strip_prefix(&directory)?,
@@ -746,7 +836,7 @@ fn canonical_texture_aliases(
         return Ok(renames);
     }
     let directory = root.join("assets/minecraft/textures/block");
-    if !directory.is_dir() {
+    if !directory.pack_is_dir() {
         return Ok(renames);
     }
     for path in walk_files(&directory)? {
@@ -762,12 +852,12 @@ fn canonical_texture_aliases(
             continue;
         };
         let destination = path.with_file_name(format!("{mapped}{suffix}"));
-        if destination.exists() {
+        if destination.pack_exists() {
             continue;
         }
         let relative = path.strip_prefix(root)?;
         let backup = root.join("fastpack/original-assets").join(relative);
-        if !backup.exists() {
+        if !backup.pack_exists() {
             fs::create_dir_all(backup.parent().unwrap())?;
             fs::copy(&path, backup)?;
         }
@@ -880,11 +970,11 @@ fn rewrite_texture_values(
 
 fn convert_languages(root: &Path, reverse: bool, report: &mut ConversionReport) -> Result<()> {
     let directory = root.join("assets/minecraft/lang");
-    if !directory.exists() {
+    if !directory.pack_exists() {
         return Ok(());
     }
     for path in directory_entries(&directory)? {
-        if !path.is_file() {
+        if !path.pack_is_file() {
             continue;
         }
         let extension = path
@@ -966,7 +1056,7 @@ fn post_renames(root: &Path, report: &mut ConversionReport) -> Result<()> {
         if report.src_format < boundary && boundary <= report.tgt_format {
             for folder in ["block", "item"] {
                 let path = texture.join(folder).join(format!("{old}.png"));
-                if path.exists() {
+                if path.pack_exists() {
                     fs::rename(path, texture.join(folder).join(format!("{new}.png")))?;
                     report.textures_renamed.push(format!(
                         "textures/{folder}/{old}.png -> {new}.png ({label})"
@@ -982,7 +1072,7 @@ fn post_renames(root: &Path, report: &mut ConversionReport) -> Result<()> {
         if report.tgt_format < boundary && boundary <= report.src_format {
             for folder in ["blocks", "items"] {
                 let path = texture.join(folder).join(format!("{new}.png"));
-                if path.exists() {
+                if path.pack_exists() {
                     fs::rename(path, texture.join(folder).join(format!("{old}.png")))?;
                     report.textures_renamed.push(format!(
                         "textures/{folder}/{new}.png -> {old}.png (降级 {label})"
@@ -1058,7 +1148,7 @@ fn absolute_normalized(path: &Path) -> Result<PathBuf> {
     }
     let mut missing = Vec::new();
     let mut ancestor = result.clone();
-    while !ancestor.exists() {
+    while !ancestor.pack_exists() {
         if let Some(name) = ancestor.file_name() {
             missing.push(name.to_owned());
         }
@@ -1066,8 +1156,8 @@ fn absolute_normalized(path: &Path) -> Result<PathBuf> {
             break;
         }
     }
-    if ancestor.exists() {
-        result = ancestor.canonicalize()?;
+    if ancestor.pack_exists() {
+        result = ancestor.pack_canonicalize()?;
         for part in missing.into_iter().rev() {
             result.push(part);
         }
@@ -1083,7 +1173,7 @@ fn validate_output(source: &Path, destination: &Path) -> Result<()> {
         !source.starts_with(&destination),
         "输出路径不能是源材质包的上级目录"
     );
-    if source.is_dir() {
+    if source.pack_is_dir() {
         ensure!(
             !destination.starts_with(&source),
             "输出路径不能位于源材质包内部"
@@ -1099,13 +1189,12 @@ pub(crate) fn archive_options(_: &Path) -> SimpleFileOptions {
 }
 
 fn save_output(root: &Path, destination: &Path, as_zip: bool) -> Result<()> {
-    if destination.exists() {
-        if destination.is_dir() {
+    if destination.pack_exists() {
+        if destination.pack_is_dir() {
             ensure!(!as_zip, "ZIP 输出路径是一个文件夹");
             fs::remove_dir_all(destination)?;
         } else {
             ensure!(as_zip, "文件夹输出路径是一个文件");
-            fs::remove_file(destination)?;
         }
     }
     if let Some(parent) = destination
@@ -1115,18 +1204,48 @@ fn save_output(root: &Path, destination: &Path, as_zip: bool) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     if as_zip {
-        let mut archive = ZipWriter::new(crate::archive::ArchiveWriter::new(File::create(
-            destination,
-        )?)?);
-        for path in walk_files(root)? {
-            let name = path
-                .strip_prefix(root)?
-                .to_string_lossy()
-                .replace('\\', "/");
-            archive.start_file(name, archive_options(&path))?;
-            std::io::copy(&mut File::open(path)?, &mut archive)?;
+        let parent = destination
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        let mut archive =
+            ZipWriter::new(crate::archive::ArchiveWriter::new(temporary.as_file_mut())?);
+        if let Some(input) = fs::output_entries(root) {
+            let chunks: Vec<_> = input
+                .chunks(input.len().div_ceil(crate::parallel::threads()).max(1))
+                .collect();
+            let source = fs::source_archive(root);
+            let compressed = crate::parallel::map(&chunks, |chunk| {
+                let mut source = source.clone();
+                let mut archive = ZipWriter::new(Cursor::new(Vec::new()));
+                for (name, bytes, index) in *chunk {
+                    if let Some((source, index)) = source.as_mut().zip(*index) {
+                        archive.raw_copy_file_rename(source.by_index(index)?, name)?;
+                    } else {
+                        archive.start_file(name, archive_options(Path::new(name)))?;
+                        archive.write_all(bytes)?;
+                    }
+                }
+                Ok(archive.finish()?.into_inner())
+            })?;
+            for bytes in compressed {
+                archive.merge_archive(ZipArchive::new(Cursor::new(bytes))?)?;
+            }
+        } else {
+            for path in walk_files(root)? {
+                let name = path
+                    .strip_prefix(root)?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                archive.start_file(name, archive_options(&path))?;
+                std::io::copy(&mut File::open(path)?, &mut archive)?;
+            }
         }
         archive.finish()?.flush()?;
+        temporary
+            .persist(destination)
+            .map_err(|error| error.error)?;
     } else {
         copy_tree(root, destination)?;
     }
@@ -1141,7 +1260,9 @@ pub fn convert_pack(
 ) -> Result<ConversionReport> {
     validate_output(source, destination)?;
     progress("载入源包", 3);
-    let (_work, root) = load_pack(source)?;
+    let work = tempdir().context("无法创建临时工作目录")?;
+    let _memory = fs::Mount::for_pack(source, work.path())?;
+    let root = load_pack_into(source, &work.path().join("in"))?;
     let src_format = options.src_format.unwrap_or_else(|| {
         detect_format(&root)
             .filter(|value| *value != 0)
@@ -1274,7 +1395,7 @@ pub fn convert_pack(
     progress("生成报告", 90);
     report.output = Some(destination.display().to_string());
     let embedded_report = root.join("转换报告.txt");
-    if embedded_report.is_file() {
+    if embedded_report.pack_is_file() {
         fs::remove_file(embedded_report)?;
     }
     progress("写入输出", 95);
@@ -1285,9 +1406,18 @@ pub fn convert_pack(
         && options.target_version.as_deref() == Some("1.20.1")
     {
         progress("自动适配布吉岛客户端", 97);
-        crate::client_audio::automatic(source, destination, &root, &mut report.assets, |step| {
-            progress(step, 98)
-        });
+        let client_root = if options.as_zip {
+            root.as_path()
+        } else {
+            destination
+        };
+        crate::client_audio::automatic(
+            source,
+            destination,
+            client_root,
+            &mut report.assets,
+            |step| progress(step, 98),
+        );
     }
     progress("完成", 100);
     Ok(report)
@@ -1307,4 +1437,70 @@ pub fn load_extra_renames(path: &Path) -> Result<Vec<(String, String)>> {
                 .with_context(|| format!("自定义映射 {key} 的值必须是字符串"))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod speed_tests {
+    use super::*;
+    use std::io::{Seek, SeekFrom};
+
+    #[test]
+    fn corrupt_source_does_not_replace_existing_output() {
+        let work = tempdir().unwrap();
+        let source = work.path().join("source.zip");
+        let output = work.path().join("output.zip");
+        let mut zip = ZipWriter::new(std::fs::File::create(&source).unwrap());
+        zip.start_file("pack.mcmeta", SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(br#"{"pack":{"pack_format":15}}"#).unwrap();
+        zip.start_file("assets/test/data.bin", SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"payload").unwrap();
+        zip.finish().unwrap();
+        let offset = {
+            let mut zip = ZipArchive::new(std::fs::File::open(&source).unwrap()).unwrap();
+            zip.by_index_raw(1).unwrap().data_start()
+        };
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&source)
+            .unwrap();
+        file.seek(SeekFrom::Start(offset)).unwrap();
+        file.write_all(b"!").unwrap();
+        drop(file);
+        std::fs::write(&output, b"previous output").unwrap();
+        let options = ConversionOptions {
+            auto_client_setup: false,
+            ..Default::default()
+        };
+        assert!(convert_pack(&source, &output, &options, |_, _| {}).is_err());
+        assert_eq!(std::fs::read(output).unwrap(), b"previous output");
+    }
+
+    #[test]
+    fn parallel_output_preserves_payloads_for_java_compatible_zip_methods() {
+        let work = tempdir().unwrap();
+        let guard = fs::Mount::new(work.path());
+        let root = work.path().join("pack");
+        for index in 0..120 {
+            fs::write(
+                root.join(format!("assets/test/{index}.bin")),
+                vec![index as u8; 2048 + index],
+            )
+            .unwrap();
+        }
+        let output_work = tempdir().unwrap();
+        let output = output_work.path().join("result.zip");
+        save_output(&root, &output, true).unwrap();
+        drop(guard);
+        let mut zip = ZipArchive::new(std::fs::File::open(output).unwrap()).unwrap();
+        assert_eq!(zip.len(), 120);
+        for index in 0..120 {
+            let mut entry = zip.by_name(&format!("assets/test/{index}.bin")).unwrap();
+            assert_eq!(entry.compression(), CompressionMethod::Deflated);
+            let mut bytes = Vec::new();
+            entry.read_to_end(&mut bytes).unwrap();
+            assert_eq!(bytes, vec![index as u8; 2048 + index]);
+        }
+    }
 }

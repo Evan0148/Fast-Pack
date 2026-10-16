@@ -1,9 +1,10 @@
 use super::assets::{AssetReport, backup};
+use crate::packfs as fs;
+use crate::packfs::PathExt;
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -76,7 +77,7 @@ fn model_path(root: &Path, reference: &str) -> Option<PathBuf> {
 
 fn write(root: &Path, path: &Path, value: &Value) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(value)?;
-    if path.is_file() {
+    if path.pack_is_file() {
         if fs::read(path)? == bytes {
             return Ok(());
         }
@@ -85,7 +86,7 @@ fn write(root: &Path, path: &Path, value: &Value) -> Result<()> {
     fs::create_dir_all(path.parent().unwrap())?;
     let temporary = path.with_extension("json.fastpack-new");
     fs::write(&temporary, bytes)?;
-    if path.is_file() {
+    if path.pack_is_file() {
         fs::remove_file(path)?;
     }
     fs::rename(temporary, path)?;
@@ -247,7 +248,7 @@ impl Installer<'_> {
         let output = self
             .root
             .join(format!("assets/minecraft/textures/{name}.png"));
-        if output.is_file() || super::model_integrity::native_texture(self.target, reference) {
+        if output.pack_is_file() || super::model_integrity::native_texture(self.target, reference) {
             return Ok(());
         }
         let Some(bytes) = images::get(&format!("{name}.png")) else {
@@ -257,7 +258,7 @@ impl Installer<'_> {
         fs::write(&output, bytes)?;
         if let Some(metadata) = images::get(&format!("{name}.png.mcmeta")) {
             let path = output.with_extension("png.mcmeta");
-            if !path.is_file() {
+            if !path.pack_is_file() {
                 fs::write(path, metadata)?;
             }
         }
@@ -279,7 +280,7 @@ impl Installer<'_> {
             return Ok(None);
         }
         let source = model_path(self.root, &id).unwrap();
-        let provided = source.is_file();
+        let provided = source.pack_is_file();
         if !provided
             && matches!(
                 name,
@@ -459,7 +460,7 @@ fn numeric_model(
 
 fn tags(root: &Path, carrier: &str, rules: &[(Rule, String)]) -> Result<()> {
     let chime = root.join(format!("assets/minecraft/overrides/item/{carrier}.json"));
-    let mut definition = if chime.is_file() {
+    let mut definition = if chime.pack_is_file() {
         let Ok(value) = serde_json::from_slice::<Value>(&fs::read(&chime)?) else {
             return Ok(());
         };
@@ -504,8 +505,8 @@ fn tags(root: &Path, carrier: &str, rules: &[(Rule, String)]) -> Result<()> {
             ]);
             fs::create_dir_all(path.parent().unwrap())?;
             let text = super::properties::write(&properties);
-            if !path.is_file() || fs::read(&path)? != text.as_bytes() {
-                if path.is_file() {
+            if !path.pack_is_file() || fs::read(&path)? != text.as_bytes() {
+                if path.pack_is_file() {
                     backup(root, &path)?;
                 }
                 fs::write(path, text)?;
@@ -515,23 +516,55 @@ fn tags(root: &Path, carrier: &str, rules: &[(Rule, String)]) -> Result<()> {
     write(root, &chime, &definition)
 }
 
-fn modern(root: &Path, carrier: &str, rules: &[(Rule, String)]) -> Result<()> {
+fn modern(root: &Path, target: u32, carrier: &str, rules: &[(Rule, String)]) -> Result<()> {
     let path = root.join(format!("assets/minecraft/items/{carrier}.json"));
     let saved = root.join(format!("fastpack/via-bridge/definitions/{carrier}.json"));
-    let mut value = if saved.is_file() {
+    let entry = format!("minecraft:item/{carrier}");
+    let provided = model_path(root, &entry).is_some_and(|path| path.pack_is_file());
+    let native = super::modern_items::definition_reference(target, carrier)
+        .unwrap_or_else(|| json!({"model":{"type":"minecraft:model","model":entry}}));
+    let default = if provided {
+        json!({"model":{"type":"minecraft:model","model":entry}})
+    } else {
+        native.clone()
+    };
+    let mut value = if saved.pack_is_file() {
         serde_json::from_slice::<Value>(&fs::read(&saved)?)?
-    } else if path.is_file() {
+    } else if path.pack_is_file() {
         serde_json::from_slice::<Value>(&fs::read(&path)?)?
     } else {
-        json!({"model":{"type":"minecraft:model","model":format!("minecraft:item/{carrier}")}})
+        default
     };
-    if !saved.is_file() {
+    fn repair_default(value: &mut Value, entry: &str, native: &Value) {
+        if value["type"]
+            .as_str()
+            .is_some_and(|name| name.trim_start_matches("minecraft:") == "model")
+            && value["model"].as_str().is_some_and(|name| {
+                name.trim_start_matches("minecraft:") == entry.trim_start_matches("minecraft:")
+            })
+        {
+            *value = native.clone();
+        } else if let Some(values) = value.as_object_mut() {
+            for value in values.values_mut() {
+                repair_default(value, entry, native);
+            }
+        } else if let Some(values) = value.as_array_mut() {
+            for value in values {
+                repair_default(value, entry, native);
+            }
+        }
+    }
+    if !provided {
+        repair_default(&mut value["model"], &entry, &native["model"]);
+    }
+    if !saved.pack_is_file() {
         fs::create_dir_all(saved.parent().unwrap())?;
         fs::write(&saved, serde_json::to_vec_pretty(&value)?)?;
     }
-    let fallback = value.get("model").cloned().unwrap_or_else(
-        || json!({"type":"minecraft:model","model":format!("minecraft:item/{carrier}")}),
-    );
+    let fallback = value
+        .get("model")
+        .cloned()
+        .unwrap_or_else(|| native["model"].clone());
     let mut entries = Vec::new();
     for (rule, model) in rules {
         entries
@@ -555,9 +588,62 @@ fn modern(root: &Path, carrier: &str, rules: &[(Rule, String)]) -> Result<()> {
     write(root, &path, &value)
 }
 
+#[cfg(test)]
+mod modern_tests {
+    use super::*;
+
+    #[test]
+    fn carrier_fallback_uses_target_definition_and_repairs_previous_generic_entries() {
+        let work = tempfile::tempdir().unwrap();
+        for name in ["end_stone", "granite", "diorite", "smooth_sandstone"] {
+            let saved = work
+                .path()
+                .join(format!("fastpack/via-bridge/definitions/{name}.json"));
+            fs::create_dir_all(saved.parent().unwrap()).unwrap();
+            fs::write(&saved, serde_json::to_vec(&json!({"model":{"type":"minecraft:model","model":format!("minecraft:item/{name}")}})).unwrap()).unwrap();
+            modern(work.path(), 69, name, &[]).unwrap();
+            let value: Value = serde_json::from_slice(
+                &fs::read(
+                    work.path()
+                        .join(format!("assets/minecraft/items/{name}.json")),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                value["model"]["fallback"]["fallback"]["model"],
+                format!("minecraft:block/{name}")
+            );
+        }
+    }
+
+    #[test]
+    fn custom_carrier_model_stays_bound_to_the_author_model() {
+        let work = tempfile::tempdir().unwrap();
+        let model = work
+            .path()
+            .join("assets/minecraft/models/item/end_stone.json");
+        fs::create_dir_all(model.parent().unwrap()).unwrap();
+        fs::write(
+            &model,
+            br#"{"parent":"minecraft:block/end_stone","display":{"gui":{"scale":[0.8,0.8,0.8]}}}"#,
+        )
+        .unwrap();
+        modern(work.path(), 69, "end_stone", &[]).unwrap();
+        let value: Value = serde_json::from_slice(
+            &fs::read(work.path().join("assets/minecraft/items/end_stone.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            value["model"]["fallback"]["fallback"]["model"],
+            "minecraft:item/end_stone"
+        );
+    }
+}
+
 pub(super) fn disable(root: &Path, report: &mut AssetReport) -> Result<()> {
     let metadata = root.join("fastpack/via-bridge/manifest.json");
-    if !metadata.is_file() {
+    if !metadata.pack_is_file() {
         return Ok(());
     }
     let mut manifest: Value = serde_json::from_slice(&fs::read(&metadata)?)?;
@@ -576,7 +662,7 @@ pub(super) fn disable(root: &Path, report: &mut AssetReport) -> Result<()> {
         if let Ok(current) = fs::read(&path).and_then(|bytes| {
             serde_json::from_slice::<Value>(&bytes).map_err(std::io::Error::other)
         }) {
-            if current["fastpack_via_bridge"] == json!(1) && saved.is_file() {
+            if current["fastpack_via_bridge"] == json!(1) && saved.pack_is_file() {
                 write(root, &path, &serde_json::from_slice(&fs::read(saved)?)?)?;
             }
         }
@@ -595,8 +681,8 @@ pub(super) fn disable(root: &Path, report: &mut AssetReport) -> Result<()> {
         }
     }
     let cit = root.join("assets/minecraft/optifine/cit/fastpack_via");
-    if cit.is_dir() {
-        for entry in walkdir::WalkDir::new(&cit).min_depth(1) {
+    if cit.pack_is_dir() {
+        for entry in crate::packfs::WalkDir::new(&cit).min_depth(1) {
             let entry = entry?;
             if entry.file_type().is_file()
                 && entry
@@ -670,7 +756,7 @@ pub(super) fn migrate(
     for (carrier, rules) in &carriers {
         let path = root.join(format!("assets/minecraft/models/item/{carrier}.json"));
         let saved = root.join(format!("fastpack/via-bridge/base/{carrier}.json"));
-        let current = if path.is_file() {
+        let current = if path.pack_is_file() {
             let Ok(value) = serde_json::from_slice::<Value>(&fs::read(&path)?) else {
                 report.warnings.push(format!(
                     "协议物品 {carrier}：原包物品模型 JSON 无效，已保留原文件，跳过该载体"
@@ -688,12 +774,13 @@ pub(super) fn migrate(
                 })
                 .unwrap_or_else(|| profile.carriers[carrier].clone())
         };
-        let original = if current.get("fastpack_via_bridge") == Some(&json!(1)) && saved.is_file() {
-            serde_json::from_slice::<Value>(&fs::read(&saved)?)?
-        } else {
-            current
-        };
-        if !saved.is_file() {
+        let original =
+            if current.get("fastpack_via_bridge") == Some(&json!(1)) && saved.pack_is_file() {
+                serde_json::from_slice::<Value>(&fs::read(&saved)?)?
+            } else {
+                current
+            };
+        if !saved.pack_is_file() {
             fs::create_dir_all(saved.parent().unwrap())?;
             fs::write(saved, serde_json::to_vec_pretty(&original)?)?;
         }
@@ -701,13 +788,13 @@ pub(super) fn migrate(
             numeric_model(root, carrier, &original, rules, report)?;
             tags(root, carrier, rules)?;
         } else {
-            modern(root, carrier, rules)?;
+            modern(root, target, carrier, rules)?;
         }
         count += rules.len();
     }
     for (language, translations) in &CATALOG.languages {
         let path = root.join(format!("assets/minecraft/lang/{language}.json"));
-        let mut values = if path.is_file() {
+        let mut values = if path.pack_is_file() {
             let Ok(value) = serde_json::from_slice::<Value>(&fs::read(&path)?) else {
                 continue;
             };

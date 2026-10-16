@@ -1,4 +1,5 @@
 use super::assets::{AssetReport, save};
+use crate::packfs::PathExt;
 use anyhow::Result;
 use image::{Rgba, RgbaImage, imageops};
 use std::path::Path;
@@ -34,10 +35,10 @@ pub(super) fn migrate(
     }
     let textures = root.join("assets/minecraft/textures");
     let path = textures.join("gui/container/inventory.png");
-    if !path.is_file() {
+    if !path.pack_is_file() {
         return Ok(());
     }
-    let mut atlas = image::open(&path)?.to_rgba8();
+    let mut atlas = crate::packfs::open_image(&path)?.to_rgba8();
     let scale = atlas.width() / 256;
     if scale == 0 || !atlas.width().is_multiple_of(256) || atlas.height() < 198 * scale {
         return Ok(());
@@ -51,10 +52,10 @@ pub(super) fn migrate(
                 "fastpack/original-assets/assets/minecraft/textures/gui/container/inventory.png",
             ),
         ] {
-            if !candidate.is_file() {
+            if !candidate.pack_is_file() {
                 continue;
             }
-            let image = image::open(candidate)?.to_rgba8();
+            let image = crate::packfs::open_image(candidate)?.to_rgba8();
             let image = if image.width().is_multiple_of(256)
                 && image.height() >= 198 * (image.width() / 256)
             {

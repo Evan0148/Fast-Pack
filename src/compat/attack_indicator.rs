@@ -1,7 +1,8 @@
 use super::assets::{AssetReport, open, save};
+use crate::packfs as fs;
+use crate::packfs::PathExt;
 use anyhow::Result;
 use image::{Rgba, RgbaImage, imageops};
-use std::fs;
 use std::path::Path;
 
 const REGIONS: [(&str, u32, u32, u32, u32); 5] = [
@@ -27,7 +28,7 @@ pub(crate) fn apply(root: &Path, target: u32, show: bool, report: &mut AssetRepo
         image::load_from_memory(include_bytes!("../../assets/crosshair/legacy-icons.png"))?
             .to_rgba8();
     let mut atlas = if target < 18 {
-        Some(if icons.is_file() {
+        Some(if icons.pack_is_file() {
             open(&icons)?
         } else {
             native.clone()
@@ -58,7 +59,7 @@ pub(crate) fn apply(root: &Path, target: u32, show: bool, report: &mut AssetRepo
                 imageops::crop_imm(atlas, x * scale, y * scale, width * scale, height * scale)
                     .to_image(),
             )
-        } else if path.is_file() {
+        } else if path.pack_is_file() {
             Some(open(&path)?)
         } else {
             None
@@ -67,7 +68,7 @@ pub(crate) fn apply(root: &Path, target: u32, show: bool, report: &mut AssetRepo
             if let Some(current) = current.as_ref().filter(|image| visible(image)) {
                 current.clone()
             } else {
-                let restored = if original.is_file() {
+                let restored = if original.pack_is_file() {
                     Some(open(&original)?)
                 } else {
                     None
@@ -79,10 +80,10 @@ pub(crate) fn apply(root: &Path, target: u32, show: bool, report: &mut AssetRepo
         } else {
             if let Some(current) = &current
                 && visible(current)
-                && !original.is_file()
+                && !original.pack_is_file()
             {
                 fs::create_dir_all(&originals)?;
-                current.save(&original)?;
+                crate::packfs::save_image(current, &original)?;
             }
             let size = current
                 .as_ref()
@@ -104,9 +105,9 @@ pub(crate) fn apply(root: &Path, target: u32, show: bool, report: &mut AssetRepo
         } else if current.as_ref() != Some(&tile) {
             save(root, &path, &tile)?;
             let metadata = path.with_extension("png.mcmeta");
-            if metadata.is_file() {
+            if metadata.pack_is_file() {
                 let original_metadata = original.with_extension("png.mcmeta");
-                if !original_metadata.is_file() {
+                if !original_metadata.pack_is_file() {
                     fs::create_dir_all(&originals)?;
                     fs::copy(&metadata, &original_metadata)?;
                 }
@@ -115,7 +116,7 @@ pub(crate) fn apply(root: &Path, target: u32, show: bool, report: &mut AssetRepo
             }
             if show {
                 let original_metadata = original.with_extension("png.mcmeta");
-                if original_metadata.is_file() {
+                if original_metadata.pack_is_file() {
                     fs::copy(original_metadata, &metadata)?;
                 }
             }

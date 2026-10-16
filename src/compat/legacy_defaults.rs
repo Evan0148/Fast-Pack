@@ -1,8 +1,9 @@
+use crate::packfs as fs;
+use crate::packfs::PathExt;
 use anyhow::Result;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -102,7 +103,7 @@ pub(crate) fn prepare(root: &Path, source: u32, target: u32) -> Result<Vec<Strin
         return Ok(Vec::new());
     }
     let mut resources = BTreeMap::new();
-    for entry in walkdir::WalkDir::new(root.join("assets")).min_depth(1) {
+    for entry in crate::packfs::WalkDir::new(root.join("assets")).min_depth(1) {
         let entry = entry?;
         if !entry.file_type().is_file() || entry.path().extension().is_none_or(|ext| ext != "json")
         {
@@ -199,7 +200,7 @@ pub(crate) fn prepare(root: &Path, source: u32, target: u32) -> Result<Vec<Strin
                 "fastpack/legacy-defaults"
             })
             .join(&name);
-        if !destination.exists() {
+        if !destination.pack_exists() {
             fs::create_dir_all(destination.parent().unwrap())?;
             fs::copy(&resource.path, destination)?;
         }

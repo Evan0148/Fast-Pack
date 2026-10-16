@@ -1,9 +1,10 @@
 use super::{CompatibilityReport, ShaderPolicy, shader_file};
+use crate::packfs as fs;
+use crate::packfs::PathExt;
+use crate::packfs::WalkDir;
 use anyhow::{Result, bail, ensure};
 use regex::Regex;
-use std::fs;
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 
 pub fn generation(format: u32) -> &'static str {
     match format {
@@ -47,9 +48,9 @@ pub fn select_variant(
         "版本变体名称不能包含路径"
     );
     let variant = root.join("fastpack/variants").join(target);
-    if !variant.join("assets").is_dir() {
+    if !variant.join("assets").pack_is_dir() {
         let profile = root.join("fastpack/original-shaders/profile.json");
-        if profile.exists() {
+        if profile.pack_exists() {
             let value: serde_json::Value = serde_json::from_slice(&fs::read(profile)?)?;
             if value
                 .get("source_format")
@@ -58,7 +59,7 @@ pub fn select_variant(
             {
                 let cache = root.join("fastpack/original-shaders");
                 let assets = cache.join("assets");
-                if assets.is_dir() {
+                if assets.pack_is_dir() {
                     for entry in WalkDir::new(&assets).min_depth(1) {
                         let entry = entry?;
                         if entry.file_type().is_file() {
@@ -85,7 +86,7 @@ pub fn select_variant(
         .map(|entry| entry.into_path())
         .collect();
     ensure!(!files.is_empty(), "目标版本变体为空: {target}");
-    let active = if root.join("assets").exists() {
+    let active = if root.join("assets").pack_exists() {
         shader_paths(root)?
     } else {
         Vec::new()
@@ -94,7 +95,7 @@ pub fn select_variant(
         let relative = path.strip_prefix(root)?;
         let backup = root.join("fastpack/original-shaders").join(relative);
         fs::create_dir_all(backup.parent().unwrap())?;
-        if !backup.exists() {
+        if !backup.pack_exists() {
             fs::copy(&path, backup)?;
         }
         fs::remove_file(path)?;
@@ -136,7 +137,7 @@ pub fn migrate(
         }
         if policy == ShaderPolicy::Adaptive {
             let profile = root.join("fastpack/original-shaders/profile.json");
-            if !profile.exists() {
+            if !profile.pack_exists() {
                 fs::create_dir_all(profile.parent().unwrap())?;
                 fs::write(
                     profile,
@@ -147,7 +148,7 @@ pub fn migrate(
                 let relative = path.strip_prefix(root)?;
                 let backup = root.join("fastpack/original-shaders").join(relative);
                 fs::create_dir_all(backup.parent().unwrap())?;
-                if !backup.exists() {
+                if !backup.pack_exists() {
                     fs::copy(&path, backup)?;
                 }
                 fs::remove_file(&path)?;
@@ -185,7 +186,7 @@ pub fn migrate(
             let relative = path.strip_prefix(root)?;
             let backup = root.join("fastpack/original-shaders").join(relative);
             fs::create_dir_all(backup.parent().unwrap())?;
-            if !backup.exists() {
+            if !backup.pack_exists() {
                 fs::copy(&path, backup)?;
             }
             fs::write(&path, updated)?;

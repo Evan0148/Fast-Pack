@@ -1,9 +1,10 @@
 use super::assets::AssetReport;
+use crate::packfs as fs;
+use crate::packfs::PathExt;
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -32,7 +33,7 @@ fn provided_texture(root: &Path, model: &Value) -> bool {
                     name.starts_with("item/")
                         && root
                             .join(format!("assets/minecraft/textures/{name}.png"))
-                            .is_file()
+                            .pack_is_file()
                 })
             })
         })
@@ -44,7 +45,8 @@ pub(super) fn migrate(
     target: u32,
     report: &mut AssetReport,
 ) -> Result<()> {
-    if !(4..46).contains(&target) || source >= 4 && !root.join("fastpack/original-assets").is_dir()
+    if !(4..46).contains(&target)
+        || source >= 4 && !root.join("fastpack/original-assets").pack_is_dir()
     {
         return Ok(());
     }
@@ -55,7 +57,7 @@ pub(super) fn migrate(
             continue;
         }
         let path = directory.join(format!("{name}.json"));
-        if path.exists() {
+        if path.pack_exists() {
             continue;
         }
         let mut model = reference.clone();
@@ -97,7 +99,7 @@ pub(super) fn migrate(
                     continue;
                 };
                 let path = directory.join(format!("{name}.json"));
-                if !path.exists() {
+                if !path.pack_exists() {
                     fs::write(path, serde_json::to_vec_pretty(variant)?)?;
                     count += 1;
                 }

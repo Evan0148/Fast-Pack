@@ -1,9 +1,10 @@
 use super::assets::{AssetReport, backup};
 use super::properties::{self, Properties};
+use crate::packfs as fs;
+use crate::packfs::PathExt;
 use anyhow::{Result, ensure};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -161,7 +162,7 @@ fn relative(root: &Path, base: &Path, value: &str) -> Option<PathBuf> {
     {
         return None;
     }
-    path.is_file().then_some(path)
+    path.pack_is_file().then_some(path)
 }
 
 pub(super) fn migrate(root: &Path, target: u32, report: &mut AssetReport) -> Result<()> {
@@ -169,12 +170,12 @@ pub(super) fn migrate(root: &Path, target: u32, report: &mut AssetReport) -> Res
         return Ok(());
     }
     let directory = root.join("assets/minecraft/mcpatcher/ctm");
-    if !directory.is_dir() {
+    if !directory.pack_is_dir() {
         return Ok(());
     }
     let mut files = BTreeMap::new();
     let mut paths = BTreeMap::new();
-    let entries = walkdir::WalkDir::new(&directory)
+    let entries = crate::packfs::WalkDir::new(&directory)
         .min_depth(1)
         .sort_by_file_name()
         .into_iter()
@@ -234,7 +235,7 @@ pub(super) fn migrate(root: &Path, target: u32, report: &mut AssetReport) -> Res
             .extension()
             .is_none_or(|extension| extension != "properties")
         {
-            if !destination.is_file() {
+            if !destination.pack_is_file() {
                 fs::create_dir_all(destination.parent().unwrap())?;
                 fs::copy(source, destination)?;
             }
@@ -295,7 +296,7 @@ pub(super) fn migrate(root: &Path, target: u32, report: &mut AssetReport) -> Res
         if valid {
             fs::create_dir_all(destination.parent().unwrap())?;
             let text = properties::write(&values);
-            if !destination.is_file() || fs::read(destination)? != text.as_bytes() {
+            if !destination.pack_is_file() || fs::read(destination)? != text.as_bytes() {
                 fs::write(destination, text)?;
             }
             migrated += 1;

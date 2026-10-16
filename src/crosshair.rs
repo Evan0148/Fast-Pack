@@ -1,12 +1,13 @@
+use crate::packfs::PathExt;
+use crate::packfs::WalkDir;
+use crate::packfs::{self as fs, File};
 use anyhow::{Context, Result, ensure};
 use image::{Rgba, RgbaImage, imageops};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
-use std::fs::{self, File};
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 use zip::ZipArchive;
 
 const SPRITE: &str = "assets/minecraft/textures/gui/sprites/hud/crosshair.png";
@@ -339,7 +340,7 @@ pub fn import(source: &Path) -> Result<Vec<Crosshair>> {
         .unwrap_or_default()
         .to_string_lossy()
         .into_owned();
-    if source.is_file()
+    if source.pack_is_file()
         && source
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("png"))
@@ -358,7 +359,7 @@ pub fn import(source: &Path) -> Result<Vec<Crosshair>> {
     }
     let mut entries: Vec<(String, String, u8, bool, Vec<u8>)> = Vec::new();
     let mut total_bytes = 0u64;
-    if source.is_dir() {
+    if source.pack_is_dir() {
         for entry in WalkDir::new(source).min_depth(1).follow_links(false) {
             let entry = entry?;
             if !entry.file_type().is_file() {
@@ -487,9 +488,15 @@ impl Store {
     pub fn load(&self) -> Result<Vec<Preset>> {
         let mut builtins: Vec<_> = builtin_presets()?
             .into_iter()
-            .filter(|preset| !self.directory.join(&preset.id).join("hidden").is_file())
+            .filter(|preset| {
+                !self
+                    .directory
+                    .join(&preset.id)
+                    .join("hidden")
+                    .pack_is_file()
+            })
             .collect();
-        if !self.directory.exists() {
+        if !self.directory.pack_exists() {
             return Ok(builtins);
         }
         let mut result = Vec::new();
@@ -533,7 +540,7 @@ impl Store {
             .find(|preset| preset.crosshair.image == crosshair.image)
         {
             let hidden = self.path(&preset.id)?.join("hidden");
-            if hidden.is_file() {
+            if hidden.pack_is_file() {
                 fs::remove_file(hidden)?;
             }
             return Ok(preset.id);
@@ -552,7 +559,7 @@ impl Store {
         let id = format!("{:x}", digest.finalize());
         let destination = self.path(&id)?;
         fs::create_dir_all(&self.directory)?;
-        if !destination.exists() {
+        if !destination.pack_exists() {
             let temporary = tempfile::Builder::new()
                 .prefix("import-")
                 .tempdir_in(&self.directory)?;
@@ -582,7 +589,7 @@ impl Store {
             temporary.persist(path.join("hidden"))?;
             return Ok(());
         }
-        if !path.exists() {
+        if !path.pack_exists() {
             return Ok(());
         }
         ensure!(
@@ -591,7 +598,7 @@ impl Store {
         );
         for name in ["crosshair.png", "name.json"] {
             let file = path.join(name);
-            if file.is_file() {
+            if file.pack_is_file() {
                 fs::remove_file(file)?;
             }
         }
@@ -601,7 +608,7 @@ impl Store {
     pub fn restore_builtins(&self) -> Result<()> {
         for (id, _, _) in builtin::BUILTINS {
             let path = self.path(id)?.join("hidden");
-            if path.is_file() {
+            if path.pack_is_file() {
                 fs::remove_file(path)?;
             }
         }
@@ -617,13 +624,13 @@ pub(crate) fn apply(
 ) -> Result<()> {
     let tile = normalized(crosshair.image.clone(), false)?;
     let output = root.join(if target >= 18 { SPRITE } else { ICONS });
-    if output.is_file() {
+    if output.pack_is_file() {
         crate::compat::assets::backup(root, &output)?;
     }
     let image = if target >= 18 {
         tile
     } else {
-        let mut atlas = if output.is_file() {
+        let mut atlas = if output.pack_is_file() {
             decode(&fs::read(&output)?)?
         } else {
             decode(include_bytes!("../assets/crosshair/legacy-icons.png"))?
@@ -652,7 +659,7 @@ pub(crate) fn apply(
     };
     crate::compat::assets::save(root, &output, &image)?;
     let metadata = output.with_extension("png.mcmeta");
-    if target >= 18 && metadata.is_file() {
+    if target >= 18 && metadata.pack_is_file() {
         crate::compat::assets::backup(root, &metadata)?;
         fs::remove_file(metadata)?;
     }

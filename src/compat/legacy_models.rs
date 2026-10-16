@@ -1,9 +1,10 @@
 use super::assets::{AssetReport, backup};
+use crate::packfs as fs;
+use crate::packfs::PathExt;
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -41,7 +42,7 @@ fn path(root: &Path, id: &str) -> PathBuf {
 
 fn write(root: &Path, id: &str, value: &Value) -> Result<()> {
     let path = path(root, id);
-    if path.is_file() {
+    if path.pack_is_file() {
         if serde_json::from_slice::<Value>(&fs::read(&path)?)
             .ok()
             .as_ref()
@@ -62,11 +63,11 @@ pub(super) struct Migration {
 
 pub(super) fn capture(root: &Path, source: u32, target: u32) -> Result<Option<Migration>> {
     let directory = root.join("assets/minecraft/models");
-    if source < 4 || target >= 2 || !directory.is_dir() {
+    if source < 4 || target >= 2 || !directory.pack_is_dir() {
         return Ok(None);
     }
     let mut models = BTreeMap::new();
-    for entry in walkdir::WalkDir::new(&directory).min_depth(1) {
+    for entry in crate::packfs::WalkDir::new(&directory).min_depth(1) {
         let entry = entry?;
         if !entry.file_type().is_file() || entry.path().extension().is_none_or(|ext| ext != "json")
         {
@@ -331,7 +332,7 @@ impl Migration {
                 ) && self.models.contains_key(legacy)
                 {
                     let conflicting = path(root, legacy);
-                    if conflicting.is_file() {
+                    if conflicting.pack_is_file() {
                         backup(root, &conflicting)?;
                         fs::remove_file(conflicting)?;
                     }

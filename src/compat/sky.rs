@@ -1,15 +1,16 @@
 use super::atlas::{self, AtlasLayout};
 use super::properties::{self, Properties};
 use super::{CompatibilityReport, SkyRuntime};
+use crate::packfs::PathExt;
+use crate::packfs::WalkDir;
+use crate::packfs::{self as fs, File};
 use anyhow::{Context, Result, bail, ensure};
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
-use walkdir::WalkDir;
 use zip::ZipArchive;
 
 mod storage;
@@ -68,7 +69,7 @@ fn resolve(
     let namespace = relative.split('/').nth(1).unwrap_or("minecraft");
     let exists = |path: &Path| {
         available.map_or_else(
-            || path.is_file(),
+            || path.pack_is_file(),
             |files| {
                 path.strip_prefix(root).ok().is_some_and(|relative| {
                     files.contains(&relative.to_string_lossy().replace('\\', "/").to_lowercase())
@@ -311,7 +312,7 @@ fn read_layers_known(
     available: Option<&BTreeSet<String>>,
 ) -> Result<(Vec<Layer>, Vec<String>)> {
     let cache = root.join("fastpack/canonical-sky/layers.json");
-    if cache.is_file() {
+    if cache.pack_is_file() {
         let layers: Vec<Layer> = serde_json::from_slice(&fs::read(cache)?)?;
         for layer in &layers {
             ensure!(
@@ -329,7 +330,7 @@ fn read_layers_known(
             local(root, &layer.original)?;
         }
         let notes = root.join("fastpack/canonical-sky/warnings.json");
-        let warnings = if notes.exists() {
+        let warnings = if notes.pack_exists() {
             serde_json::from_slice(&fs::read(notes)?)?
         } else {
             Vec::new()
@@ -489,7 +490,10 @@ fn read_layers_known(
 }
 
 pub fn prepare(root: &Path) -> Result<Vec<String>> {
-    if root.join("fastpack/canonical-sky/layers.json").exists() {
+    if root
+        .join("fastpack/canonical-sky/layers.json")
+        .pack_exists()
+    {
         return Ok(Vec::new());
     }
     let (mut layers, warnings) = read_layers(root)?;
@@ -696,7 +700,7 @@ fn restore_optifine(
         let name = if layer.decoration {
             layer.name.clone()
         } else {
-            while folder.join(format!("sky{index}.properties")).exists() {
+            while folder.join(format!("sky{index}.properties")).pack_exists() {
                 *index += 1;
             }
             let name = format!("sky{index}");
@@ -748,7 +752,7 @@ pub fn migrate(
         runtime.resolved(format)
     };
     let active_path = root.join("fastpack/canonical-sky/active.json");
-    let previous: Vec<String> = if active_path.exists() {
+    let previous: Vec<String> = if active_path.pack_exists() {
         serde_json::from_slice(&fs::read(&active_path)?)?
     } else {
         layers.iter().map(|layer| layer.original.clone()).collect()
@@ -756,14 +760,21 @@ pub fn migrate(
     let mut storage = storage::Storage::new(
         root,
         &mut layers,
-        if active_path.exists() { &previous } else { &[] },
+        if active_path.pack_exists() {
+            &previous
+        } else {
+            &[]
+        },
     )?;
+    if target == SkyRuntime::Optifine {
+        storage.prepare(root, &layers, AtlasLayout::Optifine)?;
+    }
     for relative in previous {
         let path = local(root, &relative)?;
-        if path.is_file() {
+        if path.pack_is_file() {
             let backup = root.join("fastpack/original-sky").join(&relative);
             fs::create_dir_all(backup.parent().unwrap())?;
-            if !backup.exists() {
+            if !backup.pack_exists() {
                 fs::copy(&path, &backup)?;
             }
             fs::remove_file(path)?;
@@ -792,7 +803,7 @@ pub fn migrate(
                     &format!("fastpack:textures/sky/layer_{index}.png"),
                     index as i32,
                 )?;
-                let reader = image::ImageReader::open(local(root, &layer.texture)?)?
+                let reader = crate::packfs::image_reader(local(root, &layer.texture)?)?
                     .with_guessed_format()?;
                 let (width, height) = reader.into_dimensions()?;
                 atlas::face_size(width, height)?;
@@ -997,12 +1008,12 @@ fn preview_entry(
 }
 
 pub fn preview(source: &Path) -> Result<Option<Preview>> {
-    if source.is_dir() {
+    if source.pack_is_dir() {
         let root = crate::converter::find_pack_root(source)?;
-        let canonical = root.canonicalize()?;
+        let canonical = root.pack_canonicalize()?;
         let (layers, _) = read_layers(&root)?;
         return compose_preview(layers, |layer| {
-            let path = local(&root, &layer.texture)?.canonicalize()?;
+            let path = local(&root, &layer.texture)?.pack_canonicalize()?;
             ensure!(path.starts_with(&canonical), "天空纹理越过材质包目录");
             super::assets::open(&path)
         });

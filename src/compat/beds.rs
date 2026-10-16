@@ -1,4 +1,5 @@
 use super::assets::{AssetReport, open, save};
+use crate::packfs::PathExt;
 use anyhow::{Result, ensure};
 use image::{Rgba, RgbaImage, imageops};
 use std::collections::BTreeMap;
@@ -230,7 +231,7 @@ pub(super) fn migrate(
             textures.join(format!("{directory}/{alternate}.png")),
         ]
         .into_iter()
-        .find(|path| path.is_file());
+        .find(|path| path.pack_is_file());
         if let Some(path) = path {
             parts.insert(name, open(&path)?);
         }
@@ -270,7 +271,7 @@ pub(super) fn migrate(
     } else {
         "block/oak_planks.png"
     });
-    let wood = if wood_path.is_file() {
+    let wood = if wood_path.pack_is_file() {
         let image = open(&wood_path)?;
         let size = image.width().min(image.height());
         let frame = imageops::crop_imm(&image, 0, 0, size, size).to_image();
@@ -304,10 +305,10 @@ pub(super) fn migrate(
             scale,
         );
     }
-    let repaired = if output.is_file() {
+    let repaired = if output.pack_is_file() {
         let existing = open(&output)?;
         if existing == atlas
-            || output.with_extension("png.mcmeta").is_file()
+            || output.with_extension("png.mcmeta").pack_is_file()
             || existing != previous_atlas(&parts, &wood, scale)
         {
             return Ok(());

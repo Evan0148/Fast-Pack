@@ -1,13 +1,14 @@
 use super::{AtlasLayout, CompatibilityReport, Layer, atlas, layout, local, properties, resolve};
+use crate::packfs::PathExt;
+use crate::packfs::WalkDir;
+use crate::packfs::{self as fs, File};
 use anyhow::{Context, Result};
 use image::ImageEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::path::Path;
-use walkdir::WalkDir;
 
 #[derive(Clone)]
 pub(super) struct Texture {
@@ -44,11 +45,42 @@ pub(super) fn identifier(path: &str) -> Result<String> {
 }
 
 impl Storage {
+    pub fn prepare(&mut self, root: &Path, layers: &[Layer], target: AtlasLayout) -> Result<()> {
+        let mut unique = BTreeMap::new();
+        for layer in layers {
+            let key = format!(
+                "{}:{target:?}:{}:{}:{}",
+                layer.texture,
+                layer.layout,
+                layer.world == "world0",
+                layer.decoration
+            );
+            unique.entry(key).or_insert_with(|| layer.clone());
+        }
+        let jobs: Vec<_> = unique.into_iter().collect();
+        let outputs = crate::parallel::map(&jobs, |(key, layer)| {
+            let mut temporary = Self {
+                canonical: BTreeSet::new(),
+                owned: BTreeSet::new(),
+                outputs: BTreeMap::new(),
+            };
+            Ok(temporary
+                .materialize(root, layer, target)
+                .ok()
+                .map(|texture| (key.clone(), texture, temporary.owned)))
+        })?;
+        for (key, texture, owned) in outputs.into_iter().flatten() {
+            self.outputs.insert(key, texture);
+            self.owned.extend(owned);
+        }
+        Ok(())
+    }
+
     pub fn new(root: &Path, layers: &mut [Layer], previous: &[String]) -> Result<Self> {
         let mut owned = BTreeSet::new();
         for relative in previous {
             let file = local(root, relative)?;
-            if !file.is_file() {
+            if !file.pack_is_file() {
                 continue;
             }
             let stem = file.file_stem().unwrap_or_default().to_string_lossy();
@@ -73,7 +105,7 @@ impl Storage {
             } else {
                 None
             };
-            if let Some(texture) = texture.filter(|path| path.is_file()) {
+            if let Some(texture) = texture.filter(|path| path.pack_is_file()) {
                 owned.insert(
                     texture
                         .strip_prefix(root)?
@@ -106,7 +138,7 @@ impl Storage {
             }
             let original = local(root, &layer.original)?;
             let backup = root.join("fastpack/original-sky").join(&layer.original);
-            let file = if original.is_file() {
+            let file = if original.pack_is_file() {
                 original.clone()
             } else {
                 backup
@@ -142,7 +174,7 @@ impl Storage {
         }
         let mut indexed = BTreeMap::new();
         for relative in candidates {
-            if local(root, &relative)?.is_file() {
+            if local(root, &relative)?.pack_is_file() {
                 let digest = hash(&local(root, &relative)?)?;
                 let preference = (owned.contains(&relative), relative.len(), relative.clone());
                 let current = indexed.entry(digest).or_insert(preference.clone());
@@ -165,7 +197,7 @@ impl Storage {
                 let relative = format!("assets/fastpack/textures/sky/source_{digest}.{extension}");
                 let destination = local(root, &relative)?;
                 fs::create_dir_all(destination.parent().unwrap())?;
-                if !destination.is_file() {
+                if !destination.pack_is_file() {
                     fs::copy(&source, &destination)?;
                 }
                 indexed.insert(digest, (false, relative.len(), relative.clone()));
@@ -196,7 +228,7 @@ impl Storage {
             return Ok(texture.clone());
         }
         let source = local(root, &layer.texture)?;
-        let reader = image::ImageReader::open(&source)?.with_guessed_format()?;
+        let reader = crate::packfs::image_reader(&source)?.with_guessed_format()?;
         let png = reader.format() == Some(image::ImageFormat::Png);
         let dimensions = reader.into_dimensions()?;
         let exact = if layer.decoration {
@@ -229,7 +261,7 @@ impl Storage {
             fs::create_dir_all(destination.parent().unwrap())?;
             PngEncoder::new_with_quality(
                 File::create(destination)?,
-                CompressionType::Best,
+                CompressionType::Default,
                 FilterType::Adaptive,
             )
             .write_image(
@@ -281,7 +313,7 @@ impl Storage {
                 continue;
             }
             let path = local(root, &relative)?;
-            if !path.is_file() {
+            if !path.pack_is_file() {
                 continue;
             }
             if relative.starts_with("assets/") {

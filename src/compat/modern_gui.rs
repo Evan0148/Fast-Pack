@@ -1,4 +1,5 @@
 use super::assets::{AssetReport, save};
+use crate::packfs::PathExt;
 use anyhow::{Result, ensure};
 use image::{Rgba, RgbaImage, imageops};
 use std::collections::BTreeMap;
@@ -51,10 +52,10 @@ pub(super) fn prepare(
     }
     let textures = root.join("assets/minecraft/textures");
     let path = textures.join("gui/container/inventory.png");
-    if !path.is_file() {
+    if !path.pack_is_file() {
         return Ok(());
     }
-    let image = normalized(image::open(path)?.to_rgba8());
+    let image = normalized(crate::packfs::open_image(path)?.to_rgba8());
     let scale = image.width() / 256;
     if scale == 0 || !image.width().is_multiple_of(256) || image.height() < 252 * scale {
         return Ok(());
@@ -62,7 +63,7 @@ pub(super) fn prepare(
     let mut count = 0;
     for (name, x, y) in EFFECTS {
         let output = textures.join(format!("mob_effect/{name}.png"));
-        if output.is_file() {
+        if output.pack_is_file() {
             continue;
         }
         let tile = imageops::crop_imm(
@@ -93,10 +94,10 @@ fn inventory(root: &Path, source: u32, target: u32, report: &mut AssetReport) ->
     }
     let path =
         root.join("assets/minecraft/textures/gui/container/creative_inventory/tab_inventory.png");
-    if !path.is_file() {
+    if !path.pack_is_file() {
         return Ok(());
     }
-    let image = normalized(image::open(&path)?.to_rgba8());
+    let image = normalized(crate::packfs::open_image(&path)?.to_rgba8());
     let scale = image.width() / 256;
     if scale == 0 || !image.width().is_multiple_of(256) || image.height() < 50 * scale {
         return Ok(());
@@ -167,8 +168,8 @@ fn tabs(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Resu
     }
     let textures = root.join("assets/minecraft/textures");
     let path = textures.join("gui/container/creative_inventory/tabs.png");
-    let atlas = if path.is_file() {
-        Some(normalized(image::open(&path)?.to_rgba8()))
+    let atlas = if path.pack_is_file() {
+        Some(normalized(crate::packfs::open_image(&path)?.to_rgba8()))
     } else {
         None
     };
@@ -179,8 +180,8 @@ fn tabs(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Resu
             for index in 1..=7 {
                 let name = format!("tab_{side}_{state}_{index}");
                 let path = directory.join(format!("{name}.png"));
-                if path.is_file() {
-                    provided.insert(name, image::open(path)?.to_rgba8());
+                if path.pack_is_file() {
+                    provided.insert(name, crate::packfs::open_image(path)?.to_rgba8());
                 }
             }
         }
@@ -227,7 +228,7 @@ fn tabs(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Resu
         for index in 1..=7 {
             let name = format!("tab_{side}_{state}_{index}");
             let output = directory.join(format!("{name}.png"));
-            if target >= 18 && output.is_file() && !corrupted {
+            if target >= 18 && output.pack_is_file() && !corrupted {
                 continue;
             }
             let tile = if corrupted {
@@ -277,7 +278,7 @@ fn tabs(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Resu
         if target >= 18 && source < 18 {
             for (name, x) in [("scroller", 232), ("scroller_disabled", 244)] {
                 let output = directory.join(format!("{name}.png"));
-                if output.is_file() {
+                if output.pack_is_file() {
                     continue;
                 }
                 let tile =

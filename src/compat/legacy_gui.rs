@@ -1,4 +1,5 @@
 use super::assets::{AssetReport, save};
+use crate::packfs::PathExt;
 use anyhow::{Result, ensure};
 use image::{Rgba, RgbaImage, imageops};
 use std::collections::BTreeMap;
@@ -92,22 +93,22 @@ fn tabs(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Resu
             for index in 1..=7 {
                 let name = format!("tab_{side}_{selected}_{index}");
                 let path = sprites.join(format!("{name}.png"));
-                if path.is_file() {
-                    tiles.insert(name, image::open(path)?.to_rgba8());
+                if path.pack_is_file() {
+                    tiles.insert(name, crate::packfs::open_image(path)?.to_rgba8());
                 }
             }
         }
     }
     for name in ["scroller", "scroller_disabled"] {
         let path = sprites.join(format!("{name}.png"));
-        if path.is_file() {
-            tiles.insert(name.into(), image::open(path)?.to_rgba8());
+        if path.pack_is_file() {
+            tiles.insert(name.into(), crate::packfs::open_image(path)?.to_rgba8());
         }
     }
     if tiles.is_empty() && source >= 12 && target < 12 {
         let path = textures.join("gui/container/creative_inventory/tabs.png");
-        if path.is_file() {
-            let atlas = image::open(&path)?.to_rgba8();
+        if path.pack_is_file() {
+            let atlas = crate::packfs::open_image(&path)?.to_rgba8();
             let scale = atlas.width() / 256;
             if scale > 0 && atlas.width().is_multiple_of(256) && atlas.height() >= 128 * scale {
                 for (side, state, y) in [
@@ -143,8 +144,8 @@ fn tabs(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Resu
         return Ok(());
     }
     let output = textures.join("gui/container/creative_inventory/tabs.png");
-    let existing = if output.is_file() {
-        Some(image::open(&output)?.to_rgba8())
+    let existing = if output.pack_is_file() {
+        Some(crate::packfs::open_image(&output)?.to_rgba8())
     } else {
         None
     };
@@ -273,10 +274,10 @@ fn inventory(root: &Path, source: u32, target: u32, report: &mut AssetReport) ->
     }
     let path =
         root.join("assets/minecraft/textures/gui/container/creative_inventory/tab_inventory.png");
-    if !path.is_file() {
+    if !path.pack_is_file() {
         return Ok(());
     }
-    let image = image::open(&path)?.to_rgba8();
+    let image = crate::packfs::open_image(&path)?.to_rgba8();
     let scale = image.width() / 256;
     if scale == 0 || !image.width().is_multiple_of(256) || image.height() < 50 * scale {
         return Ok(());
@@ -328,18 +329,18 @@ fn effects(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> R
     let mut icons = Vec::new();
     for (name, x, y) in EFFECTS {
         let path = textures.join(format!("mob_effect/{name}.png"));
-        if path.is_file() {
-            icons.push((name, x, y, image::open(path)?.to_rgba8()));
+        if path.pack_is_file() {
+            icons.push((name, x, y, crate::packfs::open_image(path)?.to_rgba8()));
         }
     }
     let output = textures.join("gui/container/inventory.png");
-    if !output.is_file() {
+    if !output.pack_is_file() {
         report
             .warnings
             .push("药水图标：输入包没有背包背景，沿用目标游戏原版背景及图标".into());
         return Ok(());
     }
-    let mut atlas = image::open(&output)?.to_rgba8();
+    let mut atlas = crate::packfs::open_image(&output)?.to_rgba8();
     let scale = atlas.width() / 256;
     ensure!(
         scale > 0 && atlas.width().is_multiple_of(256),

@@ -1,9 +1,10 @@
 use super::assets::AssetReport;
+use crate::packfs as fs;
+use crate::packfs::PathExt;
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -129,7 +130,7 @@ fn uploaded_texture(root: &Path, model: &Value) -> bool {
                 value.as_str().and_then(id).is_some_and(|reference| {
                     let (namespace, path) = reference.split_once(':').unwrap();
                     root.join(format!("assets/{namespace}/textures/{path}.png"))
-                        .is_file()
+                        .pack_is_file()
                 })
             })
         })
@@ -299,10 +300,12 @@ pub(super) fn migrate(
     };
     let directory = root.join("assets/minecraft/models/item");
     let mut existing = BTreeMap::new();
-    if directory.is_dir() {
+    if directory.pack_is_dir() {
         for entry in fs::read_dir(&directory)? {
             let entry = entry?;
-            if !entry.path().is_file() || entry.path().extension().is_none_or(|ext| ext != "json") {
+            if !entry.path().pack_is_file()
+                || entry.path().extension().is_none_or(|ext| ext != "json")
+            {
                 continue;
             }
             let name = entry
@@ -337,7 +340,7 @@ pub(super) fn migrate(
             continue;
         }
         let path = root.join(format!("assets/minecraft/items/{name}.json"));
-        if path.is_file() {
+        if path.pack_is_file() {
             continue;
         }
         let mut definition = template.clone();
@@ -354,7 +357,7 @@ pub(super) fn migrate(
             let Some(path) = model_path(root, &reference) else {
                 continue;
             };
-            if path.is_file() {
+            if path.pack_is_file() {
                 continue;
             }
             let original = aliases.get(&reference).unwrap_or(&reference);

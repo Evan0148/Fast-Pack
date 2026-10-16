@@ -1,3 +1,4 @@
+use crate::packfs::PathExt;
 pub mod assets;
 pub mod atlas;
 pub(crate) mod attack_indicator;
@@ -48,11 +49,11 @@ pub(crate) fn migrate_versioned_assets(
     model_integrity::migrate(root, target, report)
 }
 
+use crate::packfs::WalkDir;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::Path;
-use walkdir::WalkDir;
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
@@ -225,10 +226,10 @@ pub fn inspect(root: &Path) -> Result<PackFeatures> {
         features.observe_file(&path);
     }
     let variants = root.join("fastpack/variants");
-    if variants.is_dir() {
-        for entry in std::fs::read_dir(variants)? {
+    if variants.pack_is_dir() {
+        for entry in crate::packfs::read_dir(variants)? {
             let entry = entry?;
-            if entry.path().is_dir() {
+            if entry.path().pack_is_dir() {
                 features
                     .version_variants
                     .push(entry.file_name().to_string_lossy().into());
@@ -264,8 +265,8 @@ pub fn migrate(
         shaders::migrate(root, source_format, target_format, policy, &mut report)?;
     }
     if !report.is_empty() {
-        std::fs::create_dir_all(root.join("fastpack"))?;
-        std::fs::write(
+        crate::packfs::create_dir_all(root.join("fastpack"))?;
+        crate::packfs::write(
             root.join("fastpack/compatibility.json"),
             serde_json::to_vec_pretty(&report)?,
         )?;

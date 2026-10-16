@@ -1,12 +1,13 @@
 use super::assets::{AssetReport, backup};
+use crate::packfs as fs;
+use crate::packfs::PathExt;
 use anyhow::Result;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::Path;
 
 fn write(root: &Path, path: &Path, value: &Value) -> Result<bool> {
-    if path.is_file() {
+    if path.pack_is_file() {
         if serde_json::from_slice::<Value>(&fs::read(path)?)
             .ok()
             .as_ref()
@@ -77,12 +78,12 @@ fn inherited_fields(
 
 fn standalone_models(root: &Path, report: &mut AssetReport) -> Result<()> {
     let assets = root.join("assets");
-    if !assets.is_dir() {
+    if !assets.pack_is_dir() {
         return Ok(());
     }
     let mut models = BTreeMap::new();
     let mut paths = BTreeMap::new();
-    for entry in walkdir::WalkDir::new(&assets).min_depth(1) {
+    for entry in crate::packfs::WalkDir::new(&assets).min_depth(1) {
         let entry = entry?;
         if !entry.file_type().is_file() || entry.path().extension().is_none_or(|ext| ext != "json")
         {
@@ -188,7 +189,7 @@ fn modern_box_default(value: &Value, view: &str) -> bool {
 fn inventory_model(root: &Path, name: &str, source: u32, report: &mut AssetReport) -> Result<()> {
     let directory = root.join("assets/minecraft/models");
     let path = directory.join(format!("item/{name}.json"));
-    let provided = path.is_file();
+    let provided = path.pack_is_file();
     let mut model = if provided {
         serde_json::from_slice::<Value>(&fs::read(&path)?)?
     } else {
@@ -355,7 +356,7 @@ fn directional(
 ) -> Result<()> {
     let directory = root.join("assets/minecraft");
     let path = directory.join(format!("blockstates/{name}.json"));
-    let provided = path.is_file()
+    let provided = path.pack_is_file()
         || [
             format!("models/block/{name}.json"),
             format!("models/block/{name}_vertical.json"),
@@ -363,7 +364,7 @@ fn directional(
             format!("textures/blocks/{name}_front_vertical.png"),
         ]
         .iter()
-        .any(|relative| directory.join(relative).is_file());
+        .any(|relative| directory.join(relative).pack_is_file());
     if !provided {
         return Ok(());
     }
@@ -441,7 +442,7 @@ fn directional(
             name.into()
         };
         let path = directory.join(format!("models/block/{model}.json"));
-        if path.is_file() {
+        if path.pack_is_file() {
             continue;
         }
         let value = if vertical {
@@ -453,9 +454,9 @@ fn directional(
     }
     let horizontal = directory.join(format!("textures/blocks/{name}_front_horizontal.png"));
     let vertical = directory.join(format!("textures/blocks/{name}_front_vertical.png"));
-    if !vertical.is_file() && horizontal.is_file() {
+    if !vertical.pack_is_file() && horizontal.pack_is_file() {
         fs::copy(&horizontal, &vertical)?;
-        if horizontal.with_extension("png.mcmeta").is_file() {
+        if horizontal.with_extension("png.mcmeta").pack_is_file() {
             fs::copy(
                 horizontal.with_extension("png.mcmeta"),
                 vertical.with_extension("png.mcmeta"),

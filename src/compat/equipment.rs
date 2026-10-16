@@ -1,6 +1,7 @@
 use super::assets::AssetReport;
+use crate::packfs as fs;
+use crate::packfs::PathExt;
 use anyhow::Result;
-use std::fs;
 use std::path::Path;
 
 pub(super) fn migrate(
@@ -46,13 +47,13 @@ pub(super) fn migrate(
                 } else {
                     (&modern, &legacy)
                 };
-                if !input.is_file() || output.is_file() {
+                if !input.pack_is_file() || output.pack_is_file() {
                     continue;
                 }
                 fs::create_dir_all(output.parent().unwrap())?;
                 fs::copy(input, output)?;
                 let metadata = input.with_extension("png.mcmeta");
-                if metadata.is_file() {
+                if metadata.pack_is_file() {
                     fs::copy(metadata, output.with_extension("png.mcmeta"))?;
                 }
                 count += 1;

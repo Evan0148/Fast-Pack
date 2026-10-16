@@ -1,11 +1,11 @@
 use super::assets::{AssetReport, backup};
+use crate::packfs as fs;
+use crate::packfs::PathExt;
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, OnceLock};
 
@@ -93,17 +93,14 @@ fn model_path(root: &Path, name: &str) -> PathBuf {
 
 fn write(root: &Path, path: &Path, value: &Value) -> Result<bool> {
     let bytes = serde_json::to_vec_pretty(value)?;
-    if path.is_file() {
+    if path.pack_is_file() {
         if fs::read(path)? == bytes {
             return Ok(false);
         }
         backup(root, path)?;
     }
     fs::create_dir_all(path.parent().unwrap())?;
-    let mut temporary = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
-    temporary.write_all(&bytes)?;
-    temporary.as_file().sync_all()?;
-    temporary.persist(path).map_err(|error| error.error)?;
+    fs::write_atomic(path, &bytes)?;
     Ok(true)
 }
 
@@ -111,10 +108,10 @@ fn references(value: &Value, names: &mut BTreeSet<String>) {
     match value {
         Value::Object(values) => {
             for (key, value) in values {
-                if key == "model" {
-                    if let Some(name) = value.as_str().and_then(id) {
-                        names.insert(name);
-                    }
+                if matches!(key.as_str(), "model" | "base")
+                    && let Some(name) = value.as_str().and_then(id)
+                {
+                    names.insert(name);
                 } else {
                     references(value, names);
                 }
@@ -338,7 +335,7 @@ fn load<'a>(root: &'a Path, profile: &'a Profile, report: &mut AssetReport) -> R
     };
     let mut pending = vec![];
     let assets = root.join("assets");
-    for entry in walkdir::WalkDir::new(&assets).min_depth(1) {
+    for entry in crate::packfs::WalkDir::new(&assets).min_depth(1) {
         let entry = entry?;
         if !entry.file_type().is_file()
             || entry
@@ -652,7 +649,7 @@ fn atlas(graph: &Graph<'_>, target: u32, report: &mut AssetReport) -> Result<usi
         }
     }
     let path = graph.root.join("assets/minecraft/atlases/blocks.json");
-    let mut definition = if path.is_file() {
+    let mut definition = if path.pack_is_file() {
         let Ok(value) = serde_json::from_slice::<Value>(&fs::read(&path)?) else {
             report
                 .warnings
@@ -864,7 +861,7 @@ fn bed_icons(graph: &mut Graph<'_>) -> Result<usize> {
 }
 
 pub(super) fn migrate(root: &Path, target: u32, report: &mut AssetReport) -> Result<()> {
-    if target < 4 || !root.join("assets").is_dir() {
+    if target < 4 || !root.join("assets").pack_is_dir() {
         return Ok(());
     }
     let Some((_, reference)) = PROFILES.range(..=target).next_back() else {

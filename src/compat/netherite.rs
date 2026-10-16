@@ -1,9 +1,10 @@
 use super::assets::{AssetReport, open, save};
+use crate::packfs as fs;
+use crate::packfs::PathExt;
 use anyhow::Result;
 use image::RgbaImage;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 fn id(reference: &str) -> Option<String> {
@@ -36,7 +37,7 @@ fn path(root: &Path, reference: &str, folder: &str, extension: &str) -> Option<P
 fn model(root: &Path, reference: &str, target: u32) -> Option<Value> {
     let reference = id(reference)?;
     let location = path(root, &reference, "models", "json")?;
-    if location.is_file() {
+    if location.pack_is_file() {
         return serde_json::from_slice(&fs::read(location).ok()?).ok();
     }
     super::modern_items::model_reference(target, &reference).or_else(|| {
@@ -98,14 +99,14 @@ fn main_texture(root: &Path, reference: &str, name: &str, target: u32) -> Option
         }
         if let Some(reference) = id(value)
             && !reference.contains(":trims/")
-            && path(root, &reference, "textures", "png").is_some_and(|path| path.is_file())
+            && path(root, &reference, "textures", "png").is_some_and(|path| path.pack_is_file())
         {
             return Some(reference);
         }
     }
     let reference = format!("minecraft:item/{name}");
     path(root, &reference, "textures", "png")
-        .filter(|path| path.is_file())
+        .filter(|path| path.pack_is_file())
         .map(|_| reference)
 }
 
@@ -335,7 +336,7 @@ fn recolor(mut image: RgbaImage, armor: bool, grip: bool) -> RgbaImage {
 fn metadata(input: &Path, output: &Path) -> Result<()> {
     let input = input.with_extension("png.mcmeta");
     let output = output.with_extension("png.mcmeta");
-    if input.is_file() && !output.is_file() {
+    if input.pack_is_file() && !output.pack_is_file() {
         fs::copy(input, output)?;
     }
     Ok(())
@@ -372,7 +373,7 @@ impl ClonePack<'_> {
             return Ok(mapped.clone());
         }
         let input = path(self.root, &reference, "textures", "png").unwrap();
-        if !input.is_file() {
+        if !input.pack_is_file() {
             return Ok(reference);
         }
         let destination = if reference == self.primary {
@@ -385,7 +386,7 @@ impl ClonePack<'_> {
             )
         };
         let output = path(self.root, &destination, "textures", "png").unwrap();
-        if !output.is_file() {
+        if !output.pack_is_file() {
             save(self.root, &output, &recolor(open(&input)?, false, grip))?;
             metadata(&input, &output)?;
         }
@@ -472,7 +473,7 @@ impl ClonePack<'_> {
         }
         self.rewrite(&mut value)?;
         let output = path(self.root, &destination, "models", "json").unwrap();
-        if !output.is_file() {
+        if !output.pack_is_file() {
             fs::create_dir_all(output.parent().unwrap())?;
             fs::write(output, serde_json::to_vec_pretty(&value)?)?;
         }
@@ -509,7 +510,8 @@ pub(super) fn migrate(
         let output = root.join(format!("assets/minecraft/textures/item/{destination}.png"));
         let output_model = root.join(format!("assets/minecraft/models/item/{destination}.json"));
         let output_definition = root.join(format!("assets/minecraft/items/{destination}.json"));
-        if output.is_file() || output_model.is_file() || output_definition.is_file() {
+        if output.pack_is_file() || output_model.pack_is_file() || output_definition.pack_is_file()
+        {
             continue;
         }
         let armor_item = matches!(kind, "helmet" | "chestplate" | "leggings" | "boots");
@@ -581,7 +583,7 @@ pub(super) fn migrate(
         } else {
             format!("assets/minecraft/textures/models/armor/netherite_layer_{layer}.png")
         });
-        if output.is_file() {
+        if output.pack_is_file() {
             continue;
         }
         let source = ["diamond", "iron", "gold", "chainmail", "leather"]
@@ -596,7 +598,7 @@ pub(super) fn migrate(
                     )),
                 ]
             })
-            .find(|path| path.is_file());
+            .find(|path| path.pack_is_file());
         if let Some(source) = source {
             save(root, &output, &recolor(open(&source)?, true, false))?;
             metadata(&source, &output)?;

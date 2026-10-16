@@ -1,6 +1,6 @@
 [package]
 name = "fast-pack"
-version = "1.2.28"
+version = "1.2.29"
 authors = ["ColdEternity Team", "Long_Cold", "Wind_"]
 description = "Fast Pack: automatic Minecraft Java resource pack version conversion"
 license = "GPL-3.0-only"
@@ -56,5 +56,5 @@ codegen-units = 1
 strip = true
 
 [profile.release.package.fast-pack]
-opt-level = "z"
+opt-level = 3
 

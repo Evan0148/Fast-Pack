@@ -1,9 +1,10 @@
 use super::assets::{AssetReport, backup, save};
+use crate::packfs as fs;
+use crate::packfs::PathExt;
 use anyhow::{Context, Result, ensure};
 use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::Path;
 
 const LEGACY: &str = "enchanted_item_glint";
@@ -142,7 +143,7 @@ fn original_pattern(
             continue;
         }
         let path = directory.join(format!("{cached_name}.png"));
-        if let Ok(original) = image::open(path) {
+        if let Ok(original) = crate::packfs::open_image(path) {
             let original = original.to_rgba8();
             if original.dimensions() == image.dimensions()
                 && original
@@ -207,12 +208,12 @@ pub(crate) fn migrate(
     let mut textures = BTreeMap::new();
     for name in [LEGACY, MODERN[0], MODERN[1], MODERN[2]] {
         let path = directory.join(format!("{name}.png"));
-        if path.is_file() {
-            let image = image::open(&path)
+        if path.pack_is_file() {
+            let image = crate::packfs::open_image(&path)
                 .with_context(|| format!("无法读取附魔光效 {}", path.display()))?
                 .to_rgba8();
             let metadata = path.with_extension("png.mcmeta");
-            let metadata = if metadata.is_file() {
+            let metadata = if metadata.pack_is_file() {
                 Some(fs::read(metadata)?)
             } else {
                 None
@@ -241,7 +242,7 @@ pub(crate) fn migrate(
         let output = if let Some(color) = color {
             let original = original_pattern(&patterns, &previous_state, name, image);
             fs::create_dir_all(&patterns)?;
-            original.save(patterns.join(format!("{name}.png")))?;
+            crate::packfs::save_image(&original, patterns.join(format!("{name}.png")))?;
             let output = recolor(&original, color, target);
             state.outputs.insert((*name).into(), fingerprint(&output));
             output
@@ -277,12 +278,12 @@ pub(crate) fn migrate(
             save(root, &path, &output)?;
         }
         let metadata = path.with_extension("png.mcmeta");
-        if metadata.is_file() {
+        if metadata.pack_is_file() {
             backup(root, &metadata)?;
         }
         if let Some(data) = desired_metadata {
             fs::write(metadata, data)?;
-        } else if metadata.is_file() {
+        } else if metadata.pack_is_file() {
             fs::remove_file(metadata)?;
         }
         changed += 1;

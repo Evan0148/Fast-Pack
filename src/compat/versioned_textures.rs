@@ -1,18 +1,19 @@
 use super::assets::{AssetReport, backup};
+use crate::packfs as fs;
+use crate::packfs::PathExt;
 use anyhow::Result;
 use serde_json::Value;
-use std::fs;
 use std::path::Path;
 
 fn copy(textures: &Path, from: &str, to: &str) -> Result<bool> {
     let from = textures.join(format!("{from}.png"));
     let to = textures.join(format!("{to}.png"));
-    if !from.is_file() || to.is_file() {
+    if !from.pack_is_file() || to.pack_is_file() {
         return Ok(false);
     }
     fs::create_dir_all(to.parent().unwrap())?;
     fs::copy(&from, &to)?;
-    if from.with_extension("png.mcmeta").is_file() {
+    if from.with_extension("png.mcmeta").pack_is_file() {
         fs::copy(
             from.with_extension("png.mcmeta"),
             to.with_extension("png.mcmeta"),
@@ -166,7 +167,7 @@ pub(super) fn migrate(
         &modern_trims.join("humanoid"),
         &modern_trims.join("humanoid_leggings"),
     ] {
-        if directory.is_dir() {
+        if directory.pack_is_dir() {
             for entry in fs::read_dir(directory)? {
                 let path = entry?.path();
                 if path.extension().is_some_and(|s| s == "png") {
@@ -205,7 +206,7 @@ pub(super) fn migrate(
     }
     if source < 42 && target >= 42 || source >= 42 && target < 42 {
         let path = root.join("assets/minecraft/atlases/armor_trims.json");
-        if path.is_file() {
+        if path.pack_is_file() {
             let mut value: Value = serde_json::from_slice(&fs::read(&path)?)?;
             let previous = value.clone();
             trim_refs(&mut value, target >= 42);
@@ -230,7 +231,7 @@ pub(super) fn migrate(
         )?);
         let directory = root.join("assets");
         let mut writes = Vec::new();
-        for entry in walkdir::WalkDir::new(&directory).min_depth(1) {
+        for entry in crate::packfs::WalkDir::new(&directory).min_depth(1) {
             let entry = entry?;
             if !entry.file_type().is_file() || entry.path().extension().is_none_or(|s| s != "json")
             {
@@ -264,13 +265,13 @@ pub(super) fn migrate(
                     || relative == format!("items/{from}.json"))
             {
                 let output = entry.path().with_file_name(format!("{to}.json"));
-                if !output.is_file() {
+                if !output.pack_is_file() {
                     writes.push((output, value));
                 }
             }
         }
         for (path, value) in writes {
-            if path.is_file() {
+            if path.pack_is_file() {
                 backup(root, &path)?;
             }
             fs::write(path, serde_json::to_vec_pretty(&value)?)?;

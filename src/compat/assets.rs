@@ -1,11 +1,12 @@
+use crate::packfs as fs;
+use crate::packfs::PathExt;
+use crate::packfs::WalkDir;
 use anyhow::{Result, ensure};
 use image::{Rgba, RgbaImage, imageops};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::Path;
-use walkdir::WalkDir;
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct AssetReport {
@@ -29,7 +30,7 @@ struct Sprite {
 pub(crate) fn backup(root: &Path, path: &Path) -> Result<()> {
     let relative = path.strip_prefix(root)?;
     let destination = root.join("fastpack/original-assets").join(relative);
-    if !destination.exists() {
+    if !destination.pack_exists() {
         fs::create_dir_all(destination.parent().unwrap())?;
         fs::copy(path, destination)?;
     }
@@ -37,16 +38,16 @@ pub(crate) fn backup(root: &Path, path: &Path) -> Result<()> {
 }
 
 pub(crate) fn save(root: &Path, path: &Path, image: &RgbaImage) -> Result<()> {
-    if path.exists() {
+    if path.pack_exists() {
         backup(root, path)?;
     }
     fs::create_dir_all(path.parent().unwrap())?;
-    image.save(path)?;
+    crate::packfs::save_image(image, path)?;
     Ok(())
 }
 
 pub(super) fn open(path: &Path) -> Result<RgbaImage> {
-    Ok(image::ImageReader::open(path)?
+    Ok(crate::packfs::image_reader(path)?
         .with_guessed_format()?
         .decode()?
         .to_rgba8())
@@ -105,12 +106,12 @@ fn chests(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
         return Ok(());
     }
     let dir = root.join("assets/minecraft/textures/entity/chest");
-    if !dir.exists() {
+    if !dir.pack_exists() {
         return Ok(());
     }
     for name in ["normal", "trapped", "christmas", "ender"] {
         let single = dir.join(format!("{name}.png"));
-        if single.exists() {
+        if single.pack_exists() {
             let original = open(&single)?;
             let converted = chest(&original, "single", downgrade)?;
             save(root, &single, &converted)?;
@@ -120,11 +121,11 @@ fn chests(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
             ));
         }
         let double = dir.join(format!("{name}_double.png"));
-        if upgrade && double.exists() {
+        if upgrade && double.pack_exists() {
             let original = open(&double)?;
             for kind in ["left", "right"] {
                 let output = dir.join(format!("{name}_{kind}.png"));
-                if output.exists() {
+                if output.pack_exists() {
                     continue;
                 }
                 save(root, &output, &chest(&original, kind, false)?)?;
@@ -135,10 +136,10 @@ fn chests(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
                 .converted
                 .push(format!("双箱子 {name}：拆为左右纹理并重建 UV"));
         }
-        if downgrade && !double.exists() {
+        if downgrade && !double.pack_exists() {
             let left = dir.join(format!("{name}_left.png"));
             let right = dir.join(format!("{name}_right.png"));
-            if left.exists() && right.exists() {
+            if left.pack_exists() && right.pack_exists() {
                 let a = chest(&open(&left)?, "left", true)?;
                 let b = chest(&open(&right)?, "right", true)?;
                 ensure!(
@@ -216,13 +217,16 @@ fn patterns(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> 
     let reverse = target < 5;
     for family in ["banner", "shield"] {
         let dir = root.join(format!("assets/minecraft/textures/entity/{family}"));
-        if !dir.exists() {
+        if !dir.pack_exists() {
             continue;
         }
         let base_path = root.join(format!(
             "assets/minecraft/textures/entity/{family}_base.png"
         ));
-        let base = base_path.exists().then(|| open(&base_path)).transpose()?;
+        let base = base_path
+            .pack_exists()
+            .then(|| open(&base_path))
+            .transpose()?;
         let files: Vec<_> = fs::read_dir(&dir)?
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.path())
@@ -243,7 +247,7 @@ fn patterns(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> 
         let path = root.join(format!(
             "assets/minecraft/textures/entity/enderdragon/{name}.png"
         ));
-        if !path.exists() || reverse {
+        if !path.pack_exists() || reverse {
             continue;
         }
         let mut image = open(&path)?;
@@ -260,7 +264,7 @@ fn patterns(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> 
                 image.put_pixel(x, y, Rgba([0, 0, 0, 0]));
             }
         }
-        image.save(path)?;
+        crate::packfs::save_image(&image, path)?;
         report
             .converted
             .push(format!("{name}：清理 1.15 移除的龙翼底面 UV"));
@@ -334,13 +338,13 @@ pub fn boat(source: &RgbaImage) -> Result<RgbaImage> {
 fn entities(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Result<()> {
     if target >= 2 {
         let old = root.join("assets/minecraft/textures/entity/boat.png");
-        if old.exists() {
+        if old.pack_exists() {
             let converted = boat(&open(&old)?)?;
             let woods = ["oak", "spruce", "birch", "jungle", "acacia", "dark_oak"];
             for wood in woods {
                 for name in [format!("boat/{wood}.png"), format!("boat/boat_{wood}.png")] {
                     let output = root.join("assets/minecraft/textures/entity").join(name);
-                    if !output.exists() {
+                    if !output.pack_exists() {
                         save(root, &output, &converted)?;
                     }
                 }
@@ -354,10 +358,10 @@ fn entities(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> 
     }
     if target < 2 && source >= 2 {
         let old = root.join("assets/minecraft/textures/entity/boat.png");
-        if !old.exists() {
+        if !old.pack_exists() {
             let original =
                 root.join("fastpack/original-assets/assets/minecraft/textures/entity/boat.png");
-            if original.exists() {
+            if original.pack_exists() {
                 fs::copy(original, &old)?;
                 report
                     .converted
@@ -365,7 +369,7 @@ fn entities(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> 
             } else if let Some(path) = ["boat/oak.png", "boat/boat_oak.png"]
                 .iter()
                 .map(|name| root.join("assets/minecraft/textures/entity").join(name))
-                .find(|path| path.exists())
+                .find(|path| path.pack_exists())
             {
                 let image = open(&path)?;
                 let scale = image.width() / 128;
@@ -395,7 +399,7 @@ fn entities(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> 
                 "assets/minecraft/textures/entity/boat/boat_{wood}.png"
             ));
             let new = root.join(format!("assets/minecraft/textures/entity/boat/{wood}.png"));
-            if old.exists() && !new.exists() {
+            if old.pack_exists() && !new.pack_exists() {
                 fs::copy(&old, &new)?;
                 report
                     .converted
@@ -413,7 +417,7 @@ fn entities(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> 
         ] {
             let old = root.join("assets/minecraft/textures/entity").join(old);
             let new = root.join("assets/minecraft/textures/entity").join(new);
-            if old.exists() && !new.exists() {
+            if old.pack_exists() && !new.pack_exists() {
                 backup(root, &old)?;
                 fs::create_dir_all(new.parent().unwrap())?;
                 fs::copy(&old, &new)?;
@@ -433,7 +437,7 @@ fn entities(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> 
         ] {
             let old = root.join("assets/minecraft/textures").join(old);
             let new = root.join("assets/minecraft/textures").join(new);
-            if old.exists() && !new.exists() {
+            if old.pack_exists() && !new.pack_exists() {
                 backup(root, &old)?;
                 fs::create_dir_all(new.parent().unwrap())?;
                 fs::copy(&old, &new)?;
@@ -444,7 +448,7 @@ fn entities(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> 
             }
         }
         let moon = root.join("assets/minecraft/textures/environment/moon_phases.png");
-        if moon.exists() {
+        if moon.pack_exists() {
             let image = open(&moon)?;
             ensure!(
                 image.width() % 4 == 0 && image.height() % 2 == 0,
@@ -476,7 +480,7 @@ fn entities(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> 
                 let output = root.join(format!(
                     "assets/minecraft/textures/environment/celestial/moon/{name}.png"
                 ));
-                if !output.exists() {
+                if !output.pack_exists() {
                     save(root, &output, &part)?;
                 }
             }
@@ -493,7 +497,7 @@ fn entities(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> 
         ] {
             let old = root.join("assets/minecraft/textures").join(old);
             let new = root.join("assets/minecraft/textures").join(new);
-            if new.exists() && !old.exists() {
+            if new.pack_exists() && !old.pack_exists() {
                 fs::copy(&new, &old)?;
                 report.converted.push(format!(
                     "实体/天体路径还原 {}",
@@ -502,7 +506,7 @@ fn entities(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> 
             }
         }
         let old = root.join("assets/minecraft/textures/environment/moon_phases.png");
-        if !old.exists() {
+        if !old.pack_exists() {
             let names = [
                 "full_moon",
                 "waning_gibbous",
@@ -521,7 +525,7 @@ fn entities(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> 
                     ))
                 })
                 .collect();
-            if paths.iter().all(|path| path.exists()) {
+            if paths.iter().all(|path| path.pack_exists()) {
                 let tiles = paths
                     .iter()
                     .map(|path| open(path))
@@ -577,24 +581,24 @@ pub(super) fn nine_slice(source: &RgbaImage, width: u32, height: u32, border: u3
 fn item_resources(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Result<()> {
     let folder = if target >= 4 { "item" } else { "items" };
     let textures = root.join(format!("assets/minecraft/textures/{folder}"));
-    if !textures.is_dir() {
+    if !textures.pack_is_dir() {
         return Ok(());
     }
     if source < 4 && target >= 4 {
         for (old, aliases) in &crate::tables::legacy_items().aliases {
             let name = crate::flatten_texture_name(old, "item");
             let image = textures.join(format!("{name}.png"));
-            if !image.exists() {
+            if !image.pack_exists() {
                 continue;
             }
             for alias in aliases {
                 let destination = textures.join(format!("{alias}.png"));
-                if destination.exists() {
+                if destination.pack_exists() {
                     continue;
                 }
                 fs::copy(&image, &destination)?;
                 let metadata = image.with_extension("png.mcmeta");
-                if metadata.exists() {
+                if metadata.pack_exists() {
                     fs::copy(metadata, destination.with_extension("png.mcmeta"))?;
                 }
                 report
@@ -606,7 +610,7 @@ fn item_resources(root: &Path, source: u32, target: u32, report: &mut AssetRepor
     if source < 2 && target >= 2 {
         for (name, count) in [("clock", 64u32), ("compass", 32)] {
             let path = textures.join(format!("{name}.png"));
-            if !path.exists() {
+            if !path.pack_exists() {
                 continue;
             }
             let image = open(&path)?;
@@ -620,7 +624,7 @@ fn item_resources(root: &Path, source: u32, target: u32, report: &mut AssetRepor
             let frames = image.height() / width;
             for index in 0..count {
                 let destination = textures.join(format!("{name}_{index:02}.png"));
-                if destination.exists() {
+                if destination.pack_exists() {
                     continue;
                 }
                 let frame = index * frames / count;
@@ -734,7 +738,7 @@ pub fn inventory_layout(old: &RgbaImage, reverse: bool) -> Result<RgbaImage> {
 fn recipe_controls(root: &Path, image: &mut RgbaImage) -> Result<()> {
     let scale = image.width() / 256;
     let book_path = root.join("assets/minecraft/textures/item/book.png");
-    let book = if book_path.exists() {
+    let book = if book_path.pack_exists() {
         Some(open(&book_path)?)
     } else {
         None
@@ -786,7 +790,7 @@ fn recipe_controls(root: &Path, image: &mut RgbaImage) -> Result<()> {
         );
         imageops::replace(&mut atlas, &button, 0, i64::from(state * 19 * scale));
     }
-    if !atlas_path.exists() {
+    if !atlas_path.pack_exists() {
         save(root, &atlas_path, &atlas)?;
     }
     Ok(())
@@ -796,7 +800,7 @@ fn gui(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Resul
     let textures = root.join("assets/minecraft/textures");
     if source < 2 && target >= 2 || source >= 2 && target < 2 {
         let path = textures.join("gui/container/inventory.png");
-        if path.exists() {
+        if path.pack_exists() {
             let mut old = open(&path)?;
             if old.width() < 256 && old.width() > 0 {
                 old = imageops::resize(
@@ -823,7 +827,7 @@ fn gui(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Resul
     }
     if source < 8 && target >= 8 {
         let path = textures.join("gui/container/inventory.png");
-        if path.exists() {
+        if path.pack_exists() {
             let mut image = open(&path)?;
             let scale = image.width() / 256;
             ensure!(
@@ -846,7 +850,7 @@ fn gui(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Resul
             "gui/gamemode_switcher.png",
         ] {
             let path = textures.join(name);
-            if !path.exists() {
+            if !path.pack_exists() {
                 continue;
             }
             let old = open(&path)?;
@@ -887,7 +891,7 @@ fn gui(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Resul
         for recipe in &recipes {
             let source = textures.join(&recipe.source);
             let output = textures.join(&recipe.target);
-            if !source.exists() || output.exists() {
+            if !source.pack_exists() {
                 continue;
             }
             if !cache.contains_key(&recipe.source) {
@@ -934,7 +938,7 @@ fn gui(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Resul
                 continue;
             }
             let source = textures.join(&recipe.target);
-            if !source.exists() {
+            if !source.pack_exists() {
                 continue;
             }
             let tile = open(&source)?;
@@ -947,7 +951,7 @@ fn gui(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Resul
             );
             if !rebuilt.contains_key(&recipe.source) {
                 let existing = textures.join(&recipe.source);
-                let canvas = if existing.exists() {
+                let canvas = if existing.pack_exists() {
                     open(&existing)?
                 } else {
                     RgbaImage::new(recipe.source_width * scale, recipe.source_height * scale)
@@ -1080,7 +1084,7 @@ fn item_definition(root: &Path, name: &str, target: u32) -> Result<()> {
         return Ok(());
     }
     let path = root.join(format!("assets/minecraft/items/{name}.json"));
-    if !path.exists() {
+    if !path.pack_exists() {
         fs::create_dir_all(path.parent().unwrap())?;
         fs::write(
             path,
@@ -1169,7 +1173,7 @@ fn model_refs(value: &mut Value, default_folder: &str) -> bool {
 fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Result<()> {
     let legacy_models = super::legacy_models::capture(root, source, target)?;
     let assets = root.join("assets");
-    if !assets.exists() {
+    if !assets.pack_exists() {
         return Ok(());
     }
     let mut count = 0;
@@ -1320,7 +1324,7 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
                 }
                 for (name, variants) in groups {
                     let output = path.with_file_name(format!("{name}.json"));
-                    if !output.exists() {
+                    if !output.pack_exists() {
                         fs::write(
                             output,
                             serde_json::to_vec_pretty(&json!({"variants":variants}))?,
@@ -1339,7 +1343,7 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
             };
             if name != old {
                 let destination = path.with_file_name(format!("{name}.json"));
-                if !destination.exists() {
+                if !destination.pack_exists() {
                     fs::write(destination, serde_json::to_vec_pretty(&value)?)?;
                     count += 1;
                 }
@@ -1350,7 +1354,7 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
             let name = old_model_name(&old);
             if name != old {
                 let destination = path.with_file_name(format!("{name}.json"));
-                if !destination.exists() {
+                if !destination.pack_exists() {
                     fs::write(destination, serde_json::to_vec_pretty(&value)?)?;
                     count += 1;
                 }
@@ -1414,7 +1418,7 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
                 name.to_string()
             };
             let output = root.join(format!("assets/{namespace}/items/{name}.json"));
-            if !output.exists() {
+            if !output.pack_exists() {
                 fs::create_dir_all(output.parent().unwrap())?;
                 fs::write(
                     output,
@@ -1435,7 +1439,7 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
     }
     for (name, variants) in merged {
         let path = root.join(format!("assets/minecraft/blockstates/{name}.json"));
-        let mut value = if path.exists() {
+        let mut value = if path.pack_exists() {
             serde_json::from_slice::<Value>(&fs::read(&path)?)?
         } else {
             json!({"variants":{}})
@@ -1443,7 +1447,7 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
         if let Some(existing) = value.get_mut("variants").and_then(Value::as_object_mut) {
             existing.extend(variants);
         }
-        if path.exists() {
+        if path.pack_exists() {
             backup(root, &path)?;
         }
         fs::write(path, serde_json::to_vec_pretty(&value)?)?;
@@ -1460,12 +1464,12 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
         for (old, aliases) in &crate::tables::legacy_items().aliases {
             let name = crate::flatten_texture_name(old, "item");
             let original = directory.join(format!("{name}.json"));
-            if !original.exists() {
+            if !original.pack_exists() {
                 continue;
             }
             for alias in aliases {
                 let path = directory.join(format!("{alias}.json"));
-                if !path.exists() {
+                if !path.pack_exists() {
                     fs::copy(&original, &path)?;
                     item_definition(root, alias, target)?;
                     count += 1;
@@ -1474,9 +1478,11 @@ fn models(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Re
         }
         let bed = root.join("assets/minecraft/textures/item/red_bed.png");
         let model = directory.join("red_bed.json");
-        if bed.exists()
-            && !model.exists()
-            && !root.join("assets/minecraft/textures/entity/bed").exists()
+        if bed.pack_exists()
+            && !model.pack_exists()
+            && !root
+                .join("assets/minecraft/textures/entity/bed")
+                .pack_exists()
         {
             fs::create_dir_all(&directory)?;
             fs::write(
@@ -1506,7 +1512,7 @@ fn fonts(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Res
     let directory = root.join("assets/minecraft/font");
     let mut pages = Vec::new();
     let font_textures = root.join("assets/minecraft/textures/font");
-    if font_textures.is_dir() {
+    if font_textures.pack_is_dir() {
         for entry in fs::read_dir(&font_textures)? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -1536,7 +1542,7 @@ fn fonts(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Res
         }
     }
     let mut files = Vec::new();
-    if directory.is_dir() {
+    if directory.pack_is_dir() {
         for entry in fs::read_dir(&directory)? {
             let path = entry?.path();
             if path.extension().is_some_and(|ext| ext == "json") {
@@ -1579,7 +1585,7 @@ fn fonts(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Res
             path.file_name().unwrap().to_string_lossy()
         ));
     }
-    if !pages.is_empty() && !directory.join("uniform.json").exists() {
+    if !pages.is_empty() && !directory.join("uniform.json").pack_exists() {
         fs::create_dir_all(&directory)?;
         let mut providers = pages;
         providers.push(json!({"type":"reference","id":"minecraft:include/unifont"}));
@@ -1642,31 +1648,193 @@ fn migrate_assets(
     auto_netherite_sword: bool,
 ) -> Result<AssetReport> {
     let mut report = AssetReport::default();
+    let detailed = std::env::var_os("FAST_PACK_PROFILE_STAGES").is_some();
+    let mut timer = std::time::Instant::now();
     super::texture_formats::migrate(root, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE super::texture_formats::migrate: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     chests(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE chests: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     patterns(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE patterns: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     entities(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE entities: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     item_resources(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE item_resources: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     super::legacy_textures::migrate(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE super::legacy_textures::migrate: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     super::item_bindings::migrate(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE super::item_bindings::migrate: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     super::item_display::bind_definitions(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE super::item_display::bind_definitions: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     super::modern_items::migrate(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE super::modern_items::migrate: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     models(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE models: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     super::item_transparency::migrate(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE super::item_transparency::migrate: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     super::legacy_blocks::migrate(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE super::legacy_blocks::migrate: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     super::equipment::migrate(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE super::equipment::migrate: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     super::versioned_textures::migrate(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE super::versioned_textures::migrate: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     super::players::migrate(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE super::players::migrate: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     super::recent_resources::migrate(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE super::recent_resources::migrate: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     if auto_netherite {
         super::netherite::migrate(root, target, auto_netherite_sword, &mut report)?;
     }
     super::modern_gui::prepare(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE super::modern_gui::prepare: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     super::modern_gui::migrate(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE super::modern_gui::migrate: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     gui(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE gui: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     super::legacy_gui::migrate(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE super::legacy_gui::migrate: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     super::effect_panels::migrate(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE super::effect_panels::migrate: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     super::glint::migrate(root, source, target, glint_color, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE super::glint::migrate: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+        timer = std::time::Instant::now();
+    }
     fonts(root, source, target, &mut report)?;
+    if detailed {
+        eprintln!(
+            "PROFILE fonts: {:.3}ms",
+            timer.elapsed().as_secs_f64() * 1000.0
+        );
+    }
     Ok(report)
 }

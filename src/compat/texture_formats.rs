@@ -1,13 +1,14 @@
 use super::assets::{AssetReport, open, save};
+use crate::packfs::File;
+use crate::packfs::PathExt;
+use crate::packfs::WalkDir;
 use anyhow::Result;
-use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use walkdir::WalkDir;
 
 pub(super) fn migrate(root: &Path, report: &mut AssetReport) -> Result<()> {
     let assets = root.join("assets");
-    if !assets.is_dir() {
+    if !assets.pack_is_dir() {
         return Ok(());
     }
     for entry in WalkDir::new(assets).min_depth(1) {

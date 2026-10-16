@@ -1,4 +1,5 @@
 use super::assets::{AssetReport, save};
+use crate::packfs::PathExt;
 use anyhow::{Result, ensure};
 use image::{RgbaImage, imageops};
 use std::path::Path;
@@ -75,10 +76,10 @@ pub(super) fn migrate(
     for (name, model) in [("steve", "wide"), ("alex", "slim")] {
         let input = textures.join(format!("{name}.png"));
         let output = textures.join(format!("player/{model}/{name}.png"));
-        if !input.is_file() || output.is_file() {
+        if !input.pack_is_file() || output.pack_is_file() {
             continue;
         }
-        let image = image::open(&input)?.to_rgba8();
+        let image = crate::packfs::open_image(&input)?.to_rgba8();
         let image = if image.width() == image.height() * 2 {
             legacy_skin(&image)?
         } else {

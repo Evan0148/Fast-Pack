@@ -1,9 +1,10 @@
 use super::assets::{AssetReport, backup};
+use crate::packfs as fs;
+use crate::packfs::PathExt;
+use crate::packfs::WalkDir;
 use anyhow::Result;
 use serde_json::{Value, json};
-use std::fs;
 use std::path::Path;
-use walkdir::WalkDir;
 
 fn palette(reference: &str) -> Option<String> {
     let (namespace, name) = reference
@@ -81,7 +82,7 @@ pub(super) fn migrate(
     }
     let palettes = root.join("assets/minecraft/textures/trims/color_palettes");
     let mut count = 0;
-    if palettes.is_dir() {
+    if palettes.pack_is_dir() {
         for entry in fs::read_dir(palettes)? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -101,7 +102,7 @@ pub(super) fn migrate(
                 },
                 suffix
             ));
-            if destination.is_file() {
+            if destination.pack_is_file() {
                 continue;
             }
             fs::create_dir_all(destination.parent().unwrap())?;
@@ -111,10 +112,10 @@ pub(super) fn migrate(
     }
     let farmland = !root
         .join("assets/minecraft/models/block/template_farmland.json")
-        .is_file();
+        .pack_is_file();
     let mut json_count = 0;
     let assets = root.join("assets");
-    if assets.is_dir() {
+    if assets.pack_is_dir() {
         for entry in WalkDir::new(assets).min_depth(1) {
             let entry = entry?;
             if !entry.file_type().is_file()

@@ -1,8 +1,9 @@
+use crate::packfs as fs;
+use crate::packfs::PathExt;
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -428,7 +429,7 @@ pub(super) fn recover(root: &Path, relative: &str, value: &mut Value, target: u3
     }
     let original_root = root.join("fastpack/original-assets");
     let mut original = original_root.join(relative);
-    if !original.is_file()
+    if !original.pack_is_file()
         && let Some(name) = relative
             .strip_prefix("assets/minecraft/models/item/")
             .and_then(|name| name.strip_suffix(".json"))
@@ -437,14 +438,14 @@ pub(super) fn recover(root: &Path, relative: &str, value: &mut Value, target: u3
             if modern == name {
                 let candidate =
                     original_root.join(format!("assets/minecraft/models/item/{legacy}.json"));
-                if candidate.is_file() {
+                if candidate.pack_is_file() {
                     original = candidate;
                     break;
                 }
             }
         }
     }
-    if !original.is_file() {
+    if !original.pack_is_file() {
         return Ok(false);
     }
     let Ok(old) = serde_json::from_slice::<Value>(&fs::read(original)?) else {

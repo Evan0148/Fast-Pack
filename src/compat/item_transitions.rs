@@ -1,9 +1,9 @@
 use super::assets::{AssetReport, backup};
+use crate::packfs as fs;
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -266,7 +266,7 @@ pub(super) fn bind(root: &Path, source: u32, target: u32, report: &mut AssetRepo
     };
     let mut models = BTreeMap::new();
     let mut definitions = Vec::new();
-    for entry in walkdir::WalkDir::new(root.join("assets")).min_depth(1) {
+    for entry in crate::packfs::WalkDir::new(root.join("assets")).min_depth(1) {
         let entry = entry?;
         if !entry.file_type().is_file() || entry.path().extension().is_none_or(|s| s != "json") {
             continue;
