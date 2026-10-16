@@ -418,7 +418,7 @@ impl App {
             progress: Tween::new(0.0, 220),
             advanced_motion: Tween::new(0.0, 230),
             result_motion: Tween::new(0.0, 280),
-            load_motion: Tween::new(0.0, 240),
+            load_motion: Tween::new(0.0, 80),
             theme_motion: Tween::new(if dark { 1.0 } else { 0.0 }, 180),
             auto_save_motion: Tween::new(if auto_save { 1.0 } else { 0.0 }, 220),
             auto_save_path_motion: Tween::new(if auto_save_path { 1.0 } else { 0.0 }, 220),
@@ -557,7 +557,10 @@ impl App {
             || self.capture.is_some()
             || self.smoke
         {
-            let duration = if self.animation_active() || self.glint_picker && !self.reduced {
+            let duration = if self.phase == Phase::Identifying
+                || self.animation_active()
+                || self.glint_picker && !self.reduced
+            {
                 16
             } else {
                 40
@@ -606,16 +609,15 @@ impl App {
         self.load_motion.set(0.0, self.now, self.reduced);
         let generation = self.generation;
         let sender = self.sender.clone();
-        let preview_path = path.clone();
-        let preview_sender = sender.clone();
-        std::thread::spawn(move || {
-            let preview = fast_pack::compat::sky::preview(&preview_path)
-                .map_err(|error| format!("{error:#}"));
-            let _ = preview_sender.send(WorkEvent::Preview(generation, preview));
-        });
         std::thread::spawn(move || {
             let info = probe_pack(&path);
+            let valid = info.ok;
             let _ = sender.send(WorkEvent::Probed(generation, info));
+            if valid {
+                let preview =
+                    fast_pack::compat::sky::preview(&path).map_err(|error| format!("{error:#}"));
+                let _ = sender.send(WorkEvent::Preview(generation, preview));
+            }
         });
     }
     fn update_output(&mut self) {

@@ -15,3 +15,4 @@ pub use tables::{
 };
 mod archive;
 mod embedded;
+mod probe;

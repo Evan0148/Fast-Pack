@@ -338,26 +338,29 @@ fn numeric_format(value: &Value) -> Option<u32> {
 
 pub fn detect_format(root: &Path) -> Option<u32> {
     if let Ok(text) = fs::read_to_string(root.join("pack.mcmeta"))
-        && let Ok(data) = serde_json::from_str::<Value>(&text)
-        && let Some(pack) = data.get("pack")
+        && let Ok(data) = serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}'))
+        && let Some(format) = metadata_format(&data)
     {
-        if let Some(format) = pack.get("pack_format").and_then(numeric_format) {
-            return Some(format);
-        }
-        if let Some(format) = pack.get("min_format")
-            && let Some(result) = numeric_format(
+        return Some(format);
+    }
+    root.join("assets/minecraft/textures/blocks")
+        .exists()
+        .then_some(1)
+}
+
+pub(crate) fn metadata_format(value: &Value) -> Option<u32> {
+    let pack = value.get("pack")?;
+    pack.get("pack_format")
+        .and_then(numeric_format)
+        .or_else(|| {
+            let format = pack.get("min_format")?;
+            numeric_format(
                 format
                     .as_array()
                     .and_then(|array| array.first())
                     .unwrap_or(format),
             )
-        {
-            return Some(result);
-        }
-    }
-    root.join("assets/minecraft/textures/blocks")
-        .exists()
-        .then_some(1)
+        })
 }
 
 pub fn compact_json(value: &Value) -> String {
@@ -429,72 +432,7 @@ pub fn suggest_output(source: &Path, target: &str, as_zip: bool) -> PathBuf {
 }
 
 pub fn probe_pack(path: &Path) -> PackInfo {
-    let mut info = PackInfo {
-        ok: false,
-        path: path.display().to_string(),
-        name: path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into(),
-        src_format: None,
-        version_label: None,
-        file_count: 0,
-        texture_count: 0,
-        has_mcmeta: false,
-        has_assets: false,
-        description: String::new(),
-        layout: None,
-        suggested_target: LATEST_VERSION.into(),
-        error: None,
-        features: Default::default(),
-    };
-    let result = (|| -> Result<()> {
-        let (_work, root) = load_pack(path)?;
-        info.file_count = walk_files(&root)?.len();
-        info.has_mcmeta = root.join("pack.mcmeta").exists();
-        if let Ok(text) = fs::read_to_string(root.join("pack.mcmeta"))
-            && let Ok(value) = serde_json::from_str::<Value>(&text)
-            && let Some(description) = value.get("pack").and_then(|pack| pack.get("description"))
-        {
-            info.description = description
-                .as_str()
-                .map(str::to_owned)
-                .unwrap_or_else(|| compact_json(description));
-        }
-        let assets = root.join("assets");
-        info.has_assets = assets.exists();
-        info.features = crate::compat::inspect(&root)?;
-        if info.has_assets {
-            for entry in WalkDir::new(&assets).min_depth(1) {
-                let entry = entry?;
-                if entry.path().extension().is_some_and(|ext| ext == "png") {
-                    info.texture_count += 1;
-                }
-            }
-        }
-        let texture = root.join("assets/minecraft/textures");
-        info.layout = if texture.join("blocks").exists() || texture.join("items").exists() {
-            Some("legacy".into())
-        } else if texture.join("block").exists() || texture.join("item").exists() {
-            Some("modern".into())
-        } else {
-            None
-        };
-        info.src_format = detect_format(&root)
-            .or_else(|| (info.layout.as_deref() == Some("legacy")).then_some(1));
-        info.version_label = info
-            .src_format
-            .filter(|value| *value != 0)
-            .map(version_label_of);
-        info.suggested_target = suggest_target(info.src_format).into();
-        info.ok = info.has_assets || info.has_mcmeta;
-        Ok(())
-    })();
-    if let Err(error) = result {
-        info.error = Some(format!("{error:#}"));
-    }
-    info
+    crate::probe::probe_pack(path)
 }
 
 fn normalize_lowercase(root: &Path) -> Result<usize> {

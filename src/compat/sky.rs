@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
-use std::io::{BufReader, Read};
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use walkdir::WalkDir;
 use zip::ZipArchive;
@@ -977,7 +977,7 @@ fn compose_preview(
 }
 
 fn preview_entry(
-    archive: &mut ZipArchive<BufReader<File>>,
+    archive: &mut ZipArchive<crate::archive::ArchiveReader<File>>,
     index: usize,
     limit: u64,
 ) -> Result<Vec<u8>> {
@@ -1007,7 +1007,7 @@ pub fn preview(source: &Path) -> Result<Option<Preview>> {
             super::assets::open(&path)
         });
     }
-    let mut archive = ZipArchive::new(BufReader::new(File::open(source)?))?;
+    let mut archive = ZipArchive::new(crate::archive::ArchiveReader::new(File::open(source)?)?)?;
     let mut indexed = BTreeMap::new();
     for name in archive.file_names() {
         let value = name.replace('\\', "/");

@@ -175,6 +175,33 @@ pub struct PackFeatures {
 }
 
 impl PackFeatures {
+    pub(crate) fn observe_file(&mut self, path: &str) {
+        if path.starts_with("fastpack/") {
+            return;
+        }
+        if path.ends_with(".properties")
+            && (path.contains("/mcpatcher/sky/") || path.contains("/optifine/sky/"))
+        {
+            self.optifine_sky += 1;
+        }
+        if path.ends_with(".json") && path.contains("/sky/") && path.starts_with("assets/") {
+            if path.starts_with("assets/nuit/") {
+                self.nuit_sky += 1;
+            } else if !path.contains("/optifine/") && !path.contains("/mcpatcher/") {
+                self.fabric_sky += 1;
+            }
+        }
+        if path.contains("/shaders/core/") && shader_file(path) {
+            self.core_shaders += 1;
+        }
+        if (path.contains("/shaders/post/")
+            || path.contains("/shaders/program/")
+            || path.contains("/post_effect/"))
+            && shader_file(path)
+        {
+            self.post_shaders += 1;
+        }
+    }
     pub fn sky_count(&self) -> usize {
         self.optifine_sky + self.fabric_sky + self.nuit_sky
     }
@@ -195,31 +222,7 @@ pub fn inspect(root: &Path) -> Result<PackFeatures> {
             .strip_prefix(root)?
             .to_string_lossy()
             .replace('\\', "/");
-        if path.starts_with("fastpack/") {
-            continue;
-        }
-        if path.ends_with(".properties")
-            && (path.contains("/mcpatcher/sky/") || path.contains("/optifine/sky/"))
-        {
-            features.optifine_sky += 1;
-        }
-        if path.ends_with(".json") && path.contains("/sky/") && path.starts_with("assets/") {
-            if path.starts_with("assets/nuit/") {
-                features.nuit_sky += 1;
-            } else if !path.contains("/optifine/") && !path.contains("/mcpatcher/") {
-                features.fabric_sky += 1;
-            }
-        }
-        if path.contains("/shaders/core/") && shader_file(&path) {
-            features.core_shaders += 1;
-        }
-        if (path.contains("/shaders/post/")
-            || path.contains("/shaders/program/")
-            || path.contains("/post_effect/"))
-            && shader_file(&path)
-        {
-            features.post_shaders += 1;
-        }
+        features.observe_file(&path);
     }
     let variants = root.join("fastpack/variants");
     if variants.is_dir() {
