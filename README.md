@@ -66,6 +66,16 @@ This project uses SignPath Foundation for code signing of Windows executable rel
 
 Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取决于客户端已有的天空渲染能力；未知 GLSL 的自动回退使用目标游戏的默认渲染，原有着色器效果不会被保留。
 
+### v1.3.3：统一调色盘与线条颜色（仅更新源码）
+
+所有可调色设置统一使用方形颜色／明暗卡、色相条、预设色与 HEX 输入，包括附魔、准星预设、准星画笔、物品描边、鱼竿线与瞄准方块边框。准星预设可以整体改色并恢复原色；画笔改色只影响之后涂画的像素，保留已经画好的图案和透明度。
+
+新增鱼竿线和瞄准方块边框颜色开关，颜色分别保存。目标为 1.17+ 时使用对应版本原生线条着色器，区分不透明鱼线和半透明选中边框，保留透明度与雾效；1.7.10–1.16.5 的普通资源包不能控制这两种颜色，界面会禁用并说明。使用客户端渲染覆盖或光影时效果可能被覆盖；同类黑色调试线条也可能同时改变。关闭开关不覆盖输入包本身已有的线条效果。
+
+修复编辑过尺寸的模型带 UTF-8 BOM 或注释时被跳过的问题：先备份并统一 JSON 写法，再转换贴图与模型引用，保留尺寸和几何。新版物品定义会使用材质包提供的物品模型，保留其大小，不覆盖已放置方块的模型。浅色／深色主题选择也会自动保存，并在重启时恢复。
+
+CLI 新增 `--fishing-line-color '#40CFFF'`、`--block-outline-color '#FF8040'`。本次仍只更新源码，不上传 EXE、CLI、便携包或蓝奏云。
+
 ### v1.3.2：按版本自定义物品（仅更新源码）
 
 本次只更新仓库源码，不上传 EXE、CLI、便携包或其他发布成品，蓝奏云保留现有版本。
@@ -201,7 +211,7 @@ ZIP 识别直接读取归档目录与 `pack.mcmeta`，统计文件、贴图、�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。已发布的成品为 `FastPack-v1.3.1.exe`；v1.3.2 本次只更新源码。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。已发布的成品为 `FastPack-v1.3.1.exe`；v1.3.3 本次只更新源码。
 2. 双击下载的程序，把一个或多个材质包 ZIP / 文件夹拖入窗口，也可以多选 ZIP。再次拖入会追加到列表；转换中也能继续追加。
 3. 选择目标版本与导出目录，点击“开始转换”或“全部转换”。批量任务自动并行执行，新增的包也会使用本批次选项继续转换。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
@@ -262,7 +272,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.3.2.exe`、`fast-pack-cli-v1.3.2.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.3.3.exe`、`fast-pack-cli-v1.3.3.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -408,7 +418,7 @@ ViaBackwards 启动时将用户 NBT 与内置映射合并。运行中的游戏�
 独立维护入口仍保留，普通玩家使用默认开关即可：
 
 ```powershell
-.\fast-pack-cli-v1.3.2.exe --client-audio "E:\MCLDownload\Game\.minecraft"
+.\fast-pack-cli-v1.3.3.exe --client-audio "E:\MCLDownload\Game\.minecraft"
 ```
 
 此命令现仅配置官方名称与附魔，不改写模组，也不启用原声音效。`--restore-client-audio` 仅用于恢复以前版本留下的模组改写，校验原始备份后还原；当前已经被启动器恢复的原版模组无需处理。
@@ -420,22 +430,23 @@ ViaBackwards 启动时将用户 NBT 与内置映射合并。运行中的游戏�
 
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下示例针对 v1.3.2 源码构建，命令默认执行自动适配；本次不发布对应的 EXE 或便携包：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下示例针对 v1.3.3 源码构建，命令默认执行自动适配；本次不发布对应的 EXE 或便携包：
 
 ```powershell
-.\fast-pack-cli-v1.3.2.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.3.2.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.3.2.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.3.2.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.3.2.exe old.zip --probe
-.\fast-pack-cli-v1.3.2.exe --versions
-.\fast-pack-cli-v1.3.2.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.3.2.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.3.2.exe old.zip --to 1.20.1 --vanilla-glint
-.\fast-pack-cli-v1.3.2.exe old.zip --to 1.20.1 --no-netherite
-.\fast-pack-cli-v1.3.2.exe old.zip --to 1.20.1 --crosshair crosshair-pack.zip
-.\fast-pack-cli-v1.3.2.exe old.zip --to 1.20.1 --hide-attack-indicator
-.\fast-pack-cli-v1.3.2.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.3.3.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.3.3.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.3.3.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.3.3.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.3.3.exe old.zip --probe
+.\fast-pack-cli-v1.3.3.exe --versions
+.\fast-pack-cli-v1.3.3.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.3.3.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.3.3.exe old.zip --to 1.20.1 --vanilla-glint
+.\fast-pack-cli-v1.3.3.exe old.zip --to 1.20.1 --no-netherite
+.\fast-pack-cli-v1.3.3.exe old.zip --to 1.20.1 --crosshair crosshair-pack.zip
+.\fast-pack-cli-v1.3.3.exe old.zip --to 1.20.1 --hide-attack-indicator
+.\fast-pack-cli-v1.3.3.exe old.zip --to 1.20.1 --fishing-line-color '#38BBDD' --block-outline-color '#FA5070'
+.\fast-pack-cli-v1.3.3.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--crosshair <准星包或PNG>` 为本次转换使用指定准星，不改写 GUI 预设库；不传参数时保留原包准星。Rust 库通过 `ConversionOptions.crosshair` 接收准星，`examples/crosshair_presets.rs` 提供独立预设库的导入、列出、生成和删除入口。

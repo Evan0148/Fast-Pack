@@ -268,7 +268,7 @@ pub fn transparent_background(image: &RgbaImage) -> RgbaImage {
     image
 }
 
-fn normalized(image: RgbaImage, atlas: bool) -> Result<RgbaImage> {
+fn normalized(image: RgbaImage, atlas: bool, remove_background: bool) -> Result<RgbaImage> {
     let image = if atlas {
         ensure!(
             image.width() >= 256
@@ -284,7 +284,11 @@ fn normalized(image: RgbaImage, atlas: bool) -> Result<RgbaImage> {
         image
     };
     ensure!(image.width() > 0 && image.height() > 0, "准星图片为空");
-    let image = transparent_background(&image);
+    let image = if remove_background {
+        transparent_background(&image)
+    } else {
+        image
+    };
     ensure!(image.pixels().any(|pixel| pixel[3] > 0), "准星区域完全透明");
     let side = image.width().max(image.height()).div_ceil(15).clamp(1, 64) * 15;
     let mut out = RgbaImage::new(side, side);
@@ -354,7 +358,7 @@ pub fn import(source: &Path) -> Result<Vec<Crosshair>> {
             .is_some_and(|name| name.eq_ignore_ascii_case("icons.png"));
         return Ok(vec![Crosshair {
             name,
-            image: normalized(decode(&fs::read(source)?)?, atlas)?,
+            image: normalized(decode(&fs::read(source)?)?, atlas, true)?,
         }]);
     }
     let mut entries: Vec<(String, String, u8, bool, Vec<u8>)> = Vec::new();
@@ -415,7 +419,7 @@ pub fn import(source: &Path) -> Result<Vec<Crosshair>> {
         }
         let image = match decode(&bytes)
             .with_context(|| format!("无法读取 {path}"))
-            .and_then(|image| normalized(image, atlas))
+            .and_then(|image| normalized(image, atlas, true))
         {
             Ok(image) => image,
             Err(error) => {
@@ -511,7 +515,11 @@ impl Store {
             };
             let preset = (|| -> Result<Preset> {
                 let meta: Metadata = serde_json::from_slice(&fs::read(path.join("name.json"))?)?;
-                let image = normalized(decode(&fs::read(path.join("crosshair.png"))?)?, false)?;
+                let image = normalized(
+                    decode(&fs::read(path.join("crosshair.png"))?)?,
+                    false,
+                    false,
+                )?;
                 Ok(Preset {
                     id,
                     crosshair: Crosshair {
@@ -533,7 +541,7 @@ impl Store {
     pub fn save(&self, crosshair: &Crosshair) -> Result<String> {
         let crosshair = Crosshair {
             name: crosshair.name.clone(),
-            image: transparent_background(&crosshair.image),
+            image: crosshair.image.clone(),
         };
         if let Some(preset) = builtin_presets()?
             .into_iter()
@@ -622,7 +630,7 @@ pub(crate) fn apply(
     crosshair: &Crosshair,
     report: &mut crate::compat::assets::AssetReport,
 ) -> Result<()> {
-    let tile = normalized(crosshair.image.clone(), false)?;
+    let tile = normalized(crosshair.image.clone(), false, false)?;
     let output = root.join(if target >= 18 { SPRITE } else { ICONS });
     if output.pack_is_file() {
         crate::compat::assets::backup(root, &output)?;
@@ -673,4 +681,44 @@ pub(crate) fn apply(
         }
     ));
     Ok(())
+}
+
+#[cfg(test)]
+mod color_tests {
+    use super::*;
+    #[test]
+    fn explicit_black_pixels_survive_preset_save_load_and_conversion() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().join("presets"));
+        let crosshair = Crosshair {
+            name: "Black square".into(),
+            image: RgbaImage::from_pixel(15, 15, Rgba([0, 0, 0, 255])),
+        };
+        let id = store.save(&crosshair).unwrap();
+        let loaded = store
+            .load()
+            .unwrap()
+            .into_iter()
+            .find(|preset| preset.id == id)
+            .unwrap();
+        assert_eq!(loaded.crosshair.image, crosshair.image);
+        for target in [1, 15, 18, 100] {
+            let root = temp.path().join(target.to_string());
+            let mut report = crate::compat::assets::AssetReport::default();
+            apply(&root, target, &loaded.crosshair, &mut report).unwrap();
+            let path = root.join(if target >= 18 { SPRITE } else { ICONS });
+            assert_eq!(
+                *image::open(path).unwrap().to_rgba8().get_pixel(0, 0),
+                Rgba([0, 0, 0, 255])
+            );
+        }
+    }
+    #[test]
+    fn raw_imports_still_remove_black_backgrounds() {
+        let mut image = RgbaImage::from_pixel(15, 15, Rgba([0, 0, 0, 255]));
+        image.put_pixel(7, 7, Rgba([255; 4]));
+        let imported = normalized(image, false, true).unwrap();
+        assert_eq!(*imported.get_pixel(0, 0), Rgba([0; 4]));
+        assert_eq!(*imported.get_pixel(7, 7), Rgba([255; 4]));
+    }
 }

@@ -298,6 +298,14 @@ impl Editor {
     pub fn ready(&self, version: &str) -> bool {
         self.version == version && !self.entries.is_empty()
     }
+    pub fn outline_color(&self) -> [u8; 3] {
+        fast_pack::compat::glint::parse_color(&self.color).unwrap_or([0; 3])
+    }
+    pub fn set_outline_color(&mut self, color: [u8; 3]) {
+        self.color = fast_pack::compat::glint::color_hex(color);
+        self.border = true;
+        self.refresh_preview();
+    }
     fn refresh_preview(&mut self) {
         let Some(original) = &self.preview_source else {
             return;
@@ -518,6 +526,11 @@ impl App {
                         .push(
                             row![
                                 field("#000000", editor.color.clone(), Event::Color),
+                                self.palette_button(
+                                    96,
+                                    super::color_picker::ColorTarget::ItemOutline,
+                                    !self.busy()
+                                ),
                                 iced::widget::pick_list(
                                     [1u8, 2, 3, 4],
                                     Some(editor.width),

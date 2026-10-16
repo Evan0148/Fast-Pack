@@ -37,6 +37,8 @@ pub struct ConversionOptions {
     pub crosshair: Option<crate::crosshair::Crosshair>,
     pub show_attack_indicator: bool,
     pub custom_items: Vec<crate::compat::custom_items::Rule>,
+    pub fishing_line_color: Option<[u8; 3]>,
+    pub block_outline_color: Option<[u8; 3]>,
 }
 
 impl Default for ConversionOptions {
@@ -59,6 +61,8 @@ impl Default for ConversionOptions {
             crosshair: None,
             show_attack_indicator: true,
             custom_items: Vec::new(),
+            fishing_line_color: None,
+            block_outline_color: None,
         }
     }
 }
@@ -1291,6 +1295,7 @@ pub fn convert_pack(
     };
     progress("扫描文件", 10);
     report.files_total = walk_files(&root)?.len();
+    let model_json_notes = crate::model_json::normalize(&root)?;
     let sky_notes = crate::compat::sky::prepare(&root)?;
     if src_format < 3 && 3 <= options.tgt_format {
         progress("小写规范化", 15);
@@ -1341,6 +1346,7 @@ pub fn convert_pack(
         options.auto_netherite_sword,
     )?;
     report.assets.converted.extend(default_notes);
+    report.assets.converted.extend(model_json_notes);
     crate::compat::migrate_versioned_assets(
         &root,
         options.tgt_format,
@@ -1375,6 +1381,16 @@ pub fn convert_pack(
         )?;
     }
     report.compatibility.warnings.extend(sky_notes);
+    crate::compat::line_colors::apply(
+        &root,
+        options
+            .target_version
+            .as_deref()
+            .unwrap_or(&version_label_of(options.tgt_format)),
+        options.fishing_line_color,
+        options.block_outline_color,
+        &mut report.assets,
+    )?;
     if !options.custom_items.is_empty() {
         progress("应用物品自定义", 83);
         crate::compat::custom_items::apply(

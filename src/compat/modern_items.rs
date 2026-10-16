@@ -286,6 +286,36 @@ pub(super) fn recognized(relative: &str, value: &Value, target: u32) -> bool {
         && profile(target).is_some_and(|profile| profile.definitions.contains_key(name))
 }
 
+fn bind_authored_model(value: &mut Value, model: &str) {
+    match value {
+        Value::Object(values) => {
+            let plain = values
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| matches!(kind, "model" | "minecraft:model"));
+            if plain
+                && values
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .and_then(id)
+                    .is_some_and(|reference| reference.starts_with("minecraft:block/"))
+            {
+                values.insert("model".into(), Value::String(model.into()));
+            } else {
+                for value in values.values_mut() {
+                    bind_authored_model(value, model);
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                bind_authored_model(value, model);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub(super) fn migrate(
     root: &Path,
     source: u32,
@@ -344,6 +374,9 @@ pub(super) fn migrate(
             continue;
         }
         let mut definition = template.clone();
+        if existing.contains_key(name) {
+            bind_authored_model(&mut definition, &format!("minecraft:item/{name}"));
+        }
         let mut aliases = BTreeMap::new();
         if let Some(model) = existing
             .get(name)

@@ -18,6 +18,7 @@ mod legacy_effect_icons;
 mod legacy_gui;
 mod legacy_models;
 mod legacy_textures;
+pub mod line_colors;
 mod model_integrity;
 mod modern_gui;
 mod modern_items;

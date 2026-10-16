@@ -1,7 +1,10 @@
 use crate::motion::Tween;
+#[path = "color_picker.rs"]
+mod color_picker;
 #[path = "item_editor.rs"]
 mod item_editor;
 use anyhow::{Context, Result, ensure};
+use color_picker::ColorTarget;
 use fast_pack::converter::load_extra_renames;
 use fast_pack::{
     ConversionOptions, ConversionReport, PackInfo, pack_format_of, probe_pack, suggest_output,
@@ -22,6 +25,10 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 enum Message {
+    PickColor(ColorTarget),
+    FishingLine(bool),
+    BlockOutline(bool),
+    ResetCrosshairColor,
     Items(item_editor::Event),
     Tick(Instant),
     Frame(Instant),
@@ -217,6 +224,12 @@ fn hint_style(colors: Colors) -> container::Style {
 }
 
 struct App {
+    color_target: ColorTarget,
+    fishing_line: Option<[u8; 3]>,
+    fishing_line_color: [u8; 3],
+    block_outline: Option<[u8; 3]>,
+    block_outline_color: [u8; 3],
+    crosshair_tint: Option<[u8; 3]>,
     item_editor: item_editor::Editor,
     profile: Option<crate::ui_profile::Profile>,
     preview_pending: Option<u64>,
@@ -360,13 +373,17 @@ impl App {
         let now = Instant::now();
         let smoke = std::env::args().any(|value| value == "--smoke-test");
         let capture = std::env::var_os("FAST_PACK_CAPTURE").map(PathBuf::from);
-        let dark = std::env::var("FAST_PACK_CAPTURE_THEME").as_deref() != Ok("light");
         let capture_stage =
             std::env::var("FAST_PACK_CAPTURE_STAGE").unwrap_or_else(|_| "empty".into());
         let preferences = if !cfg!(test) && !smoke && capture.is_none() {
             crate::preferences::load()
         } else {
             crate::preferences::Preferences::default()
+        };
+        let dark = match std::env::var("FAST_PACK_CAPTURE_THEME").as_deref() {
+            Ok("light") => false,
+            Ok("dark") => true,
+            _ => preferences.dark,
         };
         let saved_target = preferences.target_version;
         let auto_save = preferences.auto_save;
@@ -395,6 +412,16 @@ impl App {
             });
         }
         let mut app = Self {
+            color_target: ColorTarget::Glint,
+            fishing_line: preferences.fishing_line,
+            fishing_line_color: preferences
+                .fishing_line
+                .unwrap_or(preferences.fishing_line_color),
+            block_outline: preferences.block_outline,
+            block_outline_color: preferences
+                .block_outline
+                .unwrap_or(preferences.block_outline_color),
+            crosshair_tint: preferences.crosshair_tint,
             profile: crate::ui_profile::Profile::load(),
             preview_pending: None,
             preview_request: None,
@@ -584,12 +611,47 @@ impl App {
                 }
             }
         }
-        let task = if app.capture_stage == "items" {
+        let mut task = if app.capture_stage == "items" {
             app.item_editor
                 .update(item_editor::Event::Open, &app.target, app.source.clone())
         } else {
             Task::none()
         };
+        if app.capture.is_some()
+            && let Ok(name) = std::env::var("FAST_PACK_CAPTURE_COLOR")
+        {
+            let target = match name.as_str() {
+                "glint" => Some(ColorTarget::Glint),
+                "crosshair" => Some(ColorTarget::Crosshair),
+                "item" => Some(ColorTarget::ItemOutline),
+                "fishing" => Some(ColorTarget::FishingLine),
+                "outline" => Some(ColorTarget::BlockOutline),
+                _ => None,
+            };
+            if let Some(target) = target {
+                if target == ColorTarget::ItemOutline {
+                    let _ = app.item_editor.update(
+                        item_editor::Event::Open,
+                        &app.target,
+                        app.source.clone(),
+                    );
+                    task = app.item_editor.update(
+                        item_editor::Event::Catalog(
+                            app.target.clone(),
+                            fast_pack::compat::custom_items::items(&app.target),
+                        ),
+                        &app.target,
+                        app.source.clone(),
+                    );
+                }
+                app.open_color_picker(target);
+                if let Ok(value) = std::env::var("FAST_PACK_CAPTURE_COLOR_VALUE")
+                    && let Ok(color) = fast_pack::compat::glint::parse_color(&value)
+                {
+                    app.set_picker_color(color);
+                }
+            }
+        }
         (app, task)
     }
 
@@ -1213,6 +1275,12 @@ impl App {
             if self
                 .preferences_sender
                 .send(crate::preferences::Preferences {
+                    dark: self.dark,
+                    fishing_line: self.fishing_line,
+                    block_outline: self.block_outline,
+                    crosshair_tint: self.crosshair_tint,
+                    fishing_line_color: self.fishing_line_color,
+                    block_outline_color: self.block_outline_color,
                     auto_save: self.auto_save,
                     target_version: self.saved_target.clone(),
                     auto_save_path: self.auto_save_path,
@@ -1244,7 +1312,7 @@ impl App {
         self.logs.push(value);
     }
     fn crosshair_handle(image: &image::RgbaImage) -> widget::image::Handle {
-        let image = fast_pack::crosshair::transparent_background(image);
+        let image = image.clone();
         let mut min = (image.width(), image.height());
         let mut max = (0, 0);
         let mut visible = false;
@@ -1292,7 +1360,15 @@ impl App {
             self.crosshair_presets
                 .iter()
                 .find(|preset| Some(&preset.id) == self.crosshair_selected.as_ref())
-                .map(|preset| preset.crosshair.clone())
+                .map(|preset| {
+                    let mut crosshair = preset.crosshair.clone();
+                    if let Some(color) = self.crosshair_tint {
+                        for pixel in crosshair.image.pixels_mut().filter(|pixel| pixel[3] > 0) {
+                            pixel.0[..3].copy_from_slice(&color);
+                        }
+                    }
+                    crosshair
+                })
         }
     }
     fn sync_crosshair_preview(&mut self) {
@@ -1356,13 +1432,20 @@ impl App {
     }
     fn commit_glint_color(&mut self) {
         if self.glint_edited.take().is_some() {
+            if self.color_target == ColorTarget::ItemOutline {
+                let _ = self.item_editor.update(
+                    item_editor::Event::Save,
+                    &self.target,
+                    self.source.clone(),
+                );
+            }
             self.save_preferences();
         }
     }
     fn close_glint_picker(&mut self) {
         self.glint_picker = false;
         self.glint_picker_motion.set(0.0, self.now, self.reduced);
-        self.glint_hex = fast_pack::compat::glint::color_hex(self.active_glint_color());
+        self.glint_hex = fast_pack::compat::glint::color_hex(self.picker_color());
         self.commit_glint_color();
     }
     fn fail(&mut self, value: String) {
@@ -1440,6 +1523,8 @@ impl App {
             crosshair,
             show_attack_indicator: self.show_attack_indicator,
             custom_items: self.item_editor.applied(&self.target),
+            fishing_line_color: (target_format >= 7).then_some(self.fishing_line).flatten(),
+            block_outline_color: (target_format >= 7).then_some(self.block_outline).flatten(),
         };
         self.phase = Phase::Running;
         self.error = None;
@@ -2080,6 +2165,9 @@ impl App {
                 self.crosshair_color = value.clone();
                 if let Ok(color) = fast_pack::compat::glint::parse_color(&value) {
                     self.crosshair_pen_color = color;
+                    if !self.crosshair_drawing {
+                        self.crosshair_tint = Some(color);
+                    }
                     self.edit_crosshair();
                 }
             }
@@ -2121,29 +2209,40 @@ impl App {
                 }
             }
             Message::GlintPicker if !self.busy() => {
-                self.glint_picker = true;
-                self.glint_picker_motion.set(1.0, self.now, self.reduced);
-                self.glint_preview_started = self.now;
+                self.open_color_picker(ColorTarget::Glint);
+            }
+            Message::PickColor(target) if !self.busy() => self.open_color_picker(target),
+            Message::FishingLine(enabled) if !self.busy() => {
+                self.fishing_line = enabled.then_some(self.fishing_line_color);
+                self.save_preferences();
+            }
+            Message::BlockOutline(enabled) if !self.busy() => {
+                self.block_outline = enabled.then_some(self.block_outline_color);
+                self.save_preferences();
+            }
+            Message::ResetCrosshairColor if !self.busy() => {
+                self.crosshair_tint = None;
+                self.edit_crosshair();
             }
             Message::CloseGlintPicker => self.close_glint_picker(),
-            Message::GlintPreset(color) if !self.busy() => self.set_glint_color(color),
+            Message::GlintPreset(color) if !self.busy() => self.set_picker_color(color),
             Message::GlintSaturationValue(saturation, value) if !self.busy() => {
                 let hsv = [
                     self.glint_hsv[0],
                     saturation.clamp(0.0, 1.0),
                     value.clamp(0.0, 1.0),
                 ];
-                self.set_glint_color(hsv_rgb(hsv));
+                self.set_picker_color(hsv_rgb(hsv));
                 self.glint_hsv = hsv;
             }
             Message::GlintHue(hue) if !self.busy() => {
                 let hsv = [hue.clamp(0.0, 1.0), self.glint_hsv[1], self.glint_hsv[2]];
-                self.set_glint_color(hsv_rgb(hsv));
+                self.set_picker_color(hsv_rgb(hsv));
                 self.glint_hsv = hsv;
             }
             Message::GlintHex(value) if !self.busy() => {
                 if let Ok(color) = fast_pack::compat::glint::parse_color(&value) {
-                    self.set_glint_color(color);
+                    self.set_picker_color(color);
                 }
                 self.glint_hex = value;
             }
@@ -2359,6 +2458,7 @@ impl App {
                 self.dark = !self.dark;
                 self.theme_motion
                     .set(if self.dark { 1.0 } else { 0.0 }, self.now, self.reduced);
+                self.save_preferences();
             }
             Message::ReducedMotion(value) => {
                 self.reduced = value;
@@ -3044,6 +3144,7 @@ impl App {
 
     fn glint_dialog(&self) -> Element<'_, Message> {
         let c = self.colors();
+        let target = self.color_target;
         let presets = [
             ("白色", [255, 255, 255]),
             ("经典紫", fast_pack::compat::glint::VANILLA_COLOR),
@@ -3052,9 +3153,10 @@ impl App {
             ("金色", [255, 201, 92]),
             ("粉色", [255, 134, 204]),
             ("红色", [255, 86, 100]),
+            ("黑色", [0; 3]),
         ];
         let palette = row(presets.into_iter().map(|(name, color)| {
-            let selected = self.active_glint_color() == color;
+            let selected = self.picker_color() == color;
             let swatch = container(space().width(26).height(26)).style(move |_| container::Style {
                 background: Some(Color::from_rgb8(color[0], color[1], color[2]).into()),
                 border: Border {
@@ -3106,14 +3208,18 @@ impl App {
         .spacing(12);
         controls = controls.push(self.label(format!(
             "RGB  {} · {} · {}",
-            self.active_glint_color()[0],
-            self.active_glint_color()[1],
-            self.active_glint_color()[2]
+            self.picker_color()[0],
+            self.picker_color()[1],
+            self.picker_color()[2]
         )));
         let valid = fast_pack::compat::glint::parse_color(&self.glint_hex).is_ok();
         controls = controls.push(
             text(if valid {
-                "颜色自动保存 · 仅本次启用"
+                if target == ColorTarget::ItemOutline {
+                    "点击完成后保存此物品设置"
+                } else {
+                    "颜色自动保存"
+                }
             } else {
                 "输入 3 位或 6 位 HEX 色值"
             })
@@ -3126,34 +3232,73 @@ impl App {
             b: self.glint_color_motion[2].value(self.now),
             a: 1.0,
         };
-        let preview = column![
-            widget::canvas(GlintPreview {
-                color,
-                colors: c,
-                elapsed: if self.reduced {
-                    0.0
+        let preview: Element<'_, Message> = if target == ColorTarget::Glint {
+            column![
+                widget::canvas(GlintPreview {
+                    color,
+                    colors: c,
+                    elapsed: if self.reduced {
+                        0.0
+                    } else {
+                        self.now
+                            .saturating_duration_since(self.glint_preview_started)
+                            .as_secs_f32()
+                    },
+                })
+                .width(116)
+                .height(108),
+                self.label("颜色示意")
+            ]
+            .spacing(8)
+            .align_x(Alignment::Center)
+            .into()
+        } else {
+            column![
+                container(space().width(116).height(108)).style(move |_| container::Style {
+                    background: Some(color.into()),
+                    border: Border {
+                        radius: 10.0.into(),
+                        width: 1.0,
+                        color: c.line
+                    },
+                    ..Default::default()
+                }),
+                self.label("颜色示意")
+            ]
+            .spacing(8)
+            .align_x(Alignment::Center)
+            .into()
+        };
+        let apply: Element<'_, Message> = if target == ColorTarget::Glint {
+            checkbox(self.custom_glint)
+                .label("转换时应用自定义颜色")
+                .text_size(13)
+                .on_toggle(Message::CustomGlint)
+                .into()
+        } else {
+            self.label(
+                if target == ColorTarget::Crosshair && self.crosshair_drawing {
+                    "当前颜色用于画笔，已画好的像素保持原样。"
                 } else {
-                    self.now
-                        .saturating_duration_since(self.glint_preview_started)
-                        .as_secs_f32()
+                    "颜色设置只保存在本机。"
                 },
-            })
-            .width(116)
-            .height(108),
-            self.label("颜色示意")
-        ]
-        .spacing(8)
-        .align_x(Alignment::Center);
+            )
+            .into()
+        };
         container(
             self.panel(
                 column![
                     row![
-                        self.title("附魔闪烁颜色", 22),
+                        self.title(target.title(), 22),
                         space().width(Length::Fill),
                         self.action(34, "完成", Some(Message::CloseGlintPicker), true)
                     ]
                     .align_y(Alignment::Center),
-                    self.label("选择喜欢的颜色；取消勾选自定义颜色恢复原版紫色。"),
+                    self.label(if target == ColorTarget::Glint {
+                        "选择喜欢的颜色；取消勾选自定义颜色恢复原版紫色。"
+                    } else {
+                        "拖动色卡选择颜色与明暗，右侧色相条切换色系。"
+                    }),
                     palette,
                     row![
                         column![
@@ -3170,10 +3315,7 @@ impl App {
                     ]
                     .spacing(18)
                     .align_y(Alignment::Center),
-                    checkbox(self.custom_glint)
-                        .label("转换时应用自定义颜色")
-                        .text_size(13)
-                        .on_toggle(Message::CustomGlint)
+                    apply
                 ]
                 .spacing(18),
             ),
@@ -3222,6 +3364,25 @@ impl App {
                 self.crosshair_presets.len()
             )));
         } else {
+            content = content.push(
+                row![
+                    self.label(if self.crosshair_drawing {
+                        "画笔颜色"
+                    } else {
+                        "准星颜色"
+                    }),
+                    self.palette_button(93, ColorTarget::Crosshair, enabled),
+                    self.action(
+                        97,
+                        "原色",
+                        (enabled && !self.crosshair_drawing && self.crosshair_tint.is_some())
+                            .then_some(Message::ResetCrosshairColor),
+                        false
+                    )
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center),
+            );
             content = content.push(
                 row![
                     self.action(
@@ -3586,6 +3747,7 @@ impl App {
             input,
             options,
             self.glint_controls(),
+            self.line_color_controls(),
             self.crosshair_controls(),
             self.items_view(),
             row![

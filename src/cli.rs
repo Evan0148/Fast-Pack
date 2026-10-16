@@ -77,6 +77,10 @@ struct Arguments {
         help = "按目标版本应用物品改名、大小和贴图描边规则"
     )]
     custom_items: Option<PathBuf>,
+    #[arg(long,value_parser=crate::compat::glint::parse_color,value_name="RRGGBB",help="自定义鱼竿线颜色，需要目标版本 1.17+")]
+    fishing_line_color: Option<[u8; 3]>,
+    #[arg(long,value_parser=crate::compat::glint::parse_color,value_name="RRGGBB",help="自定义瞄准方块边框颜色，需要目标版本 1.17+")]
+    block_outline_color: Option<[u8; 3]>,
     #[arg(long, help = "关闭小写规范化")]
     no_lowercase: bool,
     #[arg(long, help = "关闭语言文件转换")]
@@ -161,6 +165,8 @@ pub fn run() -> Result<()> {
         as_zip,
         lowercase: !args.no_lowercase,
         convert_lang: !args.no_lang,
+        fishing_line_color: args.fishing_line_color,
+        block_outline_color: args.block_outline_color,
         extra_renames: args
             .renames
             .as_deref()

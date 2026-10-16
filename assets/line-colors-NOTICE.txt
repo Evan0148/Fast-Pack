@@ -1,0 +1,11 @@
+line-colors.json contains the official Minecraft Java rendertype_lines vertex,
+fragment and shader-program resources for the supported 1.17–26.4 versions.
+The reference files are derived from Mojang Studios / Microsoft clients and
+indexed by the public https://github.com/misode/mcmeta asset snapshots.
+
+The Rust line_color_catalog example can rebuild the catalog from official client
+jars. Fast Pack injects an independent color-selection function while retaining
+the selected client's uniforms, vertex attributes, fog and alpha behavior.
+
+Original Minecraft resources retain their respective ownership. Fast Pack is
+not affiliated with or endorsed by Mojang Studios or Microsoft.

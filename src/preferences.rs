@@ -13,6 +13,12 @@ use windows_sys::Win32::UI::Shell::{
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Preferences {
+    pub dark: bool,
+    pub fishing_line: Option<[u8; 3]>,
+    pub block_outline: Option<[u8; 3]>,
+    pub crosshair_tint: Option<[u8; 3]>,
+    pub fishing_line_color: [u8; 3],
+    pub block_outline_color: [u8; 3],
     pub auto_save: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_version: Option<String>,
@@ -35,6 +41,12 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
+            dark: true,
+            fishing_line: None,
+            block_outline: None,
+            crosshair_tint: None,
+            fishing_line_color: [0; 3],
+            block_outline_color: [0; 3],
             auto_save: true,
             target_version: None,
             auto_save_path: true,
