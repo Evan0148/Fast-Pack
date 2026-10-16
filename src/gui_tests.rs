@@ -230,3 +230,97 @@ fn appended_output_names_use_the_frozen_batch_version() {
         assert!(filename.ends_with(".zip"));
     }
 }
+
+#[cfg(not(feature = "gpu-renderer"))]
+#[test]
+fn repeated_partial_redraw_does_not_darken_panels_in_either_theme() {
+    use iced::advanced::Renderer as _;
+    use iced::advanced::{layout, renderer, widget::Tree};
+    let size = Size::new(1040.0, 780.0);
+    let bounds = iced::Rectangle::with_size(size);
+    let viewport =
+        iced::advanced::graphics::Viewport::with_physical_size(iced::Size::new(1040, 780), 1.0);
+    for dark in [false, true] {
+        let mut app = app();
+        app.dark = dark;
+        app.theme_motion
+            .set(if dark { 1.0 } else { 0.0 }, app.now, true);
+        let mut renderer = iced::Renderer::new(
+            Font::with_name(crate::windows_compat::font_family()),
+            iced::Pixels(16.0),
+        );
+        renderer.reset(bounds);
+        let mut view = app.view();
+        let mut tree = Tree::new(view.as_widget());
+        let node = view.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, size),
+        );
+        view.as_widget().draw(
+            &tree,
+            &mut renderer,
+            &app.theme(),
+            &renderer::Style {
+                text_color: app.colors().foreground,
+            },
+            iced::advanced::Layout::new(&node),
+            iced::mouse::Cursor::Unavailable,
+            &bounds,
+        );
+        let mut pixels = tiny_skia::Pixmap::new(1040, 780).unwrap();
+        let mut mask = tiny_skia::Mask::new(1040, 780).unwrap();
+        renderer.draw(
+            &mut pixels.as_mut(),
+            &mut mask,
+            &viewport,
+            &[bounds],
+            app.colors().background,
+        );
+        let original = pixels.data().to_vec();
+        let regions = [
+            iced::Rectangle {
+                x: 580.0,
+                y: 244.0,
+                width: 380.0,
+                height: 44.0,
+            },
+            iced::Rectangle {
+                x: 70.0,
+                y: 282.0,
+                width: 390.0,
+                height: 100.0,
+            },
+            iced::Rectangle {
+                x: 610.0,
+                y: 410.0,
+                width: 180.0,
+                height: 42.0,
+            },
+        ];
+        for _ in 0..20 {
+            renderer.draw(
+                &mut pixels.as_mut(),
+                &mut mask,
+                &viewport,
+                &regions,
+                app.colors().background,
+            );
+        }
+        let changed_outside: Vec<_> = original
+            .chunks_exact(4)
+            .zip(pixels.data().chunks_exact(4))
+            .enumerate()
+            .filter_map(|(index, (before, after))| {
+                let point = iced::Point::new((index % 1040) as f32, (index / 1040) as f32);
+                (before != after && !regions.iter().any(|region| region.contains(point)))
+                    .then(|| (point, before.to_vec(), after.to_vec()))
+            })
+            .take(8)
+            .collect();
+        assert!(
+            changed_outside.is_empty(),
+            "partial repaint modified pixels outside the update region; dark={dark}; samples={changed_outside:?}"
+        );
+    }
+}

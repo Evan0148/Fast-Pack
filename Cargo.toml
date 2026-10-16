@@ -1,6 +1,6 @@
 [package]
 name = "fast-pack"
-version = "1.2.32"
+version = "1.2.33"
 authors = ["ColdEternity Team", "Long_Cold", "Wind_"]
 description = "Fast Pack: automatic Minecraft Java resource pack version conversion"
 license = "GPL-3.0-only"
@@ -50,6 +50,9 @@ winresource = "0.1"
 
 [build-dependencies]
 flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+tiny-skia = { version = "=0.11.4", default-features = false, features = ["std", "simd"] }
 
 [profile.release]
 lto = true

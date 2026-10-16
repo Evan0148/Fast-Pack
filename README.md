@@ -66,6 +66,12 @@ This project uses SignPath Foundation for code signing of Windows executable rel
 
 Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取决于客户端已有的天空渲染能力；未知 GLSL 的自动回退使用目标游戏的默认渲染，原有着色器效果不会被保留。
 
+### 界面刷新修复
+
+v1.2.33 移除会在软件渲染局部刷新时重复叠加的阴影，修复鼠标移动、控件刷新后面板发黑、残影和颜色遮挡的问题。撤回 v1.2.32 新增的列表悬停动画，列表使用静态样式。主界面布局、批量追加与并行转换、统一目录按钮保持原样；1.20.1 布吉岛适配继续隐藏并停用。
+
+深色和浅色主题都检查连续多次局部重绘，确保刷新区域外的面板像素不被再次染黑。本次没有添加新动画。
+
 ### 批量拖放与并行转换
 
 v1.2.32 支持一次拖入多个 ZIP 或材质包文件夹。“选择 ZIP”也支持多选；第二次及后续导入均追加到现有列表，同一路径不会重复添加。
@@ -141,7 +147,7 @@ ZIP 识别直接读取归档目录与 `pack.mcmeta`，统计文件、贴图、�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.32.exe`。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.33.exe`。
 2. 双击下载的程序，把一个或多个材质包 ZIP / 文件夹拖入窗口，也可以多选 ZIP。再次拖入会追加到列表；转换中也能继续追加。
 3. 选择目标版本与导出目录，点击“开始转换”或“全部转换”。批量任务自动并行执行，新增的包也会使用本批次选项继续转换。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
@@ -202,7 +208,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.32.exe`、`fast-pack-cli-v1.2.32.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.33.exe`、`fast-pack-cli-v1.2.33.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -348,7 +354,7 @@ ViaBackwards 启动时将用户 NBT 与内置映射合并。运行中的游戏�
 独立维护入口仍保留，普通玩家使用默认开关即可：
 
 ```powershell
-.\fast-pack-cli-v1.2.32.exe --client-audio "E:\MCLDownload\Game\.minecraft"
+.\fast-pack-cli-v1.2.33.exe --client-audio "E:\MCLDownload\Game\.minecraft"
 ```
 
 此命令现仅配置官方名称与附魔，不改写模组，也不启用原声音效。`--restore-client-audio` 仅用于恢复以前版本留下的模组改写，校验原始备份后还原；当前已经被启动器恢复的原版模组无需处理。
@@ -360,22 +366,22 @@ ViaBackwards 启动时将用户 NBT 与内置映射合并。运行中的游戏�
 
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.32 为例，命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.33 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli-v1.2.32.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.2.32.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.2.32.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.2.32.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.2.32.exe old.zip --probe
-.\fast-pack-cli-v1.2.32.exe --versions
-.\fast-pack-cli-v1.2.32.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.2.32.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.2.32.exe old.zip --to 1.20.1 --vanilla-glint
-.\fast-pack-cli-v1.2.32.exe old.zip --to 1.20.1 --no-netherite
-.\fast-pack-cli-v1.2.32.exe old.zip --to 1.20.1 --crosshair crosshair-pack.zip
-.\fast-pack-cli-v1.2.32.exe old.zip --to 1.20.1 --hide-attack-indicator
-.\fast-pack-cli-v1.2.32.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.2.33.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.2.33.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.2.33.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.2.33.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.2.33.exe old.zip --probe
+.\fast-pack-cli-v1.2.33.exe --versions
+.\fast-pack-cli-v1.2.33.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.2.33.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.2.33.exe old.zip --to 1.20.1 --vanilla-glint
+.\fast-pack-cli-v1.2.33.exe old.zip --to 1.20.1 --no-netherite
+.\fast-pack-cli-v1.2.33.exe old.zip --to 1.20.1 --crosshair crosshair-pack.zip
+.\fast-pack-cli-v1.2.33.exe old.zip --to 1.20.1 --hide-attack-indicator
+.\fast-pack-cli-v1.2.33.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--crosshair <准星包或PNG>` 为本次转换使用指定准星，不改写 GUI 预设库；不传参数时保留原包准星。Rust 库通过 `ConversionOptions.crosshair` 接收准星，`examples/crosshair_presets.rs` 提供独立预设库的导入、列出、生成和删除入口。

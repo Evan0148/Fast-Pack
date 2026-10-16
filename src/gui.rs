@@ -10,8 +10,8 @@ use iced::widget::{
     scrollable, space, text, text_input, tooltip,
 };
 use iced::{
-    Alignment, Background, Border, Color, Element, Font, Length, Padding, Shadow, Size,
-    Subscription, Task, Theme, Vector, window,
+    Alignment, Background, Border, Color, Element, Font, Length, Padding, Size, Subscription, Task,
+    Theme, Vector, window,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -29,7 +29,6 @@ enum Message {
     InputsPicked(Vec<PathBuf>),
     QueueSelect(u64),
     QueueClear,
-    QueueHover(u64, u8, bool),
     Target(String),
     AutoSave(bool),
     AutoSavePath(bool),
@@ -212,11 +211,6 @@ fn hint_style(colors: Colors) -> container::Style {
             width: 1.0,
             color: colors.line,
         },
-        shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.16),
-            offset: Vector::new(0.0, 3.0),
-            blur_radius: 12.0,
-        },
         ..Default::default()
     }
 }
@@ -298,7 +292,6 @@ struct App {
     auto_save_path_motion: Tween,
     heypixel_motion: Tween,
     hover: HashMap<u8, Tween>,
-    queue_hover: HashMap<(u64, u8), Tween>,
     width: f32,
     generation: u64,
     sender: Sender<WorkEvent>,
@@ -459,7 +452,6 @@ impl App {
             auto_save_path_motion: Tween::new(if auto_save_path { 1.0 } else { 0.0 }, 220),
             heypixel_motion: Tween::new(if heypixel_compat { 1.0 } else { 0.0 }, 220),
             hover: HashMap::new(),
-            queue_hover: HashMap::new(),
             width: 1040.0,
             generation: 0,
             sender,
@@ -575,11 +567,7 @@ impl App {
         ]
         .into_iter()
         .any(|value| value.active(self.now))
-            || self
-                .hover
-                .values()
-                .chain(self.queue_hover.values())
-                .any(|value| value.active(self.now))
+            || self.hover.values().any(|value| value.active(self.now))
             || self
                 .glint_color_motion
                 .iter()
@@ -2035,7 +2023,6 @@ impl App {
             }
             Message::NewPack if !self.busy() => {
                 self.queue.clear();
-                self.queue_hover.clear();
                 self.next_id += 1;
                 self.auto_netherite = true;
                 self.custom_crosshair = false;
@@ -2119,7 +2106,7 @@ impl App {
                     for motion in &mut self.glint_color_motion {
                         motion.snap();
                     }
-                    for value in self.hover.values_mut().chain(self.queue_hover.values_mut()) {
+                    for value in self.hover.values_mut() {
                         value.snap();
                     }
                 }
@@ -2127,11 +2114,6 @@ impl App {
             Message::Hover(id, value) => self
                 .hover
                 .entry(id)
-                .or_insert_with(|| Tween::new(0.0, 150))
-                .set(if value { 1.0 } else { 0.0 }, self.now, self.reduced),
-            Message::QueueHover(id, kind, value) => self
-                .queue_hover
-                .entry((id, kind))
                 .or_insert_with(|| Tween::new(0.0, 150))
                 .set(if value { 1.0 } else { 0.0 }, self.now, self.reduced),
             Message::Captured(screenshot) => {
@@ -2186,16 +2168,6 @@ impl App {
                         radius: 10.0.into(),
                         width: if primary { 0.0 } else { 1.0 },
                         color: mix(c.line, c.accent, hover * 0.7),
-                    },
-                    shadow: Shadow {
-                        color: Color::from_rgba(
-                            c.accent.r,
-                            c.accent.g,
-                            c.accent.b,
-                            if disabled { 0.0 } else { hover * 0.12 },
-                        ),
-                        offset: Vector::ZERO,
-                        blur_radius: hover * 12.0,
                     },
                     ..Default::default()
                 }
@@ -2278,11 +2250,6 @@ impl App {
                     color: c.line,
                     width: 1.0,
                     radius: 16.0.into(),
-                },
-                shadow: Shadow {
-                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.05),
-                    offset: Vector::new(0.0, 5.0),
-                    blur_radius: 16.0,
                 },
                 ..Default::default()
             })
@@ -2500,38 +2467,21 @@ impl App {
                         }),
                 );
             }
-            let amount = self
-                .queue_hover
-                .get(&(entry.id, 0))
-                .map_or(0.0, |motion| motion.value(self.now));
             let card = container(item)
                 .padding([10, 12])
                 .width(Length::Fill)
                 .style(move |_| container::Style {
                     background: Some(
-                        mix(
-                            c.field,
-                            c.accent,
-                            if selected { 0.045 } else { 0.018 * amount },
-                        )
-                        .into(),
+                        mix(c.field, c.accent, if selected { 0.045 } else { 0.0 }).into(),
                     ),
                     border: Border {
                         radius: 10.0.into(),
                         width: 1.0,
-                        color: mix(
-                            c.line,
-                            c.accent,
-                            if selected { 0.50 } else { 0.18 * amount },
-                        ),
+                        color: mix(c.line, c.accent, if selected { 0.50 } else { 0.0 }),
                     },
                     ..Default::default()
                 });
-            entries = entries.push(
-                mouse_area(card)
-                    .on_enter(Message::QueueHover(entry.id, 0, true))
-                    .on_exit(Message::QueueHover(entry.id, 0, false)),
-            );
+            entries = entries.push(card);
         }
         let mut content = column![
             row![
@@ -2622,28 +2572,15 @@ impl App {
             .padding([4, 8])
             .width(Length::Fill)
             .on_press_maybe((!self.busy()).then_some(message))
-            .style(move |_, status| {
-                let disabled = status == button::Status::Disabled;
-                button::Style {
-                    background: Some(mix(c.field, c.accent, amount * 0.035 + hover * 0.045).into()),
-                    text_color: c.foreground,
-                    border: Border {
-                        color: mix(c.line, c.accent, amount * 0.3 + hover * 0.35),
-                        width: 1.0,
-                        radius: 12.0.into(),
-                    },
-                    shadow: Shadow {
-                        color: Color::from_rgba(
-                            c.accent.r,
-                            c.accent.g,
-                            c.accent.b,
-                            if disabled { 0.0 } else { hover * 0.045 },
-                        ),
-                        blur_radius: 10.0 * hover,
-                        offset: Vector::ZERO,
-                    },
-                    ..Default::default()
-                }
+            .style(move |_, _| button::Style {
+                background: Some(mix(c.field, c.accent, amount * 0.035 + hover * 0.045).into()),
+                text_color: c.foreground,
+                border: Border {
+                    color: mix(c.line, c.accent, amount * 0.3 + hover * 0.35),
+                    width: 1.0,
+                    radius: 12.0.into(),
+                },
+                ..Default::default()
             });
         tooltip(
             mouse_area(control)
