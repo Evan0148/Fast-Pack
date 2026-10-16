@@ -97,7 +97,8 @@ struct Resource {
 
 pub(crate) fn prepare(root: &Path, source: u32, target: u32) -> Result<Vec<String>> {
     let downgrade = source >= 4 && target < 2;
-    if !downgrade && (source != 1 || target < 4) {
+    let modern = downgrade || source >= 4 && source < 46 && target >= 46;
+    if !modern && (source != 1 || target < 4) {
         return Ok(Vec::new());
     }
     let mut resources = BTreeMap::new();
@@ -120,7 +121,7 @@ pub(crate) fn prepare(root: &Path, source: u32, target: u32) -> Result<Vec<Strin
         };
         let bytes = serde_json::to_vec(&canonical(value.clone()))?;
         let digest = format!("{:x}", Sha256::digest(bytes));
-        let stock = if downgrade {
+        let stock = if modern {
             MODERN_DEFAULTS
                 .get(&relative)
                 .is_some_and(|expected| expected.contains(&digest))
@@ -192,7 +193,7 @@ pub(crate) fn prepare(root: &Path, source: u32, target: u32) -> Result<Vec<Strin
             continue;
         }
         let destination = root
-            .join(if downgrade {
+            .join(if modern {
                 "fastpack/modern-defaults"
             } else {
                 "fastpack/legacy-defaults"
@@ -214,6 +215,6 @@ pub(crate) fn prepare(root: &Path, source: u32, target: u32) -> Result<Vec<Strin
     }
     Ok(vec![format!(
         "{}原版资源：校验并备份 {model_count} 个未修改模型与 {state_count} 个未修改方块状态，使用目标版本原生资源；保留自定义模型、状态及其依赖",
-        if downgrade { "新版" } else { "旧版" }
+        if modern { "新版" } else { "旧版" }
     )])
 }

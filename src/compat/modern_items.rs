@@ -15,11 +15,27 @@ struct Profile {
 }
 
 static PROFILES: LazyLock<BTreeMap<u32, Profile>> = LazyLock::new(|| {
-    serde_json::from_str(&crate::embedded::text(include_bytes!(concat!(
-        env!("OUT_DIR"),
-        "/modern-items.deflate"
-    ))))
-    .expect("新版物品模板无效")
+    let mut profiles: BTreeMap<u32, Profile> = serde_json::from_str(&crate::embedded::text(
+        include_bytes!(concat!(env!("OUT_DIR"), "/modern-items.deflate")),
+    ))
+    .expect("新版物品模板无效");
+    for (format, profile) in &mut profiles {
+        if let Some((definitions, models)) = super::item_transitions::upgrade_templates(*format) {
+            for (name, value) in definitions {
+                profile
+                    .definitions
+                    .entry(name.clone())
+                    .or_insert_with(|| value.clone());
+            }
+            for (name, value) in models {
+                profile
+                    .models
+                    .entry(format!("item/{name}"))
+                    .or_insert_with(|| value.clone());
+            }
+        }
+    }
+    profiles
 });
 
 fn profile(target: u32) -> Option<&'static Profile> {
@@ -133,7 +149,19 @@ fn compatible_overrides(model: &Value) -> bool {
                             && predicate.keys().all(|key| {
                                 matches!(
                                     key.as_str(),
-                                    "pull" | "pulling" | "cast" | "angle" | "time" | "trim_type"
+                                    "pull"
+                                        | "pulling"
+                                        | "cast"
+                                        | "angle"
+                                        | "time"
+                                        | "trim_type"
+                                        | "charged"
+                                        | "firework"
+                                        | "blocking"
+                                        | "broken"
+                                        | "damage"
+                                        | "damaged"
+                                        | "tooting"
                                 )
                             })
                     })
@@ -142,6 +170,9 @@ fn compatible_overrides(model: &Value) -> bool {
 }
 
 fn replacement(base: &str, reference: &str, model: &Value) -> Option<String> {
+    if let Some(reference) = super::item_transitions::override_replacement(base, reference, model) {
+        return Some(reference);
+    }
     let name = reference.strip_prefix("minecraft:item/")?;
     let (property, threshold) = if base == "bow" {
         (
@@ -217,7 +248,7 @@ fn adapt(value: &mut Value, base: &str, model: &Value, aliases: &mut BTreeMap<St
     match value {
         Value::Object(values) => {
             for (key, value) in values {
-                if key == "model"
+                if matches!(key.as_str(), "model" | "base")
                     && let Some(reference) = value.as_str().and_then(id)
                 {
                     if let Some(replacement) = replacement(base, &reference, model) {

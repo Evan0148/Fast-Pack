@@ -1035,7 +1035,7 @@ fn model_name(name: &str) -> String {
     .into()
 }
 
-fn old_model_name(name: &str) -> String {
+pub(super) fn old_model_name(name: &str) -> String {
     for (prefix, suffix) in [
         ("wool_", "_wool"),
         ("carpet_", "_carpet"),
@@ -1655,6 +1655,7 @@ fn migrate_assets(
     super::item_transparency::migrate(root, source, target, &mut report)?;
     super::legacy_blocks::migrate(root, source, target, &mut report)?;
     super::equipment::migrate(root, source, target, &mut report)?;
+    super::versioned_textures::migrate(root, source, target, &mut report)?;
     super::players::migrate(root, source, target, &mut report)?;
     super::recent_resources::migrate(root, source, target, &mut report)?;
     if auto_netherite {

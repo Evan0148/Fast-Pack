@@ -8,6 +8,7 @@ mod equipment;
 pub mod glint;
 mod item_bindings;
 mod item_display;
+mod item_transitions;
 mod item_transparency;
 mod legacy_blocks;
 pub(crate) mod legacy_defaults;
@@ -25,6 +26,7 @@ mod recent_resources;
 pub mod shaders;
 pub mod sky;
 mod texture_formats;
+mod versioned_textures;
 mod via_items;
 mod via_sounds;
 

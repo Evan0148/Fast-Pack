@@ -57,12 +57,6 @@ fn resource(name: &str) -> Option<String> {
     Some(format!("{namespace}:{name}"))
 }
 
-fn model_path(root: &Path, name: &str) -> Option<PathBuf> {
-    let id = resource(name)?;
-    let (namespace, name) = id.split_once(':')?;
-    Some(root.join(format!("assets/{namespace}/models/{name}.json")))
-}
-
 pub(super) fn definition_model(node: &Value) -> Option<&str> {
     match node
         .get("type")
@@ -71,8 +65,17 @@ pub(super) fn definition_model(node: &Value) -> Option<&str> {
         .unwrap_or(node["type"].as_str()?)
     {
         "model" => node.get("model").and_then(Value::as_str),
+        "special" => node.get("base").and_then(Value::as_str),
         "condition" => definition_model(node.get("on_false")?),
-        "select" | "range_dispatch" => definition_model(node.get("fallback")?),
+        "select" | "range_dispatch" => {
+            node.get("fallback").and_then(definition_model).or_else(|| {
+                node.get("entries")
+                    .or_else(|| node.get("cases"))?
+                    .as_array()?
+                    .iter()
+                    .find_map(|entry| entry.get("model").and_then(definition_model))
+            })
+        }
         _ => None,
     }
 }
@@ -83,68 +86,7 @@ pub(super) fn bind_definitions(
     target: u32,
     report: &mut super::assets::AssetReport,
 ) -> Result<()> {
-    if source < 46 || target >= 46 {
-        return Ok(());
-    }
-    let mut count = 0;
-    for entry in walkdir::WalkDir::new(root.join("assets")).min_depth(1) {
-        let entry = entry?;
-        if !entry.file_type().is_file() || entry.path().extension().is_none_or(|ext| ext != "json")
-        {
-            continue;
-        }
-        let relative = entry
-            .path()
-            .strip_prefix(root)?
-            .to_string_lossy()
-            .replace('\\', "/");
-        let Some((namespace, item)) = relative
-            .strip_prefix("assets/")
-            .and_then(|path| path.split_once("/items/"))
-        else {
-            continue;
-        };
-        if namespace.contains('/') {
-            continue;
-        }
-        let Ok(definition) = serde_json::from_slice::<Value>(&fs::read(entry.path())?) else {
-            continue;
-        };
-        let Some(model) = definition.get("model").and_then(definition_model) else {
-            continue;
-        };
-        let Some(input) = model_path(root, model) else {
-            continue;
-        };
-        if !input.is_file() {
-            continue;
-        }
-        let Some(output) = model_path(
-            root,
-            &format!("{namespace}:item/{}", item.trim_end_matches(".json")),
-        ) else {
-            continue;
-        };
-        if input == output {
-            continue;
-        }
-        let data = fs::read(&input)?;
-        if output.is_file() {
-            if fs::read(&output)? == data {
-                continue;
-            }
-            super::assets::backup(root, &output)?;
-        }
-        fs::create_dir_all(output.parent().unwrap())?;
-        fs::write(output, data)?;
-        count += 1;
-    }
-    if count > 0 {
-        report.converted.push(format!(
-            "物品定义：将 {count} 个新版默认模型绑定到旧版物品入口"
-        ));
-    }
-    Ok(())
+    super::item_transitions::bind(root, source, target, report)
 }
 
 pub(super) struct ModelResolver {

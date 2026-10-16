@@ -68,6 +68,24 @@ fn id(value: &str) -> Option<String> {
     Some(format!("{namespace}:{path}"))
 }
 
+pub(super) fn native_texture(target: u32, name: &str) -> bool {
+    let Some((_, reference)) = PROFILES.range(..=target).next_back() else {
+        return false;
+    };
+    let profile = reference
+        .parsed
+        .get_or_init(|| serde_json::from_str(reference.data).expect("模型自检参考表无效"));
+    id(name).is_some_and(|name| profile.textures.contains(&name))
+}
+
+pub(super) fn native_model(target: u32, name: &str) -> Option<Value> {
+    let (_, reference) = PROFILES.range(..=target).next_back()?;
+    let profile = reference
+        .parsed
+        .get_or_init(|| serde_json::from_str(reference.data).expect("模型自检参考表无效"));
+    profile.models.get(&id(name)?).cloned()
+}
+
 fn model_path(root: &Path, name: &str) -> PathBuf {
     let (namespace, path) = name.split_once(':').unwrap();
     root.join(format!("assets/{namespace}/models/{path}.json"))

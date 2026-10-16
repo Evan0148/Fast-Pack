@@ -37,7 +37,6 @@ struct Catalog {
     profiles: BTreeMap<u32, Profile>,
     items: BTreeMap<String, Item>,
     models: BTreeMap<String, Value>,
-    native_textures: BTreeSet<String>,
     languages: BTreeMap<String, BTreeMap<String, Value>>,
 }
 
@@ -248,7 +247,7 @@ impl Installer<'_> {
         let output = self
             .root
             .join(format!("assets/minecraft/textures/{name}.png"));
-        if output.is_file() || self.target >= 15 && CATALOG.native_textures.contains(name) {
+        if output.is_file() || super::model_integrity::native_texture(self.target, reference) {
             return Ok(());
         }
         let Some(bytes) = images::get(&format!("{name}.png")) else {
@@ -680,7 +679,14 @@ pub(super) fn migrate(
             };
             value
         } else {
-            profile.carriers[carrier].clone()
+            super::item_transitions::model_reference(target, carrier)
+                .or_else(|| {
+                    super::model_integrity::native_model(
+                        target,
+                        &format!("minecraft:item/{carrier}"),
+                    )
+                })
+                .unwrap_or_else(|| profile.carriers[carrier].clone())
         };
         let original = if current.get("fastpack_via_bridge") == Some(&json!(1)) && saved.is_file() {
             serde_json::from_slice::<Value>(&fs::read(&saved)?)?

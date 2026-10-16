@@ -84,6 +84,18 @@ pub(super) fn capture(root: &Path, source: u32, target: u32) -> Result<Option<Mi
             );
         }
     }
+    if source >= 22 {
+        for kind in ["block", "item"] {
+            if let Some(model) = models
+                .get(&format!("minecraft:{kind}/short_grass"))
+                .cloned()
+            {
+                models
+                    .entry(format!("minecraft:{kind}/grass"))
+                    .or_insert(model);
+            }
+        }
+    }
     let mut pending: Vec<_> = models
         .values()
         .filter_map(|value: &Value| value["parent"].as_str().map(id))

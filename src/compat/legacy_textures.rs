@@ -6,6 +6,7 @@ use std::fs;
 use std::path::Path;
 
 const ALIASES: &[(&str, &str)] = &[
+    ("blocks/tallgrass", "block/short_grass"),
     ("blocks/command_block", "block/command_block_front"),
     ("blocks/door_acacia_lower", "block/acacia_door_bottom"),
     ("blocks/door_acacia_upper", "block/acacia_door_top"),
