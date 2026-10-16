@@ -27,7 +27,7 @@ fn main() -> Result<()> {
         ])
         .arg(&target_dir);
     if raw_data {
-        command.arg("--no-default-features");
+        command.args(["--no-default-features", "--features", "gpu-renderer"]);
     }
     let status = command.status().context("无法启动 Windows 兼容构建")?;
     ensure!(

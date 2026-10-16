@@ -9,6 +9,8 @@ mod preferences;
 #[cfg(windows)]
 mod startup;
 #[cfg(windows)]
+mod ui_profile;
+#[cfg(windows)]
 mod windows_compat;
 
 fn main() {

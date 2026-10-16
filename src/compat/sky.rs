@@ -15,6 +15,7 @@ use zip::ZipArchive;
 
 mod daytime;
 mod storage;
+mod thumbnail;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Layer {
@@ -977,7 +978,7 @@ pub fn preview(source: &Path) -> Result<Option<Preview>> {
         return compose_preview(layers, |layer| {
             let path = local(&root, &layer.texture)?.pack_canonicalize()?;
             ensure!(path.starts_with(&canonical), "天空纹理越过材质包目录");
-            super::assets::open(&path)
+            thumbnail::read(std::io::BufReader::new(File::open(&path)?))
         });
     }
     let mut archive = ZipArchive::new(crate::archive::ArchiveReader::new(File::open(source)?)?)?;
@@ -1040,6 +1041,7 @@ pub fn preview(source: &Path) -> Result<Option<Preview>> {
     let available = files.keys().cloned().collect::<BTreeSet<_>>();
     let work = tempfile::tempdir()?;
     let root = work.path().join("preview");
+    let _memory = fs::Mount::new(&root);
     fs::create_dir_all(&root)?;
     for (name, index) in &files {
         let configuration = matches!(
@@ -1068,6 +1070,6 @@ pub fn preview(source: &Path) -> Result<Option<Preview>> {
             .to_lowercase();
         let index = *files.get(&name).context("天空预览纹理不存在")?;
         let bytes = preview_entry(&mut archive, index, 512 * 1024 * 1024)?;
-        Ok(image::load_from_memory(&bytes)?.to_rgba8())
+        thumbnail::read(std::io::Cursor::new(bytes))
     })
 }

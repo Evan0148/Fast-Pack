@@ -173,7 +173,10 @@ fn preview_selection_keeps_events_isolated() {
         image: image::RgbaImage::new(3, 2),
     };
     app.sender
-        .send(WorkEvent::Preview(1, Ok(Some(preview))))
+        .send(WorkEvent::Preview(
+            1,
+            Ok(Some(LoadedPreview::from(preview))),
+        ))
         .unwrap();
     let _ = app.update(Message::Tick(Instant::now()));
     assert!(app.sky_preview.is_none());
@@ -229,6 +232,74 @@ fn appended_output_names_use_the_frozen_batch_version() {
         assert!(filename.starts_with("[1.20.1]"));
         assert!(filename.ends_with(".zip"));
     }
+}
+
+#[test]
+fn preview_keeps_polling_after_identification_and_applies_without_input() {
+    let mut app = app();
+    ready(&mut app, 1, "day.zip".into());
+    let idle = iced::advanced::subscription::into_recipes(app.subscription()).len();
+    app.preview_pending = Some(1);
+    assert!(iced::advanced::subscription::into_recipes(app.subscription()).len() > idle);
+    let loaded = LoadedPreview {
+        handle: widget::image::Handle::from_rgba(3, 2, vec![180; 24]),
+        daytime: true,
+        layers: 3,
+    };
+    app.sender
+        .send(WorkEvent::Preview(1, Ok(Some(loaded))))
+        .unwrap();
+    let _ = app.update(Message::Tick(Instant::now()));
+    assert!(app.sky_preview.is_some());
+    assert_eq!(app.sky_layers, 3);
+    assert!(app.preview_pending.is_none());
+}
+
+#[test]
+fn switching_back_reuses_the_correct_pack_preview_without_decoding_again() {
+    let mut app = app();
+    ready(&mut app, 1, "red.zip".into());
+    ready(&mut app, 2, "blue.zip".into());
+    for (id, color) in [(1, [220, 20, 20, 255]), (2, [20, 40, 220, 255])] {
+        let handle = widget::image::Handle::from_rgba(3, 2, color.repeat(6));
+        app.sender
+            .send(WorkEvent::Preview(
+                id,
+                Ok(Some(LoadedPreview {
+                    handle,
+                    daytime: true,
+                    layers: id as usize,
+                })),
+            ))
+            .unwrap();
+    }
+    let _ = app.update(Message::Tick(Instant::now()));
+    let blue = app.sky_preview.as_ref().unwrap().id();
+    app.select_queue(1);
+    let red = app.sky_preview.as_ref().unwrap().id();
+    assert_ne!(red, blue);
+    assert_eq!(app.sky_layers, 1);
+    app.select_queue(2);
+    assert_eq!(app.sky_preview.as_ref().unwrap().id(), blue);
+    assert_eq!(app.sky_layers, 2);
+    assert!(app.preview_pending.is_none());
+    assert!(app.preview_request.is_none());
+}
+
+#[test]
+fn fast_preview_requests_are_coalesced_while_a_read_is_active() {
+    let mut app = app();
+    ready(&mut app, 1, "one.zip".into());
+    ready(&mut app, 2, "two.zip".into());
+    ready(&mut app, 3, "three.zip".into());
+    app.preview_pending = Some(1);
+    app.request_preview(2, "two.zip".into());
+    app.request_preview(3, "three.zip".into());
+    assert_eq!(app.preview_pending, Some(1));
+    assert_eq!(app.preview_request.as_ref().unwrap().0, 3);
+    let _ = app.update(Message::NewPack);
+    assert!(app.preview_request.is_none());
+    assert!(app.preview_cache.is_empty());
 }
 
 #[cfg(not(feature = "gpu-renderer"))]

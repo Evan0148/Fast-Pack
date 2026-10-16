@@ -28,7 +28,7 @@ This project uses SignPath Foundation for code signing of Windows executable rel
 - **旧工具轮廓与厚度。** 旧包转到 1.9+ 时，识别生成式物品贴图里大面积 alpha 为 1–2 的近透明背景，将其恢复为真正透明，让新版沿工具实际轮廓生成侧面，避免只剩正反两张薄片。保留可见像素、RGB、动画元数据和已有自定义立体模型，不改写手持角度与缩放规则。
 - **立体床图标与方块手持大小。** 识别继承旧 `block/bed_inventory` 的立体床物品，在背包视角过大、偏移或只显示侧面时，按模型实际边界居中并缩放，改用能看清床面的立体视角；保留床的几何、UV、实体贴图和手持姿态。对铁砧等自定义方块补齐缺失的原生父模型继承，使其正确取得目标版本的手持缩放、光照和物品框姿态，保留作者已有的显式显示参数。
 - **减少转换中的重复工作。** 官方模型参考按目标格式在进程内复用；每个包只扫描一次模型自检所需的贴图清单，缓存有效的模型继承结果，并在修复改变模型时清空对应缓存。ZIP 导出使用固定大小的写入缓冲，在缓冲内完成小文件头的校验和回填；文件夹输出的自动导入共用相同打包逻辑。
-- **无损减小程序和输出包。** 发布构建保留 LTO、单代码生成单元和符号剥离，并针对项目代码优化体积。普通源码构建默认压缩三组大型内置参考数据；发布版对比不同数据布局后，使用官方 UPX 的 `--ultra-brute` 选择较小的 EXE 压缩结果。所有 UI、版本数据和转换修复完整保留。材质包 ZIP 自动使用 DEFLATE 9 级压缩，保留图片、模型、音频、动画及原始备份的内容和分辨率；压缩级别提高可能增加导出耗时。
+- **无损减小程序和输出包。** 发布构建保留 LTO、单代码生成单元和符号剥离，并针对项目代码优化体积。普通源码构建默认压缩三组大型内置参考数据；发布版保留不同数据布局的构建入口；当前 GUI 不使用启动时解压的压缩壳，CLI 使用官方 UPX 压缩，ZIP 便携包压缩保存。所有 UI、版本数据和转换修复完整保留。材质包 ZIP 自动使用 DEFLATE 9 级压缩，保留图片、模型、音频、动画及原始备份的内容和分辨率；压缩级别提高可能增加导出耗时。
 - **自动补齐同风格下界合金套装。** 目标版本为 1.16+ 时，自动为原包缺失的下界合金剑、斧、镐、锹、锄、头盔、胸甲、护腿和靴子制作材质，并补穿戴贴图。优先采用原包同类钻石装备，缺失时依次采用可用的其他材质；保留像素轮廓、短剑长度、分辨率、透明度、阴影层次和动画，按原版下界合金材质分开处理暗红底色、紫色金属包边、银紫刃口高光与暗红柄部细节，依据原图轮廓增加边缘层次。模型继承、立体几何、UV、手持大小、旋转及自定义状态变体同步适配，1.20+ 盔甲纹饰和 1.21.4+ 物品定义也会生成。已有下界合金贴图、模型或物品定义优先保留。“更多转换选项”中“减少动态效果”右侧提供“自动制作下界合金材质”勾选框，默认勾选；取消勾选后仅本次停止补齐缺失的下界合金剑、工具和盔甲材质，保留原包已有资源。每次转换结束以及重新打开软件时自动恢复勾选，不保存取消状态。原包未提供某类装备参考时沿用目标原版资源。
 - **天空贴图自动共用。** 天空层按图片内容共用纹理，格式和尺寸已经匹配时直接引用原图，内部天空缓存只保存资源路径；同一张图用于多个时段时不再重复保存。需要六面重排或尺寸对齐时只生成一次无损 PNG。再次转换旧版 Fast Pack 导出的包时，自动整理重复缓存和已经无引用的程序生成天空纹理，保留实际使用的资源、自定义条件和跨版本还原数据。
 - **天空图尺寸自动对齐。** 对明确使用 3×2 六面布局、因缩放或像素取整而略偏比例的天空图，按六个独立面重采样到相同的正方形尺寸，自动处理 2560×1706、3500×2334、3015×2048、2210×1535 等图集。完整保留每面的覆盖范围，避免整图缩放造成相邻面串色；标准尺寸的图集保持像素不变，预览与 OptiFine / FabricSkyBoxes / Nuit 转换使用同一套规则。
@@ -52,7 +52,7 @@ This project uses SignPath Foundation for code signing of Windows executable rel
 - **方向方块降级。** 发射器和投掷器的六种朝向还原为旧版状态引用，补齐缺失的水平 / 垂直模型，并保留垂直纹理名称；已识别的单模型 multipart 分支会转换到旧版 variants。降到 1.8.9 时展开同时包含 `parent` 与 `elements` 的立体模型，保留几何与包内父模型设置，修复竖向放置时的模型解析失败；同步换算方块父模型与物品模型的旧版显示参数，避免默认值回退到新版 GUI 角度与缩放，让物品栏图标恢复旧版大小。
 - **背包合成区坐标迁移。** 1.8.9 的输入格、箭头、结果格随新版布局整体右移 10px、上移 8px；人物背景框收窄 3px，补副手槽与配方书按钮，按贴图比例处理高清资源。
 - **现代桌面体验。** 深色 / 浅色主题、拖放导入、后台识别与转换、真实进度、天空贴图预览，以及约 150–280ms 的界面过渡。支持减少动态效果。
-- **Windows 兼容构建。** 发布程序使用 Rust 的 `x86_64-win7-windows-msvc` 目标和重新编译的标准库，静态链接 CRT；面向 Windows 7 SP1、Windows 10 和 Windows 11 的 x64 系统。正式发布程序默认使用轻量软件渲染，避免首屏等待 GPU 初始化，并保留原有主题与动画；Win7 使用旧系统字体。源码仍保留可选 `gpu-renderer` 构建特性。窗口声明旧版和新版 DPI 支持，运行无需单独安装 Rust 或 VC++ 运行库。
+- **Windows 兼容构建。** 发布程序使用 Rust 的 `x86_64-win7-windows-msvc` 目标和重新编译的标准库，静态链接 CRT；面向 Windows 7 SP1、Windows 10 和 Windows 11 的 x64 系统。Win10 / Win11 优先使用 GPU 绘制界面，显卡不可用时自动回退软件渲染；Win7 默认使用软件渲染与旧系统字体。源码保留 `gpu-renderer` 特性，也可以构建纯软件版本。窗口声明旧版和新版 DPI 支持，运行无需单独安装 Rust 或 VC++ 运行库。
 - **转换进度固定显示。** 进度条固定在窗口底部，滚动页面时仍能查看；操作按钮保留原有位置和样式。悬停提示使用完整背景，版本交换提示显示在按钮上方，避免与导出区文字重叠。
 - **ZIP 开关移入更多选项。** 在“更多转换选项”中切换 ZIP / 文件夹输出，导出区保留目录和自动保存开关，其他面板沿用原有布局。
 - **天空预览自动选择主图。** 跳过用于混合的黑色底层，优先显示有实际画面的天空贴图。多层天空按数字顺序处理，同一维度存在不能等价转换的规则时整体保留，避免黑色底层与彩色层被拆到不同格式后变黑。预览下方显示“天空显示可能不准确，能显示则是正常。”，预览画面供参考。
@@ -65,6 +65,30 @@ This project uses SignPath Foundation for code signing of Windows executable rel
 - **GUI、CLI 和 Rust 库共用转换逻辑。** 桌面玩家可以直接操作界面，开发者也可以批量调用命令行或集成转换库。
 
 Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取决于客户端已有的天空渲染能力；未知 GLSL 的自动回退使用目标游戏的默认渲染，原有着色器效果不会被保留。
+
+### 滚动响应与天空预览
+
+v1.2.34 在 Windows 10 / 11 恢复 GPU 界面绘制，避免滚动大面板或点击按钮时由 CPU 重绘拖慢响应；显卡不可用时自动回退软件渲染，Windows 7 仍默认使用软件渲染。上一版的阴影残影修复继续保留，本次不新增动画，也不改变现有布局。
+
+天空预览与材质包识别同时读取，后台预览尚未返回时会持续接收结果，修复识别完成后预览等到下一次操作才刷新的情况。一个预览读取任务正在运行时，只保留最后一次点选的后续请求；最近十二个包的预览在当前列表内复用，再次点选立即显示，清空列表后释放，不跨材质包混用。
+
+普通 PNG 天空逐行解码并只保留小尺寸预览，不再分配完整高清 RGBA 图后逐面缩放；索引调色板、透明度、非整数六面尺寸与实际为 JPEG 的资源继续识别，交错 PNG 和其他既有情况沿用完整解码。只读取选图所需资源，不改写实际转换贴图的分辨率。ZIP 内的预览配置放在内存中处理，避免生成大量临时配置文件。
+
+选图保留正午优先、没有可显示白天时回退其他时段、跳过黑色混合底层的规则；命中有效高优先级候选后跳过不可能胜出的低优先级图片。
+
+本机同一原包、同一选图规则的预览读取测量（不含界面刷新等待）：
+
+| 材质包 | 优化前 | v1.2.34 |
+| --- | ---: | ---: |
+| Blue 128x | 178ms | 47ms |
+| Jamezs Luminous | 174ms | 85ms |
+| vamp | 302ms | 52ms |
+
+三个样本的材质包结构识别约 5–15ms；这些是本机样本测量，网络目录和更大的图片不保证同样耗时。
+
+同一版本、同一窗口与内容，连续滚动、切换面板和主题的对比检查：本机软件渲染 164 帧的中位间隔约 27.5ms，95 分位约 45.4ms；GPU 绘制约 5.5ms / 12.0ms，超过 33ms 的帧由 48 帧降到 0 帧。该结果只代表这台机器和检查场景。
+
+恢复 GPU 后，首次显示需要初始化显卡，本机三个启动样本约 0.85–0.92 秒，不能继续沿用上一版纯软件首帧 200ms 内的结论。当前优先恢复持续交互的流畅度；GUI EXE 仍保持直接启动，不使用启动时解压的压缩壳。
 
 ### 界面刷新修复
 
@@ -147,7 +171,7 @@ ZIP 识别直接读取归档目录与 `pack.mcmeta`，统计文件、贴图、�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.33.exe`。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.34.exe`。
 2. 双击下载的程序，把一个或多个材质包 ZIP / 文件夹拖入窗口，也可以多选 ZIP。再次拖入会追加到列表；转换中也能继续追加。
 3. 选择目标版本与导出目录，点击“开始转换”或“全部转换”。批量任务自动并行执行，新增的包也会使用本批次选项继续转换。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
@@ -208,7 +232,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.33.exe`、`fast-pack-cli-v1.2.33.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.34.exe`、`fast-pack-cli-v1.2.34.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -354,7 +378,7 @@ ViaBackwards 启动时将用户 NBT 与内置映射合并。运行中的游戏�
 独立维护入口仍保留，普通玩家使用默认开关即可：
 
 ```powershell
-.\fast-pack-cli-v1.2.33.exe --client-audio "E:\MCLDownload\Game\.minecraft"
+.\fast-pack-cli-v1.2.34.exe --client-audio "E:\MCLDownload\Game\.minecraft"
 ```
 
 此命令现仅配置官方名称与附魔，不改写模组，也不启用原声音效。`--restore-client-audio` 仅用于恢复以前版本留下的模组改写，校验原始备份后还原；当前已经被启动器恢复的原版模组无需处理。
@@ -366,22 +390,22 @@ ViaBackwards 启动时将用户 NBT 与内置映射合并。运行中的游戏�
 
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.33 为例，命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.34 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli-v1.2.33.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.2.33.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.2.33.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.2.33.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.2.33.exe old.zip --probe
-.\fast-pack-cli-v1.2.33.exe --versions
-.\fast-pack-cli-v1.2.33.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.2.33.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.2.33.exe old.zip --to 1.20.1 --vanilla-glint
-.\fast-pack-cli-v1.2.33.exe old.zip --to 1.20.1 --no-netherite
-.\fast-pack-cli-v1.2.33.exe old.zip --to 1.20.1 --crosshair crosshair-pack.zip
-.\fast-pack-cli-v1.2.33.exe old.zip --to 1.20.1 --hide-attack-indicator
-.\fast-pack-cli-v1.2.33.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.2.34.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.2.34.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.2.34.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.2.34.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.2.34.exe old.zip --probe
+.\fast-pack-cli-v1.2.34.exe --versions
+.\fast-pack-cli-v1.2.34.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.2.34.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.2.34.exe old.zip --to 1.20.1 --vanilla-glint
+.\fast-pack-cli-v1.2.34.exe old.zip --to 1.20.1 --no-netherite
+.\fast-pack-cli-v1.2.34.exe old.zip --to 1.20.1 --crosshair crosshair-pack.zip
+.\fast-pack-cli-v1.2.34.exe old.zip --to 1.20.1 --hide-attack-indicator
+.\fast-pack-cli-v1.2.34.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--crosshair <准星包或PNG>` 为本次转换使用指定准星，不改写 GUI 预设库；不传参数时保留原包准星。Rust 库通过 `ConversionOptions.crosshair` 接收准星，`examples/crosshair_presets.rs` 提供独立预设库的导入、列出、生成和删除入口。
@@ -420,7 +444,7 @@ target-win7/x86_64-win7-windows-msvc/release/fast-pack-cli.exe
 cargo run --release --locked --example release_bundle -- target-win7/x86_64-win7-windows-msvc/release dist-releases third-party-licenses
 ```
 
-普通构建默认启用 `compact-data`，在构建阶段无损压缩大型内置参考表，运行时按需读取。为了得到更小的 UPX 发布程序，v1.2.17 对比了压缩表和原始表两种构建，最终使用原始表让 UPX 在整个程序范围内压缩。可使用官方未修改的 UPX 5.2.1 复现发布流程：
+普通构建默认启用 `compact-data`，在构建阶段无损压缩大型内置参考表，运行时按需读取。为了得到更小的 UPX 发布程序，v1.2.17 对比了压缩表和原始表两种构建，最终使用原始表让 UPX 在整个程序范围内压缩。当前打包流程仅压缩 CLI，GUI EXE 保持直接启动；`--raw-data` 构建仍保留 GPU 绘制支持。可使用官方未修改的 UPX 5.2.1 复现发布流程：
 
 ```powershell
 cargo run --release --locked --example build_windows -- target-win7 --raw-data
@@ -428,7 +452,7 @@ $env:FASTPACK_UPX = 'C:\Tools\upx-5.2.1-win64\upx.exe'
 cargo run --release --locked --example release_bundle -- target-win7/x86_64-win7-windows-msvc/release dist-releases third-party-licenses
 ```
 
-`FASTPACK_UPX` 仅用于开发者打包，玩家运行 EXE 无需安装 UPX。打包入口保留重定位信息和程序图标，校验压缩结果，并在便携包中附上 UPX 许可文本。未设置该变量时仍可生成完整的未加壳构建。UPX 压缩后的程序启动方式相同，源码与构建选项公开保留。
+`FASTPACK_UPX` 仅用于开发者打包，玩家运行 EXE 无需安装 UPX。打包入口保留重定位信息和程序图标，校验压缩结果，并在便携包中附上 UPX 许可文本。未设置该变量时仍可生成完整的未加壳构建。当前 GUI 不经过启动时解压，源码与构建选项公开保留。
 
 便携包将内容完全相同的第三方许可文本只保存一次，`third-party-licenses/index.json` 列出原来的每个包名 / 文件名及其完整文本位置，`dependencies.json` 保留依赖信息。不同的版权声明和许可内容分别保留；该去重只用于发布材料，转换后材质包中的资源与备份保持完整。
 

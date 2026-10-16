@@ -93,10 +93,7 @@ enum Message {
 
 enum WorkEvent {
     Probed(u64, PackInfo),
-    Preview(
-        u64,
-        std::result::Result<Option<fast_pack::compat::sky::Preview>, String>,
-    ),
+    Preview(u64, std::result::Result<Option<LoadedPreview>, String>),
     Batch(fast_pack::batch::Event),
     Mapping(std::result::Result<Vec<(String, String)>, String>),
     Preferences(std::result::Result<(), String>),
@@ -216,6 +213,10 @@ fn hint_style(colors: Colors) -> container::Style {
 }
 
 struct App {
+    profile: Option<crate::ui_profile::Profile>,
+    preview_pending: Option<u64>,
+    preview_request: Option<(u64, PathBuf)>,
+    preview_cache: Vec<(u64, std::result::Result<Option<LoadedPreview>, String>)>,
     queue: Vec<QueueEntry>,
     probing: HashSet<u64>,
     next_id: u64,
@@ -310,6 +311,28 @@ struct App {
     settled_at: Instant,
 }
 
+#[derive(Clone)]
+struct LoadedPreview {
+    handle: widget::image::Handle,
+    daytime: bool,
+    layers: usize,
+}
+
+impl From<fast_pack::compat::sky::Preview> for LoadedPreview {
+    fn from(preview: fast_pack::compat::sky::Preview) -> Self {
+        let image = preview.image;
+        Self {
+            handle: widget::image::Handle::from_rgba(
+                image.width(),
+                image.height(),
+                image.into_raw(),
+            ),
+            daytime: preview.daytime,
+            layers: preview.names.len(),
+        }
+    }
+}
+
 struct QueueEntry {
     id: u64,
     key: String,
@@ -366,6 +389,10 @@ impl App {
             });
         }
         let mut app = Self {
+            profile: crate::ui_profile::Profile::load(),
+            preview_pending: None,
+            preview_request: None,
+            preview_cache: Vec::new(),
             queue: Vec::new(),
             probing: HashSet::new(),
             next_id: 0,
@@ -507,6 +534,11 @@ impl App {
             app.advanced = true;
             app.advanced_motion.set(1.0, now, true);
         }
+        if app.profile.is_some() {
+            app.advanced = true;
+            app.advanced_motion.set(1.0, now, true);
+            app.custom_crosshair = true;
+        }
         if matches!(app.capture_stage.as_str(), "crosshair" | "canvas") {
             app.custom_crosshair = true;
         }
@@ -597,6 +629,9 @@ impl App {
                 _ => None,
             });
         if self.startup_frame
+            || self.profile.is_some()
+            || self.preview_pending.is_some()
+            || self.preview_request.is_some()
             || self
                 .queue
                 .iter()
@@ -614,19 +649,15 @@ impl App {
             || self.capture.is_some()
             || self.smoke
         {
-            let duration = if self.phase == Phase::Identifying
-                || self.animation_active()
-                || self.glint_picker && !self.reduced
-            {
-                16
-            } else {
-                40
-            };
             let mut subscriptions = vec![
                 events,
-                iced::time::every(Duration::from_millis(duration)).map(Message::Tick),
+                iced::time::every(Duration::from_millis(40)).map(Message::Tick),
             ];
-            if self.startup_frame || self.animation_active() {
+            if self.startup_frame
+                || self.animation_active()
+                || self.glint_picker && !self.reduced
+                || self.profile.is_some()
+            {
                 subscriptions.push(window::frames().map(Message::Frame));
             }
             Subscription::batch(subscriptions)
@@ -720,12 +751,60 @@ impl App {
             });
         }
     }
-    fn request_preview(&self, id: u64, path: PathBuf) {
+    fn apply_preview(&mut self, result: std::result::Result<Option<LoadedPreview>, String>) {
+        match result {
+            Ok(Some(preview)) => {
+                self.sky_day_missing = false;
+                self.sky_preview_daytime = preview.daytime;
+                self.sky_layers = preview.layers;
+                self.sky_preview = Some(preview.handle);
+                if self.capture.is_some() {
+                    self.settled_at = self.now;
+                }
+            }
+            Ok(None) => {
+                self.sky_preview = None;
+                self.sky_day_missing = self
+                    .info
+                    .as_ref()
+                    .is_some_and(|info| info.features.sky_count() > 0);
+            }
+            Err(error) => self.log(format!("天空预览：{error}")),
+        }
+    }
+    fn request_preview(&mut self, id: u64, path: PathBuf) {
+        if let Some(index) = self.preview_cache.iter().position(|(key, _)| *key == id) {
+            let cached = self.preview_cache.remove(index);
+            self.apply_preview(cached.1.clone());
+            self.preview_cache.push(cached);
+            self.preview_request = None;
+            return;
+        }
+        if self.preview_pending == Some(id) {
+            self.preview_request = None;
+            return;
+        }
+        self.preview_request = Some((id, path));
+        self.dispatch_preview();
+    }
+    fn dispatch_preview(&mut self) {
+        if self.preview_pending.is_some() {
+            return;
+        }
+        let Some((id, path)) = self.preview_request.take() else {
+            return;
+        };
+        self.preview_pending = Some(id);
         let sender = self.sender.clone();
         std::thread::spawn(move || {
-            let preview =
-                fast_pack::compat::sky::preview(&path).map_err(|error| format!("{error:#}"));
-            let _ = sender.send(WorkEvent::Preview(id, preview));
+            let result = std::panic::catch_unwind(|| fast_pack::compat::sky::preview(&path))
+                .map_err(|_| "天空预览读取意外停止".to_string())
+                .and_then(|result| {
+                    result
+                        .map(|preview| preview.map(LoadedPreview::from))
+                        .map_err(|error| format!("{error:#}"))
+                });
+            let _ = sender.send(WorkEvent::Preview(id, result));
         });
     }
     fn select_queue(&mut self, id: u64) {
@@ -754,7 +833,8 @@ impl App {
             .info
             .as_ref()
             .filter(|info| info.ok)
-            .map(|_| entry.source.clone());
+            .map(|_| entry.source.clone())
+            .or_else(|| (entry.phase == Phase::Identifying).then(|| entry.source.clone()));
         if !self.busy() {
             self.error = entry.error.clone();
             self.refresh_queue_phase();
@@ -1265,6 +1345,33 @@ impl App {
                     self.startup_frame = false;
                     crate::startup::record("first_frame");
                 }
+                if let Some(profile) = &mut self.profile {
+                    let (delta, action, done) = profile.frame(now);
+                    if done {
+                        self.profile = None;
+                        if let Some(window) = self.window {
+                            self.capture_requested = true;
+                            return window::screenshot(window).map(Message::Captured);
+                        }
+                        return iced::exit();
+                    }
+                    if let Some(action) = action {
+                        if action == 0 {
+                            self.dark = !self.dark;
+                            self.theme_motion.set(
+                                if self.dark { 1.0 } else { 0.0 },
+                                now,
+                                self.reduced,
+                            );
+                        } else {
+                            self.custom_crosshair = !self.custom_crosshair;
+                        }
+                    }
+                    return widget::operation::scroll_by(
+                        "fast-pack-content",
+                        widget::operation::AbsoluteOffset { x: 0.0, y: delta },
+                    );
+                }
             }
             Message::Tick(now) => {
                 self.now = now;
@@ -1341,30 +1448,22 @@ impl App {
                             }
                             self.probe_queued();
                         }
-                        WorkEvent::Preview(id, result) if id == self.generation => match result {
-                            Ok(Some(preview)) => {
-                                self.sky_day_missing = false;
-                                self.sky_preview_daytime = preview.daytime;
-                                self.sky_layers = preview.names.len();
-                                let image = image::imageops::thumbnail(&preview.image, 768, 512);
-                                self.sky_preview = Some(widget::image::Handle::from_rgba(
-                                    image.width(),
-                                    image.height(),
-                                    image.into_raw(),
-                                ));
-                                if self.capture.is_some() {
-                                    self.settled_at = now;
+                        WorkEvent::Preview(id, result) => {
+                            if self.preview_pending == Some(id) {
+                                self.preview_pending = None;
+                            }
+                            if self.queue.iter().any(|entry| entry.id == id) {
+                                self.preview_cache.retain(|(key, _)| *key != id);
+                                self.preview_cache.push((id, result.clone()));
+                                if self.preview_cache.len() > 12 {
+                                    drop(self.preview_cache.remove(0));
+                                }
+                                if id == self.generation {
+                                    self.apply_preview(result);
                                 }
                             }
-                            Ok(None) => {
-                                self.sky_preview = None;
-                                self.sky_day_missing = self
-                                    .info
-                                    .as_ref()
-                                    .is_some_and(|info| info.features.sky_count() > 0);
-                            }
-                            Err(error) => self.log(format!("天空预览：{error}")),
-                        },
+                            self.dispatch_preview();
+                        }
                         WorkEvent::Batch(event) => {
                             match event {
                                 fast_pack::batch::Event::Started(id) => {
@@ -1463,7 +1562,6 @@ impl App {
                                 return iced::exit();
                             }
                         }
-                        _ => {}
                     }
                 }
                 if self.smoke
@@ -1483,6 +1581,7 @@ impl App {
                     _ => self.phase == Phase::Empty,
                 };
                 if self.capture.is_some()
+                    && self.profile.is_none()
                     && !self.capture_requested
                     && can_capture
                     && now.saturating_duration_since(self.settled_at) > Duration::from_millis(1000)
@@ -2023,6 +2122,8 @@ impl App {
             }
             Message::NewPack if !self.busy() => {
                 self.queue.clear();
+                self.preview_request = None;
+                self.preview_cache.clear();
                 self.next_id += 1;
                 self.auto_netherite = true;
                 self.custom_crosshair = false;

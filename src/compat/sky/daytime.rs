@@ -58,15 +58,17 @@ pub(super) fn compose(
     layers: Vec<Layer>,
     mut read: impl FnMut(&Layer) -> Result<RgbaImage>,
 ) -> Result<Option<Preview>> {
-    if let Some(preview) = select(&layers, &mut read, true)? {
+    let mut images = BTreeMap::new();
+    if let Some(preview) = select(&layers, &mut read, &mut images, true)? {
         return Ok(Some(preview));
     }
-    select(&layers, &mut read, false)
+    select(&layers, &mut read, &mut images, false)
 }
 
 fn select(
     layers: &[Layer],
     read: &mut impl FnMut(&Layer) -> Result<RgbaImage>,
+    images: &mut BTreeMap<(String, String, bool), Option<RgbaImage>>,
     daytime: bool,
 ) -> Result<Option<Preview>> {
     let eligible: Vec<_> = layers
@@ -80,35 +82,83 @@ fn select(
         .iter()
         .map(|(layer, _)| layer.name.clone())
         .collect();
-    let mut images = BTreeMap::new();
+    let mut eligible: Vec<_> = eligible
+        .into_iter()
+        .enumerate()
+        .filter_map(|(order, (layer, alpha))| {
+            let blend = match layer.properties.get("blend").map(String::as_str) {
+                Some("multiply" | "burn" | "subtract") => return None,
+                Some("replace" | "alpha") => 3u8,
+                Some("screen") => 2,
+                _ => 1,
+            };
+            let general = !["biomes", "heights", "days"]
+                .iter()
+                .any(|name| layer.properties.contains_key(*name));
+            let clear = layer
+                .properties
+                .get("weather")
+                .is_none_or(|weather| weather.split_whitespace().any(|value| value == "clear"));
+            let hint = format!(
+                "{} {} {}",
+                layer.name,
+                layer.texture,
+                layer.properties.get("source").map_or("", String::as_str)
+            )
+            .to_lowercase();
+            let named = ["day", "noon", "白天", "日间"]
+                .iter()
+                .any(|word| hint.contains(word));
+            Some((
+                layer,
+                (
+                    layer.world == "world0",
+                    general && clear,
+                    named,
+                    blend,
+                    alpha,
+                ),
+                order,
+            ))
+        })
+        .collect();
+    eligible.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.2.cmp(&b.2)));
     let mut selected = None;
-    for (layer, alpha) in eligible {
-        let blend = match layer.properties.get("blend").map(String::as_str) {
-            Some("multiply" | "burn" | "subtract") => continue,
-            Some("replace" | "alpha") => 3,
-            Some("screen") => 2,
-            _ => 1,
-        };
-        let key = (layer.texture.clone(), layer.layout.clone());
+    let mut best_priority = None;
+    for (layer, priority, _) in eligible {
+        if best_priority.is_some_and(|best| priority < best) {
+            break;
+        }
+        let key = (
+            layer.texture.clone(),
+            layer.layout.clone(),
+            layer.world == "world0",
+        );
         if !images.contains_key(&key) {
-            let Ok(image) = read(layer) else { continue };
-            let Ok(size) = atlas::dimensions(&image) else {
-                continue;
-            };
-            let Ok(image) = atlas::resize_faces(&image, size.min(256)) else {
-                continue;
-            };
-            let Ok(image) = atlas::remap(
-                &image,
-                layout(&layer.layout),
-                atlas::AtlasLayout::Optifine,
-                layer.world == "world0",
-            ) else {
-                continue;
-            };
+            let image = (|| {
+                let image = read(layer).ok()?;
+                let size = atlas::dimensions(&image).ok()?.min(256);
+                let image = if image.dimensions() == (size * 3, size * 2) {
+                    image
+                } else {
+                    atlas::resize_faces(&image, size).ok()?
+                };
+                if layout(&layer.layout) == atlas::AtlasLayout::Optifine {
+                    Some(image)
+                } else {
+                    atlas::remap(
+                        &image,
+                        layout(&layer.layout),
+                        atlas::AtlasLayout::Optifine,
+                        layer.world == "world0",
+                    )
+                    .ok()
+                }
+            })();
             images.insert(key.clone(), image);
         }
-        let image = &images[&key];
+        let Some(image) = &images[&key] else { continue };
+
         let thumbnail = image::imageops::thumbnail(image, 192, 128);
         let count = thumbnail.width() as usize * thumbnail.height() as usize;
         let visible = thumbnail
@@ -118,37 +168,12 @@ fn select(
         if visible * 20 <= count {
             continue;
         }
-        let general = !["biomes", "heights", "days"]
-            .iter()
-            .any(|name| layer.properties.contains_key(*name));
-        let clear = layer
-            .properties
-            .get("weather")
-            .is_none_or(|weather| weather.split_whitespace().any(|value| value == "clear"));
-        let day = format!(
-            "{} {} {}",
-            layer.name,
-            layer.texture,
-            layer.properties.get("source").map_or("", String::as_str)
-        )
-        .to_lowercase();
-        let named = ["day", "noon", "白天", "日间"]
-            .iter()
-            .any(|word| day.contains(word));
         let brightness: u64 = thumbnail
             .pixels()
             .map(|pixel| u64::from(pixel[0].max(pixel[1]).max(pixel[2])) * u64::from(pixel[3]))
             .sum::<u64>()
             / count.max(1) as u64;
-        let score = (
-            layer.world == "world0",
-            general && clear,
-            named,
-            blend,
-            alpha,
-            visible * 1000 / count.max(1),
-            brightness,
-        );
+        let score = (priority, visible * 1000 / count.max(1), brightness);
         if selected
             .as_ref()
             .is_none_or(|(previous, _)| score > *previous)
@@ -159,6 +184,7 @@ fn select(
                 .and_then(|source| std::path::Path::new(source).file_stem())
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_else(|| layer.name.clone());
+            best_priority = Some(priority);
             selected = Some((
                 score,
                 Preview {
@@ -226,6 +252,45 @@ mod tests {
         .unwrap();
         assert_eq!(result.selected_layer, "night");
         assert!(!result.daytime);
+    }
+
+    #[test]
+    fn valid_higher_priority_day_layer_skips_lower_priority_image_reads() {
+        let layers = vec![
+            layer("sky1", "06:00", "18:00"),
+            layer("day", "06:00", "18:00"),
+        ];
+        let mut reads = Vec::new();
+        let preview = compose(layers, |layer| {
+            reads.push(layer.name.clone());
+            Ok(RgbaImage::from_pixel(12, 8, Rgba([40, 120, 220, 255])))
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(preview.selected_layer, "day");
+        assert_eq!(reads, ["day"]);
+    }
+
+    #[test]
+    fn black_priority_layer_falls_through_and_does_not_hide_real_sky() {
+        let layers = vec![
+            layer("day", "06:00", "18:00"),
+            layer("sky1", "06:00", "18:00"),
+        ];
+        let result = compose(layers, |layer| {
+            Ok(RgbaImage::from_pixel(
+                12,
+                8,
+                Rgba(if layer.name == "day" {
+                    [0, 0, 0, 255]
+                } else {
+                    [40, 120, 220, 255]
+                }),
+            ))
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.selected_layer, "sky1");
     }
 
     #[test]
