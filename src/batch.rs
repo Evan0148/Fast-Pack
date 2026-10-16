@@ -1,5 +1,6 @@
 use crate::{ConversionOptions, ConversionReport, convert_pack, suggest_output};
-use anyhow::{Result, ensure};
+use anyhow::Result;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -20,6 +21,7 @@ pub enum Event {
 pub struct Pool {
     sender: Option<mpsc::Sender<Job>>,
     workers: Vec<std::thread::JoinHandle<()>>,
+    pending: Arc<Mutex<HashSet<u64>>>,
 }
 
 pub fn parallelism() -> usize {
@@ -34,15 +36,20 @@ impl Pool {
         let receiver = Arc::new(Mutex::new(receiver));
         let callback = Arc::new(callback);
         let active = Arc::new(AtomicUsize::new(0));
+        let pending = Arc::new(Mutex::new(HashSet::new()));
         let workers = (0..workers.max(1))
             .map(|_| {
                 let receiver = receiver.clone();
                 let callback = callback.clone();
                 let active = active.clone();
+                let pending = pending.clone();
                 std::thread::spawn(move || {
                     loop {
                         let job = receiver.lock().unwrap().recv();
                         let Ok(job) = job else { break };
+                        if !pending.lock().unwrap().remove(&job.id) {
+                            continue;
+                        }
                         active.fetch_add(1, Ordering::Relaxed);
                         let budget = crate::parallel::batch_budget(active.clone());
                         callback(Event::Started(job.id));
@@ -63,17 +70,30 @@ impl Pool {
         Self {
             sender: Some(sender),
             workers,
+            pending,
         }
     }
 
     pub fn submit(&self, job: Job) -> Result<()> {
-        ensure!(
-            self.sender
-                .as_ref()
-                .is_some_and(|sender| sender.send(job).is_ok()),
-            "批量转换队列已关闭"
-        );
+        let id = job.id;
+        self.pending.lock().unwrap().insert(id);
+        if !self
+            .sender
+            .as_ref()
+            .is_some_and(|sender| sender.send(job).is_ok())
+        {
+            self.pending.lock().unwrap().remove(&id);
+            anyhow::bail!("批量转换队列已关闭");
+        }
         Ok(())
+    }
+
+    pub fn is_pending(&self, id: u64) -> bool {
+        self.pending.lock().unwrap().contains(&id)
+    }
+
+    pub fn cancel_pending(&self, id: u64) -> bool {
+        self.pending.lock().unwrap().remove(&id)
     }
 }
 

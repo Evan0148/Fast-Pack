@@ -142,6 +142,7 @@ fn progress_is_per_pack_and_failure_does_not_finish_another_job() {
     assert_eq!(app.phase, Phase::Done);
     assert!(!app.busy());
     assert!(app.result_note.as_deref().unwrap().contains("失败 1"));
+    assert!(app.report.is_some());
 }
 
 #[test]
@@ -232,6 +233,114 @@ fn appended_output_names_use_the_frozen_batch_version() {
         assert!(filename.starts_with("[1.20.1]"));
         assert!(filename.ends_with(".zip"));
     }
+}
+
+#[test]
+fn selected_entry_is_removed_without_deleting_source_or_output_files() {
+    let work = tempfile::tempdir().unwrap();
+    let first = work.path().join("first.zip");
+    let second = work.path().join("second.zip");
+    let output = work.path().join("[1.20.1]second.zip");
+    for path in [&first, &second, &output] {
+        std::fs::write(path, b"keep this file").unwrap();
+    }
+    let mut app = app();
+    ready(&mut app, 1, first.clone());
+    ready(&mut app, 2, second.clone());
+    app.queue_mode = true;
+    app.queue[1].output = Some(output.clone());
+    let _ = app.update(Message::QueueRemoveSelected);
+    assert_eq!(app.queue.len(), 1);
+    assert_eq!(app.generation, 1);
+    assert!(app.queue_mode);
+    assert!(app.can_remove_selected());
+    for path in [&first, &second, &output] {
+        assert_eq!(std::fs::read(path).unwrap(), b"keep this file");
+    }
+    let _ = app.update(Message::QueueRemoveSelected);
+    assert_eq!(app.phase, Phase::Empty);
+    assert!(app.queue.is_empty());
+    assert!(app.source.is_none());
+}
+
+#[test]
+fn removing_last_failed_entry_keeps_the_completed_collision_safe_output_path() {
+    let work = tempfile::tempdir().unwrap();
+    let output = work.path().join("[1.20.1]original (2).zip");
+    std::fs::write(&output, b"saved result").unwrap();
+    let mut app = app();
+    ready(&mut app, 1, work.path().join("original.zip"));
+    app.queue[0].phase = Phase::Done;
+    app.queue[0].output = Some(output.clone());
+    ready(&mut app, 2, work.path().join("failed.zip"));
+    app.queue[1].phase = Phase::Failed;
+    app.queue_mode = true;
+    let _ = app.update(Message::QueueRemoveSelected);
+    assert_eq!(app.phase, Phase::Done);
+    assert_eq!(app.output, output.display().to_string());
+    assert_eq!(std::fs::read(output).unwrap(), b"saved result");
+}
+
+#[test]
+fn completed_input_and_generated_output_are_not_imported_again() {
+    let work = tempfile::tempdir().unwrap();
+    let source = work.path().join("original.zip");
+    let output = work.path().join("[1.20.1]original.zip");
+    let mut app = app();
+    ready(&mut app, 1, source.clone());
+    ready(&mut app, 2, work.path().join("next.zip"));
+    app.queue_mode = true;
+    app.generation = 1;
+    app.queue[0].phase = Phase::Running;
+    app.queue[0].submitted = true;
+    app.queue[0].output = Some(output.clone());
+    app.batch_options = Some(ConversionOptions::default());
+    app.phase = Phase::Running;
+    app.sender
+        .send(WorkEvent::Batch(fast_pack::batch::Event::Finished(
+            1,
+            Box::new(Ok(ConversionReport {
+                output: Some(output.display().to_string()),
+                ..Default::default()
+            })),
+        )))
+        .unwrap();
+    let _ = app.update(Message::Tick(Instant::now()));
+    assert_eq!(app.generation, 2);
+    assert_eq!(app.actual_progress, 50);
+    assert!(app.busy());
+    app.load(source);
+    app.load(output.clone());
+    assert_eq!(app.queue.len(), 2);
+    let _ = app.update(Message::QueueRemoveSelected);
+    assert_eq!(app.phase, Phase::Done);
+    assert!(!app.busy());
+    assert_eq!(app.output, output.display().to_string());
+    assert_eq!(app.queue[0].phase, Phase::Done);
+}
+
+#[test]
+fn running_entry_cannot_be_removed_and_late_probe_cannot_restore_deleted_entry() {
+    let mut app = app();
+    ready(&mut app, 1, "running.zip".into());
+    app.queue[0].phase = Phase::Running;
+    app.phase = Phase::Running;
+    app.batch_options = Some(ConversionOptions::default());
+    assert!(!app.can_remove_selected());
+    let _ = app.update(Message::QueueRemoveSelected);
+    assert_eq!(app.queue.len(), 1);
+    assert!(app.busy());
+    let mut app = super::tests::app();
+    ready(&mut app, 4, "identifying.zip".into());
+    app.queue[0].phase = Phase::Identifying;
+    let _ = app.update(Message::QueueRemoveSelected);
+    app.sender
+        .send(WorkEvent::Probed(4, info("identifying.zip")))
+        .unwrap();
+    let _ = app.update(Message::Tick(Instant::now()));
+    assert!(app.queue.is_empty());
+    assert!(app.info.is_none());
+    assert_eq!(app.phase, Phase::Empty);
 }
 
 #[test]

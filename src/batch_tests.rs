@@ -192,6 +192,69 @@ fn same_names_get_distinct_outputs_without_overwriting_inputs() {
 }
 
 #[test]
+fn deleting_a_queued_job_skips_its_conversion_and_preserves_input() {
+    let work = tempfile::tempdir().unwrap();
+    let first = fixture(work.path(), "first");
+    let second = fixture(work.path(), "removed");
+    let third = fixture(work.path(), "third");
+    let (sender, receiver) = mpsc::channel();
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let pool = Pool::new(1, {
+        let gate = gate.clone();
+        move |event| {
+            let blocked = matches!(&event, Event::Started(1));
+            sender.send(event).unwrap();
+            if blocked {
+                let _ = gate
+                    .1
+                    .wait_timeout_while(
+                        gate.0.lock().unwrap(),
+                        Duration::from_secs(5),
+                        |released| !*released,
+                    )
+                    .unwrap();
+            }
+        }
+    });
+    pool.submit(job(1, first, work.path().join("one.zip")))
+        .unwrap();
+    assert!(matches!(
+        receiver.recv_timeout(Duration::from_secs(5)).unwrap(),
+        Event::Started(1)
+    ));
+    assert!(!pool.cancel_pending(1));
+    pool.submit(job(2, second.clone(), work.path().join("removed.zip")))
+        .unwrap();
+    pool.submit(job(3, third, work.path().join("three.zip")))
+        .unwrap();
+    assert!(pool.is_pending(2));
+    assert!(pool.cancel_pending(2));
+    assert!(!pool.is_pending(2));
+    *gate.0.lock().unwrap() = true;
+    gate.1.notify_all();
+    let mut completed = Vec::new();
+    while completed.len() < 2 {
+        match receiver.recv_timeout(Duration::from_secs(20)).unwrap() {
+            Event::Started(2) | Event::Progress(2, ..) | Event::Finished(2, _) => {
+                panic!("deleted task was executed")
+            }
+            Event::Finished(id, result) => {
+                assert!(result.is_ok());
+                completed.push(id);
+            }
+            _ => {}
+        }
+    }
+    drop(pool);
+    assert_eq!(completed, [1, 3]);
+    assert!(!work.path().join("removed.zip").exists());
+    assert_eq!(
+        std::fs::read(second.join("marker.txt")).unwrap(),
+        b"removed"
+    );
+}
+
+#[test]
 fn heypixel_cannot_be_enabled_by_conversion_options() {
     let work = tempfile::tempdir().unwrap();
     let input = fixture(work.path(), "disabled");

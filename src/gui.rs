@@ -29,6 +29,7 @@ enum Message {
     InputsPicked(Vec<PathBuf>),
     QueueSelect(u64),
     QueueClear,
+    QueueRemoveSelected,
     Target(String),
     AutoSave(bool),
     AutoSavePath(bool),
@@ -218,6 +219,7 @@ struct App {
     preview_request: Option<(u64, PathBuf)>,
     preview_cache: Vec<(u64, std::result::Result<Option<LoadedPreview>, String>)>,
     queue: Vec<QueueEntry>,
+    queue_mode: bool,
     probing: HashSet<u64>,
     next_id: u64,
     batch_pool: Option<fast_pack::batch::Pool>,
@@ -394,6 +396,7 @@ impl App {
             preview_request: None,
             preview_cache: Vec::new(),
             queue: Vec::new(),
+            queue_mode: false,
             probing: HashSet::new(),
             next_id: 0,
             batch_pool: None,
@@ -683,7 +686,13 @@ impl App {
     fn load(&mut self, path: PathBuf) {
         let path = path.canonicalize().unwrap_or(path);
         let key = fast_pack::batch::path_key(&path);
-        if self.queue.iter().any(|entry| entry.key == key) {
+        if self.queue.iter().any(|entry| {
+            entry.key == key
+                || entry
+                    .output
+                    .as_ref()
+                    .is_some_and(|output| fast_pack::batch::path_key(output) == key)
+        }) {
             return;
         }
         self.next_id += 1;
@@ -708,6 +717,7 @@ impl App {
             error: None,
             report: None,
         });
+        self.queue_mode |= self.queue.len() > 1;
         if select {
             self.select_queue(id);
         }
@@ -832,16 +842,111 @@ impl App {
         let preview = entry
             .info
             .as_ref()
-            .filter(|info| info.ok)
+            .filter(|info| info.ok && entry.phase != Phase::Done)
             .map(|_| entry.source.clone())
             .or_else(|| (entry.phase == Phase::Identifying).then(|| entry.source.clone()));
+        let completed = entry.phase == Phase::Done;
         if !self.busy() {
             self.error = entry.error.clone();
             self.refresh_queue_phase();
-            self.update_output();
+            if !completed {
+                self.update_output();
+            }
         }
         if let Some(path) = preview {
             self.request_preview(id, path);
+        }
+    }
+    fn can_remove_selected(&self) -> bool {
+        self.queue
+            .iter()
+            .find(|entry| entry.id == self.generation)
+            .is_some_and(|entry| {
+                !matches!(entry.phase, Phase::Running | Phase::Done)
+                    && (!entry.submitted
+                        || self
+                            .batch_pool
+                            .as_ref()
+                            .is_some_and(|pool| pool.is_pending(entry.id)))
+            })
+    }
+    fn advance_queue_selection(&mut self) {
+        if self
+            .queue
+            .iter()
+            .any(|entry| entry.id == self.generation && entry.phase != Phase::Done)
+        {
+            return;
+        }
+        if let Some(entry) = self
+            .queue
+            .iter()
+            .find(|entry| entry.phase != Phase::Done)
+            .or_else(|| self.queue.last())
+        {
+            self.select_queue(entry.id);
+        } else {
+            self.queue_mode = false;
+            self.source = None;
+            self.info = None;
+            self.sky_preview = None;
+            self.sky_day_missing = false;
+            self.sky_layers = 0;
+            self.output.clear();
+            self.report = None;
+            self.result_note = None;
+            self.error = None;
+            self.actual_progress = 0;
+            self.progress.set(0.0, self.now, true);
+            self.result_motion.set(0.0, self.now, true);
+        }
+    }
+    fn remove_selected(&mut self) {
+        let Some(index) = self
+            .queue
+            .iter()
+            .position(|entry| entry.id == self.generation)
+        else {
+            return;
+        };
+        let entry = &self.queue[index];
+        if matches!(entry.phase, Phase::Running | Phase::Done) {
+            return;
+        }
+        if entry.submitted
+            && !self
+                .batch_pool
+                .as_ref()
+                .is_some_and(|pool| pool.cancel_pending(entry.id))
+        {
+            return;
+        }
+        let entry = self.queue.remove(index);
+        self.preview_cache.retain(|(id, _)| *id != entry.id);
+        if self
+            .preview_request
+            .as_ref()
+            .is_some_and(|(id, _)| *id == entry.id)
+        {
+            self.preview_request = None;
+        }
+        self.log(format!(
+            "已从列表移除：{}",
+            entry
+                .source
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+        ));
+        self.advance_queue_selection();
+        if self.queue.is_empty() {
+            self.batch_pool.take();
+            self.batch_options = None;
+        }
+        self.refresh_queue_phase();
+        if self.batch_options.is_some() {
+            self.update_queue_progress();
+            self.finish_queue();
         }
     }
     fn refresh_queue_phase(&mut self) {
@@ -885,7 +990,7 @@ impl App {
             .filter(|entry| entry.submitted || entry.phase == Phase::Done)
             .filter_map(|entry| entry.output.clone())
             .collect();
-        let only_one = self.queue.len() == 1;
+        let only_one = self.queue.len() == 1 && !self.queue_mode;
         for entry in &mut self.queue {
             if entry.phase != Phase::Ready || entry.submitted {
                 continue;
@@ -1013,7 +1118,17 @@ impl App {
         };
         self.result_note = (self.queue.len() > 1)
             .then(|| format!("已完成 {done} 个，失败 {failed} 个。原材质包均已保留。"));
-        if let Some(entry) = self.queue.iter().find(|entry| entry.id == self.generation) {
+        if let Some(entry) = self
+            .queue
+            .iter()
+            .find(|entry| entry.id == self.generation && entry.phase == Phase::Done)
+            .or_else(|| {
+                self.queue
+                    .iter()
+                    .rev()
+                    .find(|entry| entry.phase == Phase::Done)
+            })
+        {
             self.report = entry.report.as_ref().map(ConversionReport::render);
             if let Some(output) = &entry.output {
                 self.output = output.display().to_string();
@@ -1516,6 +1631,7 @@ impl App {
                                     }
                                 }
                             }
+                            self.advance_queue_selection();
                             self.update_queue_progress();
                             if self.finish_queue() {
                                 reset_scroll = true;
@@ -1676,6 +1792,7 @@ impl App {
             }
             Message::QueueSelect(id) => self.select_queue(id),
             Message::QueueClear if !self.busy() => return self.update(Message::NewPack),
+            Message::QueueRemoveSelected => self.remove_selected(),
             Message::Target(target) if !self.busy() => {
                 if !tables()
                     .pack_formats
@@ -2122,6 +2239,7 @@ impl App {
             }
             Message::NewPack if !self.busy() => {
                 self.queue.clear();
+                self.queue_mode = false;
                 self.preview_request = None;
                 self.preview_cache.clear();
                 self.next_id += 1;
@@ -2501,7 +2619,12 @@ impl App {
     }
 
     fn queue_view(&self) -> Element<'_, Message> {
-        if self.queue.len() < 2 {
+        let remaining = self
+            .queue
+            .iter()
+            .filter(|entry| entry.phase != Phase::Done)
+            .count();
+        if remaining == 0 {
             return space().height(0).into();
         }
         let c = self.colors();
@@ -2516,7 +2639,7 @@ impl App {
             .filter(|entry| entry.phase == Phase::Failed)
             .count();
         let mut entries = column![].spacing(8);
-        for entry in &self.queue {
+        for entry in self.queue.iter().filter(|entry| entry.phase != Phase::Done) {
             let selected = entry.id == self.generation;
             let name = entry
                 .source
@@ -2586,7 +2709,7 @@ impl App {
         }
         let mut content = column![
             row![
-                self.title(format!("材质包列表 · {} 个", self.queue.len()), 14),
+                self.title(format!("材质包列表 · {remaining} 个"), 14),
                 space().width(Length::Fill),
                 self.label(format!("完成 {done} · 失败 {failed}")),
             ]
@@ -2600,6 +2723,13 @@ impl App {
                     (!self.busy()).then_some(Message::QueueClear),
                     false
                 ),
+                self.action(
+                    47,
+                    "删除选中",
+                    self.can_remove_selected()
+                        .then_some(Message::QueueRemoveSelected),
+                    false
+                ),
             ]
             .spacing(10)
             .align_y(Alignment::Center),
@@ -2608,7 +2738,7 @@ impl App {
                 fast_pack::batch::parallelism()
             )),
             scrollable(entries)
-                .height((self.queue.len() as f32 * 74.0).min(340.0))
+                .height((remaining as f32 * 74.0).min(340.0))
                 .spacing(10),
         ]
         .spacing(12);
@@ -3539,7 +3669,7 @@ impl App {
         if self.phase == Phase::Done {
             intro = intro.push(self.label("转换结果已保存，原材质包没有改动。"));
         }
-        let source_panel = if self.queue.len() > 1 {
+        let source_panel = if self.queue_mode || self.queue.len() > 1 {
             self.queue_view()
         } else {
             self.source_panel()
