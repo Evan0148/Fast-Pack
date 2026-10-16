@@ -6,6 +6,8 @@ mod pending;
 pub use pending::finish_pending;
 pub use pending::{Imported, deploy as import_resource_pack};
 
+pub const ENABLED: bool = false;
+
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -130,6 +132,7 @@ fn atomic_copy(source: &Path, destination: &Path) -> Result<()> {
 }
 
 pub fn install(client: &Path) -> Result<Configuration> {
+    ensure!(ENABLED, "布吉岛高版本适配已临时停用");
     let client = client.canonicalize().context("无法打开客户端目录")?;
     ensure!(
         compatible_version(&client),
@@ -212,6 +215,9 @@ pub fn automatic(
     report: &mut crate::compat::assets::AssetReport,
     mut progress: impl FnMut(&str),
 ) {
+    if !ENABLED {
+        return;
+    }
     progress("查找网易布吉岛客户端");
     let clients = discover::find(source, destination);
     let Some(client) = clients.first() else {

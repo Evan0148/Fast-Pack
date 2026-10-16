@@ -51,7 +51,7 @@ impl Default for ConversionOptions {
             target_version: None,
             glint_color: None,
             restore_vanilla_glint: false,
-            heypixel_compat: true,
+            heypixel_compat: crate::client_audio::ENABLED,
             auto_client_setup: true,
             auto_netherite: true,
             auto_netherite_sword: true,
@@ -1258,6 +1258,7 @@ pub fn convert_pack(
     options: &ConversionOptions,
     mut progress: impl FnMut(&str, u8),
 ) -> Result<ConversionReport> {
+    let heypixel_compat = options.heypixel_compat && crate::client_audio::ENABLED;
     validate_output(source, destination)?;
     progress("载入源包", 3);
     let work = tempdir().context("无法创建临时工作目录")?;
@@ -1346,7 +1347,7 @@ pub fn convert_pack(
             .as_deref()
             .unwrap_or(&version_label_of(options.tgt_format)),
         &mut report.assets,
-        options.heypixel_compat,
+        heypixel_compat,
     )?;
     progress("自动适配天空与材质包着色器", 82);
     report.compatibility = crate::compat::migrate(
@@ -1401,10 +1402,14 @@ pub fn convert_pack(
     progress("写入输出", 95);
     save_output(&root, destination, options.as_zip)?;
     report.output = Some(destination.display().to_string());
-    if options.heypixel_compat
+    if heypixel_compat
         && options.auto_client_setup
         && options.target_version.as_deref() == Some("1.20.1")
     {
+        static CLIENT_SETUP: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _client_setup = CLIENT_SETUP
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         progress("自动适配布吉岛客户端", 97);
         let client_root = if options.as_zip {
             root.as_path()

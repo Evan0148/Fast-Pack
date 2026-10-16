@@ -1,6 +1,6 @@
 [package]
 name = "fast-pack"
-version = "1.2.31"
+version = "1.2.32"
 authors = ["ColdEternity Team", "Long_Cold", "Wind_"]
 description = "Fast Pack: automatic Minecraft Java resource pack version conversion"
 license = "GPL-3.0-only"
@@ -12,6 +12,7 @@ default-run = "FastPack"
 [features]
 default = ["compact-data"]
 compact-data = []
+gpu-renderer = ["iced/wgpu"]
 
 [lib]
 name = "fast_pack"
@@ -40,7 +41,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 
 [target.'cfg(windows)'.dependencies]
 rfd = { version = "0.16", default-features = false }
-iced = { version = "=0.14.0", default-features = false, features = ["wgpu", "tiny-skia", "thread-pool", "advanced", "canvas", "tokio", "image-without-codecs"] }
+iced = { version = "=0.14.0", default-features = false, features = ["tiny-skia", "thread-pool", "advanced", "canvas", "tokio", "image-without-codecs"] }
 png = "0.18"
 windows-sys = { version = "=0.60.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_System_Com", "Win32_System_Registry", "Win32_Storage_FileSystem", "Win32_UI_Controls", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_System_SystemServices", "Win32_UI_Input_KeyboardAndMouse"] }
 

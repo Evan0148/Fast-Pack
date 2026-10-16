@@ -40,7 +40,7 @@ impl Default for Preferences {
             export_directory: None,
             custom_glint: false,
             glint_color: [255, 255, 255],
-            heypixel_compat: true,
+            heypixel_compat: fast_pack::client_audio::ENABLED,
             crosshair_selection: None,
             crosshair_drawing: false,
             crosshair_canvas: fast_pack::crosshair::Canvas::default(),
@@ -107,6 +107,7 @@ pub fn load() -> Preferences {
     preferences.target_version = preferences
         .target_version
         .filter(|version| supported(version));
+    preferences.heypixel_compat &= fast_pack::client_audio::ENABLED;
     preferences.export_directory = preferences
         .export_directory
         .filter(|path| path.is_absolute());

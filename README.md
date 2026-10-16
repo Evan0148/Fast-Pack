@@ -32,7 +32,7 @@ This project uses SignPath Foundation for code signing of Windows executable rel
 - **自动补齐同风格下界合金套装。** 目标版本为 1.16+ 时，自动为原包缺失的下界合金剑、斧、镐、锹、锄、头盔、胸甲、护腿和靴子制作材质，并补穿戴贴图。优先采用原包同类钻石装备，缺失时依次采用可用的其他材质；保留像素轮廓、短剑长度、分辨率、透明度、阴影层次和动画，按原版下界合金材质分开处理暗红底色、紫色金属包边、银紫刃口高光与暗红柄部细节，依据原图轮廓增加边缘层次。模型继承、立体几何、UV、手持大小、旋转及自定义状态变体同步适配，1.20+ 盔甲纹饰和 1.21.4+ 物品定义也会生成。已有下界合金贴图、模型或物品定义优先保留。“更多转换选项”中“减少动态效果”右侧提供“自动制作下界合金材质”勾选框，默认勾选；取消勾选后仅本次停止补齐缺失的下界合金剑、工具和盔甲材质，保留原包已有资源。每次转换结束以及重新打开软件时自动恢复勾选，不保存取消状态。原包未提供某类装备参考时沿用目标原版资源。
 - **天空贴图自动共用。** 天空层按图片内容共用纹理，格式和尺寸已经匹配时直接引用原图，内部天空缓存只保存资源路径；同一张图用于多个时段时不再重复保存。需要六面重排或尺寸对齐时只生成一次无损 PNG。再次转换旧版 Fast Pack 导出的包时，自动整理重复缓存和已经无引用的程序生成天空纹理，保留实际使用的资源、自定义条件和跨版本还原数据。
 - **天空图尺寸自动对齐。** 对明确使用 3×2 六面布局、因缩放或像素取整而略偏比例的天空图，按六个独立面重采样到相同的正方形尺寸，自动处理 2560×1706、3500×2334、3015×2048、2210×1535 等图集。完整保留每面的覆盖范围，避免整图缩放造成相邻面串色；标准尺寸的图集保持像素不变，预览与 OptiFine / FabricSkyBoxes / Nuit 转换使用同一套规则。
-- **跨协议物品外观自动还原。** 选择 1.16.2+ 的目标客户端时，自动补齐可表达的新版物品模型与贴图，以及 ViaBackwards 的物品识别规则。1.20.1 可识别重锤、风弹、旋风棒、沉重核心、试炼钥匙、狼铠、新版铜块和凝灰岩等；普通承载物品继续使用原包模型。原包已提供的新物品资源优先，缺失时使用官方参考资源。新版服务器可通过数字 `CustomModelData` 让旧原版客户端直接选模型；旧服务器可使用自动生成的 OptiFine CIT / Chime 标签规则。1.21.4+ 同时生成字符串选择和数字规则。适配仅涉及物品栏与手持外观，不改变服务端玩法，也不替换放置后的方块或实体渲染。
+- **跨协议物品外观自动还原。** 除已临时停用的 1.20.1 适配外，选择 1.16.2+ 的目标客户端时，自动补齐可表达的新版物品模型与贴图，以及 ViaBackwards 的物品识别规则。1.20.1 可识别重锤、风弹、旋风棒、沉重核心、试炼钥匙、狼铠、新版铜块和凝灰岩等；普通承载物品继续使用原包模型。原包已提供的新物品资源优先，缺失时使用官方参考资源。新版服务器可通过数字 `CustomModelData` 让旧原版客户端直接选模型；旧服务器可使用自动生成的 OptiFine CIT / Chime 标签规则。1.21.4+ 同时生成字符串选择和数字规则。适配仅涉及物品栏与手持外观，不改变服务端玩法，也不替换放置后的方块或实体渲染。
 - **只有贴图的旧包自动补模型。** 转到 1.13–1.21.3 时，为上传包中已有的物品贴图补齐缺失模型，明确绑定装备、工具、弓、鱼竿等资源；1.20 起同时补齐相应盔甲纹饰模型。参考表包含 254 个基础物品模型与 200 个纹饰变体，已有自定义模型优先保留。
 - **新版物品定义自动生成。** 转到 1.21.4+ 时，按目标官方结构生成物品定义与需要的模型变体，处理弓拉弦、鱼竿抛投、时钟、罗盘、药水染色和盔甲纹饰。参考数据覆盖 12 组格式，每组包含 252 个旧物品定义与 570 个模型变体；只为原包提供了贴图或模型的物品生成资源，已有自定义定义优先保留。
 - **新版装备与玩家路径。** 1.21.2+ 的盔甲穿戴贴图自动迁移到装备目录，保留皮革叠层与动画元数据；旧 Steve / Alex 默认皮肤迁移到新玩家目录，64×32 皮肤按旧版左右肢体规则补齐。
@@ -52,7 +52,7 @@ This project uses SignPath Foundation for code signing of Windows executable rel
 - **方向方块降级。** 发射器和投掷器的六种朝向还原为旧版状态引用，补齐缺失的水平 / 垂直模型，并保留垂直纹理名称；已识别的单模型 multipart 分支会转换到旧版 variants。降到 1.8.9 时展开同时包含 `parent` 与 `elements` 的立体模型，保留几何与包内父模型设置，修复竖向放置时的模型解析失败；同步换算方块父模型与物品模型的旧版显示参数，避免默认值回退到新版 GUI 角度与缩放，让物品栏图标恢复旧版大小。
 - **背包合成区坐标迁移。** 1.8.9 的输入格、箭头、结果格随新版布局整体右移 10px、上移 8px；人物背景框收窄 3px，补副手槽与配方书按钮，按贴图比例处理高清资源。
 - **现代桌面体验。** 深色 / 浅色主题、拖放导入、后台识别与转换、真实进度、天空贴图预览，以及约 150–280ms 的界面过渡。支持减少动态效果。
-- **Windows 兼容构建。** 发布程序使用 Rust 的 `x86_64-win7-windows-msvc` 目标和重新编译的标准库，静态链接 CRT；面向 Windows 7 SP1、Windows 10 和 Windows 11 的 x64 系统。Win7 自动使用软件渲染与旧系统字体，Win10 / Win11 优先使用 GPU 并保留软件回退。窗口声明旧版和新版 DPI 支持，运行无需单独安装 Rust 或 VC++ 运行库。
+- **Windows 兼容构建。** 发布程序使用 Rust 的 `x86_64-win7-windows-msvc` 目标和重新编译的标准库，静态链接 CRT；面向 Windows 7 SP1、Windows 10 和 Windows 11 的 x64 系统。正式发布程序默认使用轻量软件渲染，避免首屏等待 GPU 初始化，并保留原有主题与动画；Win7 使用旧系统字体。源码仍保留可选 `gpu-renderer` 构建特性。窗口声明旧版和新版 DPI 支持，运行无需单独安装 Rust 或 VC++ 运行库。
 - **转换进度固定显示。** 进度条固定在窗口底部，滚动页面时仍能查看；操作按钮保留原有位置和样式。悬停提示使用完整背景，版本交换提示显示在按钮上方，避免与导出区文字重叠。
 - **ZIP 开关移入更多选项。** 在“更多转换选项”中切换 ZIP / 文件夹输出，导出区保留目录和自动保存开关，其他面板沿用原有布局。
 - **天空预览自动选择主图。** 跳过用于混合的黑色底层，优先显示有实际画面的天空贴图。多层天空按数字顺序处理，同一维度存在不能等价转换的规则时整体保留，避免黑色底层与彩色层被拆到不同格式后变黑。预览下方显示“天空显示可能不准确，能显示则是正常。”，预览画面供参考。
@@ -65,6 +65,26 @@ This project uses SignPath Foundation for code signing of Windows executable rel
 - **GUI、CLI 和 Rust 库共用转换逻辑。** 桌面玩家可以直接操作界面，开发者也可以批量调用命令行或集成转换库。
 
 Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取决于客户端已有的天空渲染能力；未知 GLSL 的自动回退使用目标游戏的默认渲染，原有着色器效果不会被保留。
+
+### 批量拖放与并行转换
+
+v1.2.32 支持一次拖入多个 ZIP 或材质包文件夹。“选择 ZIP”也支持多选；第二次及后续导入均追加到现有列表，同一路径不会重复添加。
+
+导入多个包后，列表显示每个包的识别、等待、转换阶段、进度和结果。点击列表项可以查看该包的信息与天空预览；列表可统一清空，完成区域上方提供统一的“打开输出目录”。每行只显示文件名、状态与进度，不再放打开或删除按钮。底部总进度持续显示，滚动时也可查看。
+
+点击“全部转换”后，按机器可用逻辑线程安排最多四个包并行运行，单包内部的解压、压缩和天空任务按正在运行的包数共享线程预算。转换中的后续导入会自动使用当前批次的版本、导出目录、附魔颜色、准星等选项，排队后继续转换。单个包失败不会阻止其他包，失败原因单独显示；重试仅处理失败的有效包，不重做成功结果。
+
+所有结果按 `[目标版本]原包名.zip` 分别保存。同名输入和已被占用的输出自动增加数字后缀，避免两个任务写入同一个文件，也不会覆盖任一输入原包。开始前集中确认已有输出；运行中追加的包遇到已有文件会使用新文件名保存。1.20.1 的布吉岛适配现已临时停用，批量转换不会扫描、配置或自动导入客户端。相关代码和配置保护逻辑保留在源码中。
+
+### 启动速度
+
+v1.2.32 的正式构建不再携带默认 GPU 渲染后端，首屏使用轻量软件渲染。准星预设库在后台载入，主界面不等预设读取结束。系统字体初始化与窗口准备并行进行。GUI 发布 EXE 不再使用需要启动时解压的压缩壳；ZIP 便携包仍压缩存储，CLI 保持体积压缩。
+
+`examples/startup_profile.rs` 从进程启动开始计时，记录窗口初始化完成与首次绘制事件；`examples/batch_profile.rs` 可对真实材质包测量整批耗时和实际并行数。启动时间会受磁盘、防病毒扫描和系统字体数量影响。
+
+本机最终 EXE 连续启动五次，首帧约 154–186ms，中位数约 182ms。首次运行候选构建曾测得约 539ms。测量包含创建进程与绘制首帧；不能保证任意机器或每次冷启动都低于 200ms。
+
+本机 Ryzen 5 5600（12 逻辑线程）将 Blue 128x、Jamezs Luminous、vamp 三个原包转换到 1.20.1：同一版本逐个执行约 3.90 秒，批量实际同时运行三个包约 2.45 秒。计时包含解包、资源转换与最终 ZIP 保存；这些是本机样本结果，不能保证任意大小的包都在同一时间内完成。
 
 ### 天空预览白天优先
 
@@ -121,9 +141,9 @@ ZIP 识别直接读取归档目录与 `pack.mcmeta`，统计文件、贴图、�
 
 ## 下载与使用
 
-1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.31.exe`。
-2. 双击下载的程序，把材质包 ZIP 或文件夹拖入窗口。
-3. 选择目标版本与导出目录，点击“开始转换”。资源适配默认自动执行。
+1. 打开 [最新 Release](https://github.com/LongCold-ColdEternity-Team/Fast-Pack/releases/latest)，下载 `FastPack-v<版本号>.exe`，或下载 Windows x64 便携包。当前版本为 `FastPack-v1.2.32.exe`。
+2. 双击下载的程序，把一个或多个材质包 ZIP / 文件夹拖入窗口，也可以多选 ZIP。再次拖入会追加到列表；转换中也能继续追加。
+3. 选择目标版本与导出目录，点击“开始转换”或“全部转换”。批量任务自动并行执行，新增的包也会使用本批次选项继续转换。
 4. 完成后，通过“打开输出目录”取得转换结果，再将材质包交给对应版本的游戏加载。
 
 运行桌面版无需解释器或浏览器。材质包处理在本机完成，程序不会把上传内容发送到远端服务。“了解详细”中的源码按钮会在用户点击后打开 GitHub 页面。
@@ -182,7 +202,7 @@ GUI 会随原包和目标版本更新默认文件名，并使用选定的导出�
 
 ### 发布程序命名
 
-v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.31.exe`、`fast-pack-cli-v1.2.31.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
+v1.1.7 起，GUI 和命令行发布文件均带版本号：`FastPack-v1.2.32.exe`、`fast-pack-cli-v1.2.32.exe`。便携包也包含对应的版本化文件名。后续发布由 Rust 打包入口从 Cargo 版本自动生成名称，开发构建目录中的 Cargo 目标名仍为 `FastPack.exe` 和 `fast-pack-cli.exe`。
 
 ### 转换过程中发生了什么
 
@@ -277,6 +297,15 @@ MCPatcher 连接纹理会迁移到现代 OptiFine CTM 目录，规范含空格�
 
 ## 旧客户端连接新服务器时的物品外观
 
+**v1.2.32 起临时停用 1.20.1 的布吉岛高版本适配。** 主页不再显示该开关，旧配置中的开启状态不会生效；GUI、CLI 和 Rust 转换入口均强制关闭。正常材质包转换继续可用。相关实现完整保留，之后可由开发者恢复发布。
+
+本版本不会生成这项适配的选择规则，不扫描、汉化或自动导入本机布吉岛客户端。转换旧版 Fast Pack 已适配的包到 1.20.1 时，使用既有关闭逻辑恢复原承载物品的规则。旧版遗留的待启用任务会被取消。
+
+<details>
+<summary>保留的适配机制与历史说明（当前不可启用）</summary>
+
+以下记录功能启用时的行为，仅作为源码与历史参考。
+
 目标版本选择**客户端版本**。客户端为 1.20.1 时，主页显示“布吉岛高版本材质包适配”开关，首次默认开启并保存状态；选择其他版本时隐藏。开启后自动添加可表达的新物品模型、识别规则及声音资源，并定位网易客户端、配置官方名称汉化并导入转换包。仅在原包已经启用且身份一致时，在原位置更新为转换包；未启用的包仅导入，不会额外启用其他材质包。手动选择的导出目录仍保留一份结果。
 
 ### 名称与附魔汉化
@@ -319,31 +348,34 @@ ViaBackwards 启动时将用户 NBT 与内置映射合并。运行中的游戏�
 独立维护入口仍保留，普通玩家使用默认开关即可：
 
 ```powershell
-.\fast-pack-cli-v1.2.31.exe --client-audio "E:\MCLDownload\Game\.minecraft"
+.\fast-pack-cli-v1.2.32.exe --client-audio "E:\MCLDownload\Game\.minecraft"
 ```
 
 此命令现仅配置官方名称与附魔，不改写模组，也不启用原声音效。`--restore-client-audio` 仅用于恢复以前版本留下的模组改写，校验原始备份后还原；当前已经被启动器恢复的原版模组无需处理。
 
 参考：[ViaBackwards 用户 NBT 合并实现](https://github.com/ViaVersion/ViaBackwards/blob/master/common/src/main/java/com/viaversion/viabackwards/api/data/BackwardsMappingDataLoader.java)、[配置](https://github.com/ViaVersion/ViaBackwards/blob/master/common/src/main/resources/assets/viabackwards/config.yml)、[公开协议映射](https://github.com/ViaVersion/Mappings)、[1.20.5 → 1.20.3 声音映射](https://github.com/ViaVersion/Mappings/blob/master/mappings/diff/mapping-1.20.5to1.20.3.json)、[1.20.3 → 1.20.2 声音映射](https://github.com/ViaVersion/Mappings/blob/master/mappings/diff/mapping-1.20.3to1.20.2.json)。
 
+
+</details>
+
 ## 命令行
 
-便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.31 为例，命令默认执行自动适配：
+便携包包含 `fast-pack-cli-v<版本号>.exe`。以下以 v1.2.32 为例，命令默认执行自动适配：
 
 ```powershell
-.\fast-pack-cli-v1.2.31.exe old.zip new.zip --to 26.2
-.\fast-pack-cli-v1.2.31.exe 9178.zip --to 1.20.1
-.\fast-pack-cli-v1.2.31.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
-.\fast-pack-cli-v1.2.31.exe old.zip output_folder --folder --to 1.20.1
-.\fast-pack-cli-v1.2.31.exe old.zip --probe
-.\fast-pack-cli-v1.2.31.exe --versions
-.\fast-pack-cli-v1.2.31.exe old.zip new.zip --to 26.2 --quiet
-.\fast-pack-cli-v1.2.31.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
-.\fast-pack-cli-v1.2.31.exe old.zip --to 1.20.1 --vanilla-glint
-.\fast-pack-cli-v1.2.31.exe old.zip --to 1.20.1 --no-netherite
-.\fast-pack-cli-v1.2.31.exe old.zip --to 1.20.1 --crosshair crosshair-pack.zip
-.\fast-pack-cli-v1.2.31.exe old.zip --to 1.20.1 --hide-attack-indicator
-.\fast-pack-cli-v1.2.31.exe old.zip new.zip --renames names.json --report-json report.json
+.\fast-pack-cli-v1.2.32.exe old.zip new.zip --to 26.2
+.\fast-pack-cli-v1.2.32.exe 9178.zip --to 1.20.1
+.\fast-pack-cli-v1.2.32.exe modern.zip legacy.zip --from 26.2 --to 1.8.9
+.\fast-pack-cli-v1.2.32.exe old.zip output_folder --folder --to 1.20.1
+.\fast-pack-cli-v1.2.32.exe old.zip --probe
+.\fast-pack-cli-v1.2.32.exe --versions
+.\fast-pack-cli-v1.2.32.exe old.zip new.zip --to 26.2 --quiet
+.\fast-pack-cli-v1.2.32.exe old.zip --to 1.20.1 --glint-color '#FFFFFF'
+.\fast-pack-cli-v1.2.32.exe old.zip --to 1.20.1 --vanilla-glint
+.\fast-pack-cli-v1.2.32.exe old.zip --to 1.20.1 --no-netherite
+.\fast-pack-cli-v1.2.32.exe old.zip --to 1.20.1 --crosshair crosshair-pack.zip
+.\fast-pack-cli-v1.2.32.exe old.zip --to 1.20.1 --hide-attack-indicator
+.\fast-pack-cli-v1.2.32.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 
 `--crosshair <准星包或PNG>` 为本次转换使用指定准星，不改写 GUI 预设库；不传参数时保留原包准星。Rust 库通过 `ConversionOptions.crosshair` 接收准星，`examples/crosshair_presets.rs` 提供独立预设库的导入、列出、生成和删除入口。
@@ -352,7 +384,7 @@ ViaBackwards 启动时将用户 NBT 与内置映射合并。运行中的游戏�
 
 `--from auto` 默认自动识别源版本。`--report-json` 仅在指定时将详情另存到提供的路径，不会把 `转换报告.txt` 塞入输出 ZIP。自定义映射采用 JSON 对象，例如 `{"custom_texture":"replacement_texture"}`。
 
-命令行转换到 `--to 1.20.1` 默认也会执行布吉岛客户端自动处理。`--no-heypixel` 关闭本次布吉岛资源与客户端适配；`--no-client-setup` 仅生成兼容材质包，不安装、导入或修改本机客户端，适合批量构建资源的场景。其他目标版本不会触发本地客户端处理。
+v1.2.32 的 CLI 同样强制停用 1.20.1 布吉岛适配，相关参数从帮助中隐藏。旧配置和显式传入的选项都不能开启；独立汉化安装入口也不会执行安装。普通转换、准星和附魔颜色等选项继续可用。
 
 `--glint-color` 接受带或不带 `#` 的 3 位 / 6 位 HEX 色值。省略时保留输入包的光效效果并自动适配目标版本；`--vanilla-glint` 将附魔光效恢复原版紫色，与 `--glint-color` 互斥；两个选项都省略时继续自动适配输入包颜色。命令行参数不会改写桌面版已保存的颜色。
 

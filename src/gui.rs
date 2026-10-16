@@ -2,8 +2,8 @@ use crate::motion::Tween;
 use anyhow::{Context, Result, ensure};
 use fast_pack::converter::load_extra_renames;
 use fast_pack::{
-    ConversionOptions, ConversionReport, PackInfo, convert_pack, pack_format_of, probe_pack,
-    suggest_output, tables,
+    ConversionOptions, ConversionReport, PackInfo, pack_format_of, probe_pack, suggest_output,
+    tables,
 };
 use iced::widget::{
     self, button, checkbox, column, container, mouse_area, pick_list, progress_bar, row,
@@ -13,7 +13,7 @@ use iced::{
     Alignment, Background, Border, Color, Element, Font, Length, Padding, Shadow, Size,
     Subscription, Task, Theme, Vector, window,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -26,6 +26,10 @@ enum Message {
     OpenFile,
     OpenFolder,
     InputPicked(Option<PathBuf>),
+    InputsPicked(Vec<PathBuf>),
+    QueueSelect(u64),
+    QueueClear,
+    QueueHover(u64, u8, bool),
     Target(String),
     AutoSave(bool),
     AutoSavePath(bool),
@@ -94,8 +98,7 @@ enum WorkEvent {
         u64,
         std::result::Result<Option<fast_pack::compat::sky::Preview>, String>,
     ),
-    Progress(String, u8),
-    Finished(Box<std::result::Result<ConversionReport, String>>),
+    Batch(fast_pack::batch::Event),
     Mapping(std::result::Result<Vec<(String, String)>, String>),
     Preferences(std::result::Result<(), String>),
     Crosshairs(
@@ -219,6 +222,12 @@ fn hint_style(colors: Colors) -> container::Style {
 }
 
 struct App {
+    queue: Vec<QueueEntry>,
+    probing: HashSet<u64>,
+    next_id: u64,
+    batch_pool: Option<fast_pack::batch::Pool>,
+    batch_options: Option<ConversionOptions>,
+    startup_frame: bool,
     phase: Phase,
     source: Option<PathBuf>,
     info: Option<PackInfo>,
@@ -289,6 +298,7 @@ struct App {
     auto_save_path_motion: Tween,
     heypixel_motion: Tween,
     hover: HashMap<u8, Tween>,
+    queue_hover: HashMap<(u64, u8), Tween>,
     width: f32,
     generation: u64,
     sender: Sender<WorkEvent>,
@@ -305,6 +315,21 @@ struct App {
     capture_stage: String,
     capture_requested: bool,
     settled_at: Instant,
+}
+
+struct QueueEntry {
+    id: u64,
+    key: String,
+    source: PathBuf,
+    info: Option<PackInfo>,
+    phase: Phase,
+    source_version: String,
+    output: Option<PathBuf>,
+    progress: u8,
+    step: String,
+    submitted: bool,
+    error: Option<String>,
+    report: Option<ConversionReport>,
 }
 
 impl App {
@@ -324,7 +349,7 @@ impl App {
         let saved_target = preferences.target_version;
         let auto_save = preferences.auto_save;
         let auto_save_path = preferences.auto_save_path;
-        let heypixel_compat = preferences.heypixel_compat;
+        let heypixel_compat = preferences.heypixel_compat && fast_pack::client_audio::ENABLED;
         let saved_export_directory = preferences.export_directory;
         let active_glint_color = fast_pack::compat::glint::VANILLA_COLOR;
         let export_directory_input = saved_export_directory
@@ -348,6 +373,12 @@ impl App {
             });
         }
         let mut app = Self {
+            queue: Vec::new(),
+            probing: HashSet::new(),
+            next_id: 0,
+            batch_pool: None,
+            batch_options: None,
+            startup_frame: true,
             phase: Phase::Empty,
             source: None,
             info: None,
@@ -428,6 +459,7 @@ impl App {
             auto_save_path_motion: Tween::new(if auto_save_path { 1.0 } else { 0.0 }, 220),
             heypixel_motion: Tween::new(if heypixel_compat { 1.0 } else { 0.0 }, 220),
             hover: HashMap::new(),
+            queue_hover: HashMap::new(),
             width: 1040.0,
             generation: 0,
             sender,
@@ -445,13 +477,37 @@ impl App {
             capture_requested: false,
             settled_at: now,
         };
+        if let Ok(target) = std::env::var("FAST_PACK_SMOKE_TARGET") {
+            if tables()
+                .pack_formats
+                .iter()
+                .any(|(version, _)| version == &target)
+            {
+                app.target = target;
+                app.target_selected = true;
+            }
+        }
         if let Some(path) = std::env::var_os("FAST_PACK_SMOKE_INPUT") {
             app.load(PathBuf::from(path));
         }
-        app.set_crosshair_presets(
-            fast_pack::crosshair::builtin_presets().unwrap_or_default(),
-            None,
-        );
+        if let Ok(paths) = std::env::var("FAST_PACK_SMOKE_INPUTS") {
+            if let Ok(paths) = serde_json::from_str::<Vec<PathBuf>>(&paths) {
+                for path in paths {
+                    app.load(path);
+                }
+            }
+        }
+        if cfg!(test)
+            || matches!(
+                app.capture_stage.as_str(),
+                "advanced" | "crosshair" | "canvas"
+            )
+        {
+            app.set_crosshair_presets(
+                fast_pack::crosshair::builtin_presets().unwrap_or_default(),
+                None,
+            );
+        }
         if matches!(
             app.capture_stage.as_str(),
             "advanced" | "crosshair" | "canvas"
@@ -477,7 +533,7 @@ impl App {
             }
             app.sync_crosshair_preview();
         }
-        if !smoke && app.capture.is_none() {
+        if !smoke && app.capture.is_none() && !cfg!(test) {
             app.crosshair_pending = true;
             let sender = app.sender.clone();
             std::thread::spawn(move || {
@@ -500,7 +556,7 @@ impl App {
     }
 
     fn busy(&self) -> bool {
-        self.phase == Phase::Running
+        self.batch_options.is_some() || self.phase == Phase::Running
     }
     fn colors(&self) -> Colors {
         Colors::at(self.theme_motion.value(self.now))
@@ -519,7 +575,11 @@ impl App {
         ]
         .into_iter()
         .any(|value| value.active(self.now))
-            || self.hover.values().any(|value| value.active(self.now))
+            || self
+                .hover
+                .values()
+                .chain(self.queue_hover.values())
+                .any(|value| value.active(self.now))
             || self
                 .glint_color_motion
                 .iter()
@@ -548,7 +608,12 @@ impl App {
                 },
                 _ => None,
             });
-        if self.animation_active()
+        if self.startup_frame
+            || self
+                .queue
+                .iter()
+                .any(|entry| entry.phase == Phase::Identifying)
+            || self.animation_active()
             || self.phase == Phase::Identifying
             || self.busy()
             || self.mapping_pending
@@ -573,7 +638,7 @@ impl App {
                 events,
                 iced::time::every(Duration::from_millis(duration)).map(Message::Tick),
             ];
-            if self.animation_active() {
+            if self.startup_frame || self.animation_active() {
                 subscriptions.push(window::frames().map(Message::Frame));
             }
             Subscription::batch(subscriptions)
@@ -597,33 +662,306 @@ impl App {
     }
 
     fn load(&mut self, path: PathBuf) {
-        if self.busy() {
+        let path = path.canonicalize().unwrap_or(path);
+        let key = fast_pack::batch::path_key(&path);
+        if self.queue.iter().any(|entry| entry.key == key) {
             return;
         }
-        self.generation += 1;
-        self.source = Some(path.clone());
-        self.info = None;
+        self.next_id += 1;
+        let id = self.next_id;
+        let select = self.queue.is_empty()
+            || !self.busy()
+                && self
+                    .queue
+                    .iter()
+                    .all(|entry| matches!(entry.phase, Phase::Done | Phase::Failed));
+        self.queue.push(QueueEntry {
+            id,
+            key,
+            source: path,
+            info: None,
+            phase: Phase::Identifying,
+            source_version: "自动检测".into(),
+            output: None,
+            progress: 0,
+            step: "等待识别".into(),
+            submitted: false,
+            error: None,
+            report: None,
+        });
+        if select {
+            self.select_queue(id);
+        }
+        self.refresh_queue_phase();
+        self.probe_queued();
+    }
+    fn probe_queued(&mut self) {
+        while self.probing.len() < fast_pack::batch::parallelism() {
+            let Some(entry) = self.queue.iter().find(|entry| {
+                entry.phase == Phase::Identifying && !self.probing.contains(&entry.id)
+            }) else {
+                break;
+            };
+            let id = entry.id;
+            let path = entry.source.clone();
+            self.probing.insert(id);
+            let sender = self.sender.clone();
+            std::thread::spawn(move || {
+                let info =
+                    std::panic::catch_unwind(|| probe_pack(&path)).unwrap_or_else(|_| PackInfo {
+                        ok: false,
+                        path: path.display().to_string(),
+                        name: path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned(),
+                        error: Some("材质包识别意外停止".into()),
+                        src_format: None,
+                        version_label: None,
+                        file_count: 0,
+                        texture_count: 0,
+                        has_mcmeta: false,
+                        has_assets: false,
+                        description: String::new(),
+                        layout: None,
+                        suggested_target: fast_pack::LATEST_VERSION.into(),
+                        features: Default::default(),
+                    });
+                let _ = sender.send(WorkEvent::Probed(id, info));
+            });
+        }
+    }
+    fn request_preview(&self, id: u64, path: PathBuf) {
+        let sender = self.sender.clone();
+        std::thread::spawn(move || {
+            let preview =
+                fast_pack::compat::sky::preview(&path).map_err(|error| format!("{error:#}"));
+            let _ = sender.send(WorkEvent::Preview(id, preview));
+        });
+    }
+    fn select_queue(&mut self, id: u64) {
+        let Some(entry) = self.queue.iter().find(|entry| entry.id == id) else {
+            return;
+        };
+        self.generation = id;
+        self.source = Some(entry.source.clone());
+        self.info = entry.info.clone();
+        self.source_version = entry.source_version.clone();
+        self.output = entry
+            .output
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
+        self.report = entry.report.as_ref().map(ConversionReport::render);
         self.sky_preview = None;
         self.sky_day_missing = false;
         self.sky_layers = 0;
-        self.report = None;
-        self.error = None;
-        self.phase = Phase::Identifying;
-        self.logs.clear();
-        self.result_motion.set(0.0, self.now, self.reduced);
-        self.load_motion.set(0.0, self.now, self.reduced);
-        let generation = self.generation;
-        let sender = self.sender.clone();
-        std::thread::spawn(move || {
-            let info = probe_pack(&path);
-            let valid = info.ok;
-            let _ = sender.send(WorkEvent::Probed(generation, info));
-            if valid {
-                let preview =
-                    fast_pack::compat::sky::preview(&path).map_err(|error| format!("{error:#}"));
-                let _ = sender.send(WorkEvent::Preview(generation, preview));
+        self.load_motion.set(
+            if self.info.is_some() { 1.0 } else { 0.0 },
+            self.now,
+            self.reduced,
+        );
+        let preview = entry
+            .info
+            .as_ref()
+            .filter(|info| info.ok)
+            .map(|_| entry.source.clone());
+        if !self.busy() {
+            self.error = entry.error.clone();
+            self.refresh_queue_phase();
+            self.update_output();
+        }
+        if let Some(path) = preview {
+            self.request_preview(id, path);
+        }
+    }
+    fn refresh_queue_phase(&mut self) {
+        self.phase = if self.batch_options.is_some() {
+            Phase::Running
+        } else if self.queue.is_empty() {
+            Phase::Empty
+        } else if self.queue.iter().any(|entry| entry.phase == Phase::Ready) {
+            Phase::Ready
+        } else if self
+            .queue
+            .iter()
+            .any(|entry| entry.phase == Phase::Identifying)
+        {
+            Phase::Identifying
+        } else if self.queue.iter().any(|entry| entry.phase == Phase::Done) {
+            Phase::Done
+        } else {
+            Phase::Failed
+        };
+    }
+    fn plan_queue_outputs(&mut self, avoid_existing: bool) -> Result<()> {
+        let directory = self.parsed_export_directory()?;
+        let target = self
+            .batch_options
+            .as_ref()
+            .and_then(|options| options.target_version.as_deref())
+            .unwrap_or(&self.target);
+        let as_zip = self
+            .batch_options
+            .as_ref()
+            .map_or(self.as_zip, |options| options.as_zip);
+        let inputs: Vec<_> = self
+            .queue
+            .iter()
+            .map(|entry| entry.source.clone())
+            .collect();
+        let mut reserved: Vec<_> = self
+            .queue
+            .iter()
+            .filter(|entry| entry.submitted || entry.phase == Phase::Done)
+            .filter_map(|entry| entry.output.clone())
+            .collect();
+        let only_one = self.queue.len() == 1;
+        for entry in &mut self.queue {
+            if entry.phase != Phase::Ready || entry.submitted {
+                continue;
             }
-        });
+            let output = if only_one && self.smoke_output.is_some() {
+                self.smoke_output.clone().unwrap()
+            } else {
+                fast_pack::batch::output_path(
+                    &entry.source,
+                    target,
+                    as_zip,
+                    directory.as_deref(),
+                    &reserved,
+                    &inputs,
+                    avoid_existing,
+                )
+            };
+            reserved.push(output.clone());
+            entry.output = Some(output);
+        }
+        if let Some(entry) = self.queue.iter().find(|entry| entry.id == self.generation)
+            && let Some(output) = &entry.output
+        {
+            self.output = output.display().to_string();
+        }
+        Ok(())
+    }
+    fn dispatch_queue(&mut self, avoid_existing: bool) {
+        if let Err(error) = self.plan_queue_outputs(avoid_existing) {
+            self.error = Some(error.to_string());
+            return;
+        }
+        let Some(pool) = &self.batch_pool else { return };
+        let Some(options) = &self.batch_options else {
+            return;
+        };
+        for entry in &mut self.queue {
+            if entry.phase != Phase::Ready || entry.submitted {
+                continue;
+            }
+            let mut options = options.clone();
+            options.src_format = if entry.source_version == "自动检测" {
+                None
+            } else {
+                pack_format_of(&entry.source_version).ok()
+            };
+            let job = fast_pack::batch::Job {
+                id: entry.id,
+                source: entry.source.clone(),
+                output: entry.output.clone().unwrap(),
+                options,
+            };
+            match pool.submit(job) {
+                Ok(()) => {
+                    entry.submitted = true;
+                    entry.step = "等待并行槽位".into();
+                }
+                Err(error) => {
+                    entry.phase = Phase::Failed;
+                    entry.error = Some(error.to_string());
+                }
+            }
+        }
+        self.update_queue_progress();
+    }
+    fn update_queue_progress(&mut self) {
+        let finished = self
+            .queue
+            .iter()
+            .filter(|entry| matches!(entry.phase, Phase::Done | Phase::Failed))
+            .count();
+        let running = self
+            .queue
+            .iter()
+            .filter(|entry| entry.phase == Phase::Running)
+            .count();
+        let total: usize = self
+            .queue
+            .iter()
+            .map(|entry| {
+                if matches!(entry.phase, Phase::Done | Phase::Failed) {
+                    100
+                } else {
+                    usize::from(entry.progress)
+                }
+            })
+            .sum();
+        self.actual_progress = (total / self.queue.len().max(1)) as u8;
+        self.progress
+            .set(self.actual_progress as f32, self.now, self.reduced);
+        self.step = if self.queue.len() > 1 {
+            format!(
+                "并行转换 {running} 个 · 已结束 {finished} / {}",
+                self.queue.len()
+            )
+        } else {
+            self.queue
+                .first()
+                .map(|entry| entry.step.clone())
+                .unwrap_or_default()
+        };
+    }
+    fn finish_queue(&mut self) -> bool {
+        if self.batch_options.is_none()
+            || self
+                .queue
+                .iter()
+                .any(|entry| !matches!(entry.phase, Phase::Done | Phase::Failed))
+        {
+            return false;
+        }
+        self.batch_pool.take();
+        self.batch_options = None;
+        self.refresh_queue_phase();
+        let failed = self
+            .queue
+            .iter()
+            .filter(|entry| entry.phase == Phase::Failed)
+            .count();
+        let done = self.queue.len() - failed;
+        self.error = if done == 0 {
+            Some(format!("{failed} 个材质包未能转换，请查看列表中的原因。"))
+        } else {
+            None
+        };
+        self.result_note = (self.queue.len() > 1)
+            .then(|| format!("已完成 {done} 个，失败 {failed} 个。原材质包均已保留。"));
+        if let Some(entry) = self.queue.iter().find(|entry| entry.id == self.generation) {
+            self.report = entry.report.as_ref().map(ConversionReport::render);
+            if let Some(output) = &entry.output {
+                self.output = output.display().to_string();
+            }
+        }
+        self.actual_progress = 100;
+        self.progress.set(100.0, self.now, self.reduced);
+        self.result_motion.set(1.0, self.now, self.reduced);
+        self.settled_at = self.now;
+        self.auto_netherite = true;
+        self.custom_crosshair = false;
+        self.custom_glint = false;
+        self.glint_edited = None;
+        self.sync_glint_color();
+        self.save_preferences();
+        true
     }
     fn update_output(&mut self) {
         if let Some(source) = &self.source {
@@ -850,11 +1188,11 @@ impl App {
         }
         self.directory_edited = None;
         self.remember_export_directory();
-        let Some(source) = self.source.clone() else {
+        let Some(_source) = self.source.clone() else {
             self.error = Some("请先导入材质包".into());
             return;
         };
-        if !self.info.as_ref().is_some_and(|value| value.ok) {
+        if !self.queue.iter().any(|entry| entry.phase == Phase::Ready) {
             self.error = Some("请导入有效的材质包".into());
             return;
         }
@@ -865,7 +1203,7 @@ impl App {
         if self.as_zip && !self.output.to_lowercase().ends_with(".zip") {
             self.output.push_str(".zip");
         }
-        let output = PathBuf::from(self.output.trim());
+
         let source_format = if self.source_version == "自动检测" {
             None
         } else {
@@ -916,23 +1254,30 @@ impl App {
         self.progress.set(0.0, self.now, true);
         self.result_motion.set(0.0, self.now, true);
         self.step = "正在准备".into();
+        if let Err(error) = self.plan_queue_outputs(false) {
+            self.fail(error.to_string());
+            return;
+        }
         let sender = self.sender.clone();
-        std::thread::spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                convert_pack(&source, &output, &options, |step, percent| {
-                    let _ = sender.send(WorkEvent::Progress(step.into(), percent));
-                })
-            }))
-            .map_err(|_| "转换线程意外停止".to_string())
-            .and_then(|value| value.map_err(|error| format!("{error:#}")));
-            let _ = sender.send(WorkEvent::Finished(Box::new(result)));
-        });
+        self.batch_pool = Some(fast_pack::batch::Pool::new(
+            fast_pack::batch::parallelism(),
+            move |event| {
+                let _ = sender.send(WorkEvent::Batch(event));
+            },
+        ));
+        self.batch_options = Some(options);
+        self.dispatch_queue(false);
     }
-
     fn update(&mut self, message: Message) -> Task<Message> {
         self.now = Instant::now();
         match message {
-            Message::Frame(now) => self.now = now,
+            Message::Frame(now) => {
+                self.now = now;
+                if self.startup_frame {
+                    self.startup_frame = false;
+                    crate::startup::record("first_frame");
+                }
+            }
             Message::Tick(now) => {
                 self.now = now;
                 if self.crosshair_edited.is_some_and(|edited| {
@@ -956,46 +1301,57 @@ impl App {
                 let events: Vec<_> = self.receiver.try_iter().collect();
                 for event in events {
                     match event {
-                        WorkEvent::Probed(id, info) if id == self.generation => {
-                            if info.ok {
-                                if !self.target_selected {
-                                    self.target = info.suggested_target.clone();
-                                }
-                                self.source_version = info
+                        WorkEvent::Probed(id, info) => {
+                            self.probing.remove(&id);
+                            if let Some(entry) = self.queue.iter_mut().find(|entry| entry.id == id)
+                            {
+                                entry.phase = if info.ok { Phase::Ready } else { Phase::Failed };
+                                entry.source_version = info
                                     .version_label
                                     .as_ref()
                                     .filter(|label| {
                                         tables()
                                             .pack_formats
                                             .iter()
-                                            .any(|(value, _)| value == *label)
+                                            .any(|(version, _)| version == *label)
                                     })
                                     .cloned()
                                     .unwrap_or_else(|| "自动检测".into());
-                                self.log(format!(
-                                    "识别完成：{} 个文件，{} 张纹理",
-                                    info.file_count, info.texture_count
-                                ));
-                                self.info = Some(info);
-                                self.phase = Phase::Ready;
-                                self.update_output();
-                                self.settled_at = now;
-                                self.load_motion.set(1.0, now, self.reduced);
-                                if let Ok(target) = std::env::var("FAST_PACK_SMOKE_TARGET") {
-                                    self.target = target;
-                                    self.update_output();
+                                entry.error = info.error.clone();
+                                entry.step = if info.ok {
+                                    "等待转换"
+                                } else {
+                                    "识别失败"
                                 }
-                                if let Some(output) = &self.smoke_output {
-                                    self.output = output.display().to_string();
+                                .into();
+                                entry.info = Some(info.clone());
+                                if id == self.generation {
+                                    if info.ok && !self.target_selected && !self.busy() {
+                                        self.target = info.suggested_target.clone();
+                                    }
+                                    self.select_queue(id);
+                                    self.settled_at = now;
+                                }
+                                self.log(format!(
+                                    "{}：{}",
+                                    info.name,
+                                    if info.ok {
+                                        "识别完成"
+                                    } else {
+                                        "无法识别"
+                                    }
+                                ));
+                                self.refresh_queue_phase();
+                                if self.batch_options.is_some() {
+                                    self.dispatch_queue(true);
+                                } else if info.ok && self.smoke_output.is_some() {
                                     self.start();
                                 }
-                            } else {
-                                self.info = Some(info.clone());
-                                self.fail(
-                                    info.error
-                                        .unwrap_or_else(|| "没有找到 assets 或 pack.mcmeta".into()),
-                                );
+                                if self.finish_queue() {
+                                    reset_scroll = true;
+                                }
                             }
+                            self.probe_queued();
                         }
                         WorkEvent::Preview(id, result) if id == self.generation => match result {
                             Ok(Some(preview)) => {
@@ -1021,54 +1377,68 @@ impl App {
                             }
                             Err(error) => self.log(format!("天空预览：{error}")),
                         },
-                        WorkEvent::Progress(step, percent) => {
-                            self.step = step.clone();
-                            self.actual_progress = percent;
-                            self.progress.set(percent as f32, now, self.reduced);
-                            self.log(format!("{percent:3}%  {step}"));
-                        }
-                        WorkEvent::Finished(result) => {
-                            match *result {
-                                Ok(report) => {
-                                    self.result_note = report
-                                        .assets
-                                        .warnings
-                                        .iter()
-                                        .any(|warning| warning.starts_with("布吉岛原声尚未启用"))
-                                        .then(|| {
-                                            "材质包已保存；布吉岛原声音效尚未启用，详见转换详情。"
-                                                .into()
-                                        });
-                                    self.report = Some(report.render());
-                                    self.phase = Phase::Done;
-                                    reset_scroll = true;
-                                    self.actual_progress = 100;
-                                    self.progress.set(100.0, now, self.reduced);
-                                    self.result_motion.set(1.0, now, self.reduced);
-                                    self.settled_at = now;
-                                    self.log("转换完成，原文件已保留".into());
-                                    if let Some(path) = &self.smoke_output {
-                                        let _ = std::fs::write(
-                                            path.with_extension("gui-report.json"),
-                                            serde_json::to_string_pretty(&report)
-                                                .unwrap_or_default(),
-                                        );
+                        WorkEvent::Batch(event) => {
+                            match event {
+                                fast_pack::batch::Event::Started(id) => {
+                                    if let Some(entry) =
+                                        self.queue.iter_mut().find(|entry| entry.id == id)
+                                    {
+                                        entry.phase = Phase::Running;
+                                        entry.step = "正在准备".into();
                                     }
                                 }
-                                Err(error) => self.fail(error),
+                                fast_pack::batch::Event::Progress(id, step, percent) => {
+                                    if let Some(entry) =
+                                        self.queue.iter_mut().find(|entry| entry.id == id)
+                                    {
+                                        entry.progress = entry.progress.max(percent.min(100));
+                                        entry.step = step.clone();
+                                        let name = entry
+                                            .source
+                                            .file_name()
+                                            .unwrap_or_default()
+                                            .to_string_lossy();
+                                        let log = format!("[{name}] {percent:3}% {step}");
+                                        self.log(log);
+                                    }
+                                }
+                                fast_pack::batch::Event::Finished(id, result) => {
+                                    if let Some(entry) =
+                                        self.queue.iter_mut().find(|entry| entry.id == id)
+                                    {
+                                        entry.progress = 100;
+                                        match *result {
+                                            Ok(report) => {
+                                                if let Some(path) = &self.smoke_output {
+                                                    let _ = std::fs::write(
+                                                        path.with_extension("gui-report.json"),
+                                                        serde_json::to_string_pretty(&report)
+                                                            .unwrap_or_default(),
+                                                    );
+                                                }
+                                                entry.phase = Phase::Done;
+                                                entry.step = "转换完成".into();
+                                                entry.report = Some(report);
+                                            }
+                                            Err(error) => {
+                                                entry.phase = Phase::Failed;
+                                                entry.step = "转换失败".into();
+                                                entry.error = Some(error);
+                                            }
+                                        }
+                                    }
+                                }
                             }
-                            self.auto_netherite = true;
-                            self.custom_crosshair = false;
-                            self.custom_glint = false;
-                            self.glint_edited = None;
-                            self.sync_glint_color();
-                            self.save_preferences();
-                            if self.closing
-                                && self.preferences_pending == 0
-                                && !self.crosshair_pending
-                                || self.smoke && self.capture.is_none()
-                            {
-                                return iced::exit();
+                            self.update_queue_progress();
+                            if self.finish_queue() {
+                                reset_scroll = true;
+                                if self.closing
+                                    && self.preferences_pending == 0
+                                    && !self.crosshair_pending
+                                    || self.smoke && self.capture.is_none()
+                                {
+                                    return iced::exit();
+                                }
                             }
                         }
                         WorkEvent::Mapping(result) => {
@@ -1110,6 +1480,7 @@ impl App {
                 }
                 if self.smoke
                     && self.smoke_output.is_none()
+                    && !self.busy()
                     && self.capture.is_none()
                     && now.saturating_duration_since(self.settled_at) > Duration::from_millis(800)
                 {
@@ -1144,6 +1515,7 @@ impl App {
             }
             Message::WindowEvent(id, event) => match event {
                 window::Event::Opened { size, .. } => {
+                    crate::startup::record("window_opened");
                     self.window = Some(id);
                     self.width = size.width;
                 }
@@ -1181,20 +1553,23 @@ impl App {
                 }
                 _ => {}
             },
-            Message::OpenFile if !self.busy() => {
+            Message::OpenFile => {
                 return Task::perform(
                     async {
                         rfd::AsyncFileDialog::new()
                             .set_title("Fast Pack · 导入材质包")
                             .add_filter("ZIP", &["zip"])
-                            .pick_file()
+                            .pick_files()
                             .await
+                            .unwrap_or_default()
+                            .into_iter()
                             .map(|file| file.path().to_owned())
+                            .collect()
                     },
-                    Message::InputPicked,
+                    Message::InputsPicked,
                 );
             }
-            Message::OpenFolder if !self.busy() => {
+            Message::OpenFolder => {
                 return Task::perform(
                     async {
                         rfd::AsyncFileDialog::new()
@@ -1207,6 +1582,13 @@ impl App {
                 );
             }
             Message::InputPicked(Some(path)) => self.load(path),
+            Message::InputsPicked(paths) => {
+                for path in paths {
+                    self.load(path);
+                }
+            }
+            Message::QueueSelect(id) => self.select_queue(id),
+            Message::QueueClear if !self.busy() => return self.update(Message::NewPack),
             Message::Target(target) if !self.busy() => {
                 if !tables()
                     .pack_formats
@@ -1226,6 +1608,13 @@ impl App {
                 }
             }
             Message::SourceVersion(version) if !self.busy() => {
+                if let Some(entry) = self
+                    .queue
+                    .iter_mut()
+                    .find(|entry| entry.id == self.generation)
+                {
+                    entry.source_version = version.clone();
+                }
                 self.source_version = version;
                 self.report = None;
                 self.error = None;
@@ -1261,7 +1650,7 @@ impl App {
                 }
                 self.save_preferences();
             }
-            Message::HeyPixel(value) if !self.busy() => {
+            Message::HeyPixel(value) if !self.busy() && fast_pack::client_audio::ENABLED => {
                 self.heypixel_compat = value;
                 self.heypixel_motion
                     .set(if value { 1.0 } else { 0.0 }, self.now, self.reduced);
@@ -1608,7 +1997,28 @@ impl App {
                 });
             }
             Message::Start if !self.busy() && self.phase != Phase::Identifying => {
-                if Path::new(self.output.trim()).exists() {
+                for entry in &mut self.queue {
+                    if entry.phase == Phase::Failed
+                        && entry.info.as_ref().is_some_and(|info| info.ok)
+                    {
+                        entry.phase = Phase::Ready;
+                        entry.submitted = false;
+                        entry.progress = 0;
+                        entry.error = None;
+                        entry.step = "等待重试".into();
+                    }
+                }
+                self.refresh_queue_phase();
+                if let Err(error) = self.plan_queue_outputs(false) {
+                    self.error = Some(error.to_string());
+                    return Task::none();
+                }
+                if self
+                    .queue
+                    .iter()
+                    .filter(|entry| entry.phase == Phase::Ready)
+                    .any(|entry| entry.output.as_ref().is_some_and(|path| path.exists()))
+                {
                     self.confirm_overwrite = true;
                 } else {
                     self.start();
@@ -1623,10 +2033,13 @@ impl App {
                 self.learn_more = false;
                 self.close_glint_picker();
             }
-            Message::NewPack => {
+            Message::NewPack if !self.busy() => {
+                self.queue.clear();
+                self.queue_hover.clear();
+                self.next_id += 1;
                 self.auto_netherite = true;
                 self.custom_crosshair = false;
-                self.generation += 1;
+                self.generation = self.next_id;
                 self.sky_preview = None;
                 self.sky_day_missing = false;
                 self.sky_layers = 0;
@@ -1706,7 +2119,7 @@ impl App {
                     for motion in &mut self.glint_color_motion {
                         motion.snap();
                     }
-                    for value in self.hover.values_mut() {
+                    for value in self.hover.values_mut().chain(self.queue_hover.values_mut()) {
                         value.snap();
                     }
                 }
@@ -1714,6 +2127,11 @@ impl App {
             Message::Hover(id, value) => self
                 .hover
                 .entry(id)
+                .or_insert_with(|| Tween::new(0.0, 150))
+                .set(if value { 1.0 } else { 0.0 }, self.now, self.reduced),
+            Message::QueueHover(id, kind, value) => self
+                .queue_hover
+                .entry((id, kind))
                 .or_insert_with(|| Tween::new(0.0, 150))
                 .set(if value { 1.0 } else { 0.0 }, self.now, self.reduced),
             Message::Captured(screenshot) => {
@@ -1902,7 +2320,7 @@ impl App {
             self.title(
                 name.as_deref()
                     .map(|name| shorten(name, 34))
-                    .unwrap_or_else(|| "把材质包拖到这里".into()),
+                    .unwrap_or_else(|| "把材质包拖到这里，可一次拖入多个".into()),
                 18
             ),
             self.label(caption),
@@ -1910,19 +2328,14 @@ impl App {
                 self.action(
                     2,
                     if self.source.is_some() {
-                        "更换 ZIP"
+                        "添加 ZIP"
                     } else {
                         "选择 ZIP"
                     },
-                    (!self.busy()).then_some(Message::OpenFile),
+                    Some(Message::OpenFile),
                     false
                 ),
-                self.action(
-                    3,
-                    "选择文件夹",
-                    (!self.busy()).then_some(Message::OpenFolder),
-                    false
-                )
+                self.action(3, "选择文件夹", Some(Message::OpenFolder), false)
             ]
             .spacing(10)
         ]
@@ -2015,6 +2428,160 @@ impl App {
             );
         } else if self.sky_day_missing {
             content = content.push(self.label("未找到可预览的天空"));
+        }
+        self.panel(content)
+    }
+
+    fn queue_view(&self) -> Element<'_, Message> {
+        if self.queue.len() < 2 {
+            return space().height(0).into();
+        }
+        let c = self.colors();
+        let done = self
+            .queue
+            .iter()
+            .filter(|entry| entry.phase == Phase::Done)
+            .count();
+        let failed = self
+            .queue
+            .iter()
+            .filter(|entry| entry.phase == Phase::Failed)
+            .count();
+        let mut entries = column![].spacing(8);
+        for entry in &self.queue {
+            let selected = entry.id == self.generation;
+            let name = entry
+                .source
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
+            let status = match entry.phase {
+                Phase::Identifying => "正在识别".into(),
+                Phase::Ready if entry.submitted => "等待并行槽位".into(),
+                Phase::Ready => "等待转换".into(),
+                Phase::Running => format!("{}% · {}", entry.progress, entry.step),
+                Phase::Done => "已完成".into(),
+                Phase::Failed => format!("失败：{}", entry.error.as_deref().unwrap_or("无法转换")),
+                Phase::Empty => "等待导入".into(),
+            };
+            let tone = match entry.phase {
+                Phase::Done => c.success,
+                Phase::Failed => c.danger,
+                _ => c.muted,
+            };
+            let label = column![
+                text(shorten(&name, 54)).size(14).color(c.foreground),
+                text(shorten(&status, 76)).size(12).color(tone)
+            ]
+            .spacing(5)
+            .width(Length::Fill);
+            let pick = button(label)
+                .padding([2, 0])
+                .width(Length::Fill)
+                .on_press(Message::QueueSelect(entry.id))
+                .style(move |_, _| widget::button::Style {
+                    background: None,
+                    text_color: c.foreground,
+                    ..Default::default()
+                });
+            let line = row![pick].align_y(Alignment::Center);
+            let mut item = column![line].spacing(9);
+            if entry.phase == Phase::Running {
+                item = item.push(
+                    progress_bar(0.0..=100.0, f32::from(entry.progress))
+                        .girth(3)
+                        .style(move |_| widget::progress_bar::Style {
+                            background: c.line.into(),
+                            bar: c.accent.into(),
+                            border: Border {
+                                radius: 2.0.into(),
+                                ..Default::default()
+                            },
+                        }),
+                );
+            }
+            let amount = self
+                .queue_hover
+                .get(&(entry.id, 0))
+                .map_or(0.0, |motion| motion.value(self.now));
+            let card = container(item)
+                .padding([10, 12])
+                .width(Length::Fill)
+                .style(move |_| container::Style {
+                    background: Some(
+                        mix(
+                            c.field,
+                            c.accent,
+                            if selected { 0.045 } else { 0.018 * amount },
+                        )
+                        .into(),
+                    ),
+                    border: Border {
+                        radius: 10.0.into(),
+                        width: 1.0,
+                        color: mix(
+                            c.line,
+                            c.accent,
+                            if selected { 0.50 } else { 0.18 * amount },
+                        ),
+                    },
+                    ..Default::default()
+                });
+            entries = entries.push(
+                mouse_area(card)
+                    .on_enter(Message::QueueHover(entry.id, 0, true))
+                    .on_exit(Message::QueueHover(entry.id, 0, false)),
+            );
+        }
+        let mut content = column![
+            row![
+                self.title(format!("材质包列表 · {} 个", self.queue.len()), 14),
+                space().width(Length::Fill),
+                self.label(format!("完成 {done} · 失败 {failed}")),
+            ]
+            .align_y(Alignment::Center),
+            row![
+                self.action(44, "添加 ZIP", Some(Message::OpenFile), false),
+                self.action(46, "添加文件夹", Some(Message::OpenFolder), false),
+                self.action(
+                    45,
+                    "清空",
+                    (!self.busy()).then_some(Message::QueueClear),
+                    false
+                ),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+            self.label(format!(
+                "同时最多转换 {} 个 · 再次拖入会追加",
+                fast_pack::batch::parallelism()
+            )),
+            scrollable(entries)
+                .height((self.queue.len() as f32 * 74.0).min(340.0))
+                .spacing(10),
+        ]
+        .spacing(12);
+        if let Some(info) = &self.info {
+            content = content.push(self.label(format!(
+                "当前：{} · {} 张纹理",
+                info.version_label.as_deref().unwrap_or("自动检测"),
+                info.texture_count
+            )));
+        }
+        if let Some(preview) = &self.sky_preview {
+            content = content
+                .push(self.label(if self.sky_preview_daytime {
+                    "白天天空预览"
+                } else {
+                    "其他时段天空预览"
+                }))
+                .push(
+                    widget::image(preview.clone())
+                        .width(Length::Fill)
+                        .height(120)
+                        .content_fit(iced::ContentFit::Contain),
+                )
+                .push(self.label("天空显示可能不准确，能显示则是正常。"));
         }
         self.panel(content)
     }
@@ -2206,7 +2773,7 @@ impl App {
             self.memory_controls(),
         ]
         .spacing(13);
-        if self.target == "1.20.1" {
+        if self.target == "1.20.1" && fast_pack::client_audio::ENABLED {
             content = content.push(self.memory_switch(
                 36,
                 "布吉岛高版本材质包适配",
@@ -2934,13 +3501,18 @@ impl App {
         if self.phase == Phase::Done {
             intro = intro.push(self.label("转换结果已保存，原材质包没有改动。"));
         }
+        let source_panel = if self.queue.len() > 1 {
+            self.queue_view()
+        } else {
+            self.source_panel()
+        };
         let panels: Element<'_, Message> = if self.width < 940.0 {
-            column![self.source_panel(), self.target_panel()]
+            column![source_panel, self.target_panel()]
                 .spacing(18)
                 .into()
         } else {
             row![
-                container(self.source_panel()).width(Length::FillPortion(1)),
+                container(source_panel).width(Length::FillPortion(1)),
                 container(self.target_panel()).width(Length::FillPortion(1))
             ]
             .spacing(20)
@@ -2948,23 +3520,26 @@ impl App {
         };
         let mut body = column![intro].spacing(20);
         if self.phase == Phase::Done {
-            body = body.push(self.result_view()).push(
-                self.panel(
-                    column![
-                        self.title("输出材质包", 14),
-                        self.title(
-                            Path::new(&self.output)
-                                .file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy(),
-                            18
-                        ),
-                        self.label(self.output.clone()),
-                        self.label(format!("目标 Minecraft {}", self.target))
-                    ]
-                    .spacing(12),
-                ),
-            );
+            body = body.push(self.result_view()).push(self.queue_view());
+            if self.queue.len() < 2 {
+                body = body.push(
+                    self.panel(
+                        column![
+                            self.title("输出材质包", 14),
+                            self.title(
+                                Path::new(&self.output)
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy(),
+                                18
+                            ),
+                            self.label(self.output.clone()),
+                            self.label(format!("目标 Minecraft {}", self.target))
+                        ]
+                        .spacing(12),
+                    ),
+                );
+            }
         } else {
             body = body
                 .push(panels)
@@ -3041,7 +3616,11 @@ impl App {
                 } else if self.phase == Phase::Identifying {
                     "正在识别…"
                 } else {
-                    "开始转换 →"
+                    if self.queue.len() > 1 {
+                        "全部转换 →"
+                    } else {
+                        "开始转换 →"
+                    }
                 },
                 (self.phase == Phase::Ready
                     || self.phase == Phase::Failed
@@ -3164,7 +3743,14 @@ impl App {
                     column![
                         self.title("替换已有输出？", 20),
                         self.label("已有结果将被本次转换替换，源材质包不会更改。"),
-                        self.label(shorten(&self.output, 58)),
+                        self.label(format!(
+                            "将替换 {} 个已有结果",
+                            self.queue
+                                .iter()
+                                .filter(|entry| entry.phase == Phase::Ready
+                                    && entry.output.as_ref().is_some_and(|path| path.exists()))
+                                .count()
+                        )),
                         row![
                             self.action(31, "返回", Some(Message::CancelOverwrite), false),
                             self.action(32, "覆盖并转换", Some(Message::ConfirmOverwrite), true)

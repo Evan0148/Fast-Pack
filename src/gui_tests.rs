@@ -5,13 +5,13 @@ fn app() -> App {
     app.smoke = false;
     app.capture = None;
     app.smoke_output = None;
-    app.phase = Phase::Empty;
-    app.info = None;
-    app.source = None;
+    app.target = "1.20.1".into();
+    app.target_selected = true;
+    app.startup_frame = false;
     app
 }
 
-fn pack(name: &str) -> PackInfo {
+fn info(name: &str) -> PackInfo {
     PackInfo {
         ok: true,
         path: name.into(),
@@ -24,79 +24,162 @@ fn pack(name: &str) -> PackInfo {
         has_assets: true,
         description: String::new(),
         layout: Some("legacy".into()),
-        suggested_target: "26.2".into(),
+        suggested_target: "26.4".into(),
         error: None,
         features: Default::default(),
     }
 }
 
-#[test]
-fn ignores_stale_identification_result() {
-    let mut app = app();
-    app.generation = 2;
-    app.source = Some(PathBuf::from("current.zip"));
-    app.phase = Phase::Identifying;
-    app.sender
-        .send(WorkEvent::Probed(1, pack("stale.zip")))
-        .unwrap();
-    let _ = app.update(Message::Tick(Instant::now()));
-    assert_eq!(app.phase, Phase::Identifying);
-    assert!(app.info.is_none());
-    app.sender
-        .send(WorkEvent::Probed(2, pack("current.zip")))
-        .unwrap();
-    let _ = app.update(Message::Tick(Instant::now()));
-    assert_eq!(app.phase, Phase::Ready);
-    assert_eq!(app.info.as_ref().unwrap().name, "current.zip");
-    assert!(app.output.ends_with("current_converted_26_2.zip"));
+fn ready(app: &mut App, id: u64, source: PathBuf) {
+    app.next_id = app.next_id.max(id);
+    app.queue.push(QueueEntry {
+        id,
+        key: fast_pack::batch::path_key(&source),
+        source: source.clone(),
+        info: Some(info(&source.display().to_string())),
+        phase: Phase::Ready,
+        source_version: "1.8.9".into(),
+        output: None,
+        progress: 0,
+        step: "等待转换".into(),
+        submitted: false,
+        error: None,
+        report: None,
+    });
+    app.generation = id;
+    app.source = Some(source);
+    app.info = app.queue.last().unwrap().info.clone();
+    app.refresh_queue_phase();
+    app.update_output();
 }
 
 #[test]
-fn progress_never_exceeds_confirmed_work_and_settles() {
+fn separate_drops_append_and_duplicate_paths_are_ignored() {
     let mut app = app();
+    app.load(PathBuf::from("first.zip"));
+    app.load(PathBuf::from("second.zip"));
+    app.load(PathBuf::from("first.zip"));
+    assert_eq!(app.queue.len(), 2);
+    assert_eq!(app.source.as_deref(), Some(Path::new("first.zip")));
+}
+
+#[test]
+fn drops_during_conversion_keep_current_job_and_append() {
+    let mut app = app();
+    ready(&mut app, 1, "first.zip".into());
+    app.batch_options = Some(ConversionOptions::default());
     app.phase = Phase::Running;
-    app.sender
-        .send(WorkEvent::Progress("更新模型引用".into(), 60))
-        .unwrap();
-    let now = Instant::now();
-    let _ = app.update(Message::Tick(now));
-    assert_eq!(app.actual_progress, 60);
-    assert!(app.progress.value(now) <= 60.0);
-    let _ = app.update(Message::Frame(now + Duration::from_millis(250)));
-    assert_eq!(app.progress.value(app.now), 60.0);
-    assert!(!app.animation_active());
+    app.queue[0].phase = Phase::Running;
+    app.queue[0].progress = 60;
+    app.load("second.zip".into());
+    assert_eq!(app.queue.len(), 2);
+    assert!(app.busy());
+    assert_eq!(app.queue[0].progress, 60);
+    assert_eq!(app.generation, 1);
+    let _ = app.update(Message::Target("1.8.9".into()));
+    assert_eq!(app.target, "1.20.1");
 }
 
 #[test]
-fn overwrite_requires_explicit_confirmation_and_cancellation_is_safe() {
-    let work = tempfile::tempdir().unwrap();
-    let path = work.path().join("existing.zip");
-    std::fs::write(&path, b"unchanged").unwrap();
+fn stale_results_after_clear_cannot_repopulate_the_queue() {
     let mut app = app();
-    app.output = path.display().to_string();
+    ready(&mut app, 1, "first.zip".into());
+    let _ = app.update(Message::NewPack);
+    app.sender
+        .send(WorkEvent::Probed(1, info("first.zip")))
+        .unwrap();
+    let _ = app.update(Message::Tick(Instant::now()));
+    assert!(app.queue.is_empty());
+    assert!(app.info.is_none());
+    assert_eq!(app.phase, Phase::Empty);
+    app.load("next.zip".into());
+    assert!(app.queue[0].id > 1);
+}
+
+#[test]
+fn progress_is_per_pack_and_failure_does_not_finish_another_job() {
+    let mut app = app();
+    ready(&mut app, 1, "one.zip".into());
+    ready(&mut app, 2, "two.zip".into());
+    app.batch_options = Some(ConversionOptions::default());
+    app.phase = Phase::Running;
+    for entry in &mut app.queue {
+        entry.submitted = true;
+        entry.phase = Phase::Running;
+    }
+    app.sender
+        .send(WorkEvent::Batch(fast_pack::batch::Event::Progress(
+            1,
+            "更新模型".into(),
+            60,
+        )))
+        .unwrap();
+    app.sender
+        .send(WorkEvent::Batch(fast_pack::batch::Event::Progress(
+            2,
+            "载入".into(),
+            10,
+        )))
+        .unwrap();
+    app.sender
+        .send(WorkEvent::Batch(fast_pack::batch::Event::Finished(
+            2,
+            Box::new(Err("损坏的 ZIP".into())),
+        )))
+        .unwrap();
+    let _ = app.update(Message::Tick(Instant::now()));
+    assert_eq!(app.queue[0].progress, 60);
+    assert_eq!(app.queue[1].phase, Phase::Failed);
+    assert!(app.busy());
+    assert_eq!(app.actual_progress, 80);
+    app.sender
+        .send(WorkEvent::Batch(fast_pack::batch::Event::Finished(
+            1,
+            Box::new(Ok(ConversionReport::default())),
+        )))
+        .unwrap();
+    let _ = app.update(Message::Tick(Instant::now()));
+    assert_eq!(app.phase, Phase::Done);
+    assert!(!app.busy());
+    assert!(app.result_note.as_deref().unwrap().contains("失败 1"));
+}
+
+#[test]
+fn overwrite_confirmation_covers_the_whole_batch() {
+    let work = tempfile::tempdir().unwrap();
+    let existing = work.path().join("[1.20.1]one.zip");
+    std::fs::write(&existing, b"unchanged").unwrap();
+    let mut app = app();
+    app.export_directory_input = work.path().display().to_string();
+    ready(&mut app, 1, work.path().join("one.zip"));
+    ready(&mut app, 2, work.path().join("two.zip"));
     let _ = app.update(Message::Start);
     assert!(app.confirm_overwrite);
     assert!(!app.busy());
     let _ = app.update(Message::CancelOverwrite);
     assert!(!app.confirm_overwrite);
-    assert_eq!(std::fs::read(path).unwrap(), b"unchanged");
+    assert_eq!(std::fs::read(existing).unwrap(), b"unchanged");
 }
 
 #[test]
-fn options_are_frozen_during_conversion_and_report_does_not_leak() {
+fn preview_selection_keeps_events_isolated() {
     let mut app = app();
-    app.phase = Phase::Running;
-    let _ = app.update(Message::Target("1.8.9".into()));
-    let _ = app.update(Message::Output("other.zip".into()));
-    let _ = app.update(Message::PreserveLang(true));
-    assert_eq!(app.target, "26.2");
-    assert!(app.output.is_empty());
-    assert!(!app.preserve_lang);
-    app.phase = Phase::Done;
-    app.report = Some("old report".into());
-    let _ = app.update(Message::NewPack);
-    assert!(app.report.is_none());
-    assert_eq!(app.phase, Phase::Empty);
+    ready(&mut app, 1, "one.zip".into());
+    ready(&mut app, 2, "two.zip".into());
+    let preview = fast_pack::compat::sky::Preview {
+        names: vec!["old".into()],
+        selected_layer: "old".into(),
+        daytime: true,
+        image: image::RgbaImage::new(3, 2),
+    };
+    app.sender
+        .send(WorkEvent::Preview(1, Ok(Some(preview))))
+        .unwrap();
+    let _ = app.update(Message::Tick(Instant::now()));
+    assert!(app.sky_preview.is_none());
+    let _ = app.update(Message::QueueSelect(1));
+    assert_eq!(app.queue.len(), 2);
+    assert_eq!(app.generation, 1);
 }
 
 #[test]
@@ -112,48 +195,38 @@ fn reduced_motion_stops_all_interpolations() {
 }
 
 #[test]
-fn failure_can_recover_and_keeps_log_bounded() {
+fn heypixel_stays_disabled_when_an_enable_message_is_sent() {
     let mut app = app();
-    app.info = Some(pack("valid.zip"));
-    app.fail("测试错误".into());
-    assert_eq!(app.phase, Phase::Failed);
-    let _ = app.update(Message::Target("1.21.11".into()));
-    assert_eq!(app.phase, Phase::Ready);
-    assert!(app.error.is_none());
-    for index in 0..2000 {
-        app.log(index.to_string());
+    assert!(!app.heypixel_compat);
+    let _ = app.update(Message::HeyPixel(true));
+    assert!(!app.heypixel_compat);
+    assert_eq!(app.heypixel_motion.value(app.now), 0.0);
+}
+
+#[test]
+fn appended_output_names_use_the_frozen_batch_version() {
+    let work = tempfile::tempdir().unwrap();
+    let mut app = app();
+    ready(&mut app, 1, work.path().join("one.zip"));
+    ready(&mut app, 2, work.path().join("two.zip"));
+    app.batch_options = Some(ConversionOptions {
+        tgt_format: 15,
+        target_version: Some("1.20.1".into()),
+        as_zip: true,
+        ..Default::default()
+    });
+    app.target = "26.4".into();
+    app.as_zip = false;
+    app.plan_queue_outputs(true).unwrap();
+    for entry in &app.queue {
+        let filename = entry
+            .output
+            .as_ref()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy();
+        assert!(filename.starts_with("[1.20.1]"));
+        assert!(filename.ends_with(".zip"));
     }
-    assert!(app.logs.len() <= 500);
-    assert_eq!(app.logs.last().unwrap(), "1999");
-}
-
-#[test]
-fn ignores_preview_from_previously_uploaded_pack() {
-    let mut app = app();
-    app.generation = 3;
-    let preview = fast_pack::compat::sky::Preview {
-        names: vec!["old".into()],
-        selected_layer: "old".into(),
-        daytime: true,
-        image: image::RgbaImage::new(3, 2),
-    };
-    app.sender
-        .send(WorkEvent::Preview(2, Ok(Some(preview))))
-        .unwrap();
-    let _ = app.update(Message::Tick(Instant::now()));
-    assert!(app.sky_preview.is_none());
-    assert_eq!(app.sky_layers, 0);
-}
-
-#[test]
-fn new_pack_clears_preview_and_invalidates_pending_events() {
-    let mut app = app();
-    app.phase = Phase::Done;
-    app.generation = 7;
-    app.sky_layers = 2;
-    app.sky_preview = Some(widget::image::Handle::from_rgba(3, 2, vec![255; 24]));
-    let _ = app.update(Message::NewPack);
-    assert!(app.sky_preview.is_none());
-    assert_eq!(app.sky_layers, 0);
-    assert_eq!(app.generation, 8);
 }

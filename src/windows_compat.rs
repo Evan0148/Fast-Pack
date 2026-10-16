@@ -35,14 +35,7 @@ fn legacy() -> bool {
 pub fn initialize() {
     if std::env::var_os("ICED_BACKEND").is_none() {
         unsafe {
-            std::env::set_var(
-                "ICED_BACKEND",
-                if legacy() {
-                    "tiny-skia"
-                } else {
-                    "wgpu,tiny-skia"
-                },
-            );
+            std::env::set_var("ICED_BACKEND", "tiny-skia");
         }
     }
 }

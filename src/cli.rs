@@ -15,14 +15,15 @@ struct Arguments {
     #[arg(
         long,
         value_name = "MINECRAFT",
+        hide = !crate::client_audio::ENABLED,
         help = "通过网易 1.20.1 的 ViaBackwards 用户映射配置汉化名称与附魔"
     )]
     client_audio: Option<PathBuf>,
-    #[arg(long, requires = "client_audio", help = "恢复 ViaForge 原始备份")]
+    #[arg(long, hide = !crate::client_audio::ENABLED, requires = "client_audio", help = "恢复 ViaForge 原始备份")]
     restore_client_audio: bool,
-    #[arg(long, help = "关闭目标 1.20.1 的布吉岛资源与客户端自动适配")]
+    #[arg(long, hide = !crate::client_audio::ENABLED, help = "关闭目标 1.20.1 的布吉岛资源与客户端自动适配")]
     no_heypixel: bool,
-    #[arg(long, help = "仅生成兼容资源，不修改或导入本机客户端")]
+    #[arg(long, hide = !crate::client_audio::ENABLED, help = "仅生成兼容资源，不修改或导入本机客户端")]
     no_client_setup: bool,
     #[arg(
         long,
@@ -140,7 +141,7 @@ pub fn run() -> Result<()> {
         description: args.desc,
         glint_color: args.glint_color,
         restore_vanilla_glint: args.vanilla_glint,
-        heypixel_compat: !args.no_heypixel,
+        heypixel_compat: crate::client_audio::ENABLED && !args.no_heypixel,
         auto_client_setup: !args.no_client_setup,
         auto_netherite: !args.no_netherite,
         auto_netherite_sword: !args.no_netherite_sword,

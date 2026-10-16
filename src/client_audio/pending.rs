@@ -260,6 +260,12 @@ pub fn deploy(
 
 pub fn finish_pending() -> Result<bool> {
     let mut arguments = std::env::args_os().skip(1);
+    if !super::ENABLED {
+        if let Ok(directory) = folder() {
+            let _ = cancel_older(&directory, None);
+        }
+        return Ok(arguments.next().as_deref() == Some(std::ffi::OsStr::new("--finish-heypixel")));
+    }
     if arguments.next().as_deref() != Some(std::ffi::OsStr::new("--finish-heypixel")) {
         if let Ok(directory) = folder() {
             let _ = cancel_older(&directory, None);
