@@ -13,6 +13,7 @@ use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use zip::ZipArchive;
 
+mod daytime;
 mod storage;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -30,6 +31,7 @@ pub struct Layer {
 pub struct Preview {
     pub names: Vec<String>,
     pub selected_layer: String,
+    pub daytime: bool,
     pub image: RgbaImage,
 }
 
@@ -337,6 +339,24 @@ fn read_layers_known(
         };
         return Ok((layers, warnings));
     }
+    read_layer_configs(root, available)
+}
+
+fn read_preview_layers(
+    root: &Path,
+    available: Option<&BTreeSet<String>>,
+) -> Result<(Vec<Layer>, Vec<String>)> {
+    let active = read_layer_configs(root, available)?;
+    if !active.0.is_empty() {
+        return Ok(active);
+    }
+    read_layers_known(root, available)
+}
+
+fn read_layer_configs(
+    root: &Path,
+    available: Option<&BTreeSet<String>>,
+) -> Result<(Vec<Layer>, Vec<String>)> {
     let mut candidates = Vec::new();
     for entry in WalkDir::new(root).min_depth(1) {
         let entry = entry?;
@@ -924,67 +944,9 @@ fn read_active_layers(root: &Path) -> Result<Vec<String>> {
 
 fn compose_preview(
     layers: Vec<Layer>,
-    mut read: impl FnMut(&Layer) -> Result<RgbaImage>,
+    read: impl FnMut(&Layer) -> Result<RgbaImage>,
 ) -> Result<Option<Preview>> {
-    let names: Vec<_> = layers.iter().map(|layer| layer.name.clone()).collect();
-    let mut fallback = None;
-    for layer in layers.iter().filter(|layer| !layer.decoration) {
-        let Ok(image) = read(layer) else {
-            continue;
-        };
-        let Ok(size) = atlas::dimensions(&image) else {
-            continue;
-        };
-        let Ok(image) = atlas::resize_faces(&image, size.min(256)) else {
-            continue;
-        };
-        let Ok(image) = atlas::remap(
-            &image,
-            layout(&layer.layout),
-            AtlasLayout::Optifine,
-            layer.world == "world0",
-        ) else {
-            continue;
-        };
-        let thumbnail = image::imageops::thumbnail(&image, 192, 128);
-        let visible = thumbnail
-            .pixels()
-            .filter(|pixel| pixel[3] > 16 && pixel[0].max(pixel[1]).max(pixel[2]) > 12)
-            .count();
-        let primary = !matches!(
-            layer.properties.get("blend").map(String::as_str),
-            Some("multiply" | "burn" | "subtract")
-        );
-        let representative =
-            visible * 20 > thumbnail.width() as usize * thumbnail.height() as usize && primary;
-        let brightness = thumbnail
-            .pixels()
-            .map(|pixel| u64::from(pixel[0].max(pixel[1]).max(pixel[2])) * u64::from(pixel[3]))
-            .sum::<u64>()
-            / u64::from(thumbnail.width() * thumbnail.height()).max(1);
-        let score = (primary, brightness);
-        let selected_layer = layer
-            .properties
-            .get("source")
-            .and_then(|source| Path::new(source).file_stem())
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| layer.name.clone());
-        let preview = Preview {
-            names: names.clone(),
-            selected_layer,
-            image,
-        };
-        if representative {
-            return Ok(Some(preview));
-        }
-        if fallback
-            .as_ref()
-            .is_none_or(|(previous, _)| score > *previous)
-        {
-            fallback = Some((score, preview));
-        }
-    }
-    Ok(fallback.map(|(_, preview)| preview))
+    daytime::compose(layers, read)
 }
 
 fn preview_entry(
@@ -1011,7 +973,7 @@ pub fn preview(source: &Path) -> Result<Option<Preview>> {
     if source.pack_is_dir() {
         let root = crate::converter::find_pack_root(source)?;
         let canonical = root.pack_canonicalize()?;
-        let (layers, _) = read_layers(&root)?;
+        let (layers, _) = read_preview_layers(&root, None)?;
         return compose_preview(layers, |layer| {
             let path = local(&root, &layer.texture)?.pack_canonicalize()?;
             ensure!(path.starts_with(&canonical), "天空纹理越过材质包目录");
@@ -1079,18 +1041,13 @@ pub fn preview(source: &Path) -> Result<Option<Preview>> {
     let work = tempfile::tempdir()?;
     let root = work.path().join("preview");
     fs::create_dir_all(&root)?;
-    let cached = files.contains_key("fastpack/canonical-sky/layers.json");
     for (name, index) in &files {
-        let configuration = if cached {
-            matches!(
-                name.as_str(),
-                "fastpack/canonical-sky/layers.json" | "fastpack/canonical-sky/warnings.json"
-            )
-        } else {
-            name.ends_with(".properties")
-                && (name.contains("/mcpatcher/sky/") || name.contains("/optifine/sky/"))
-                || name.ends_with(".json") && name.starts_with("assets/") && name.contains("/sky/")
-        };
+        let configuration = matches!(
+            name.as_str(),
+            "fastpack/canonical-sky/layers.json" | "fastpack/canonical-sky/warnings.json"
+        ) || name.ends_with(".properties")
+            && (name.contains("/mcpatcher/sky/") || name.contains("/optifine/sky/"))
+            || name.ends_with(".json") && name.starts_with("assets/") && name.contains("/sky/");
         if !configuration {
             continue;
         }
@@ -1101,7 +1058,7 @@ pub fn preview(source: &Path) -> Result<Option<Preview>> {
         fs::create_dir_all(target.parent().unwrap())?;
         fs::write(target, bytes)?;
     }
-    let (layers, _) = read_layers_known(&root, Some(&available))?;
+    let (layers, _) = read_preview_layers(&root, Some(&available))?;
     compose_preview(layers, |layer| {
         let path = local(&root, &layer.texture)?;
         let name = path

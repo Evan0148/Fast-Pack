@@ -223,6 +223,8 @@ struct App {
     source: Option<PathBuf>,
     info: Option<PackInfo>,
     sky_preview: Option<widget::image::Handle>,
+    sky_day_missing: bool,
+    sky_preview_daytime: bool,
     sky_layers: usize,
     source_version: String,
     target: String,
@@ -350,6 +352,8 @@ impl App {
             source: None,
             info: None,
             sky_preview: None,
+            sky_day_missing: false,
+            sky_preview_daytime: true,
             sky_layers: 0,
             source_version: "自动检测".into(),
             target: saved_target
@@ -600,6 +604,7 @@ impl App {
         self.source = Some(path.clone());
         self.info = None;
         self.sky_preview = None;
+        self.sky_day_missing = false;
         self.sky_layers = 0;
         self.report = None;
         self.error = None;
@@ -994,6 +999,8 @@ impl App {
                         }
                         WorkEvent::Preview(id, result) if id == self.generation => match result {
                             Ok(Some(preview)) => {
+                                self.sky_day_missing = false;
+                                self.sky_preview_daytime = preview.daytime;
                                 self.sky_layers = preview.names.len();
                                 let image = image::imageops::thumbnail(&preview.image, 768, 512);
                                 self.sky_preview = Some(widget::image::Handle::from_rgba(
@@ -1005,8 +1012,14 @@ impl App {
                                     self.settled_at = now;
                                 }
                             }
+                            Ok(None) => {
+                                self.sky_preview = None;
+                                self.sky_day_missing = self
+                                    .info
+                                    .as_ref()
+                                    .is_some_and(|info| info.features.sky_count() > 0);
+                            }
                             Err(error) => self.log(format!("天空预览：{error}")),
-                            _ => {}
                         },
                         WorkEvent::Progress(step, percent) => {
                             self.step = step.clone();
@@ -1615,6 +1628,7 @@ impl App {
                 self.custom_crosshair = false;
                 self.generation += 1;
                 self.sky_preview = None;
+                self.sky_day_missing = false;
                 self.sky_layers = 0;
                 self.phase = Phase::Empty;
                 self.source = None;
@@ -1981,16 +1995,26 @@ impl App {
         if let Some(preview) = &self.sky_preview {
             content = content.push(
                 column![
-                    self.label(format!("天空纹理预览 · {} 层自动识别", self.sky_layers)),
+                    self.label(if self.sky_preview_daytime {
+                        "白天天空预览"
+                    } else {
+                        "其他时段天空预览"
+                    }),
                     widget::image(preview.clone())
                         .width(Length::Fill)
                         .height(160)
                         .content_fit(iced::ContentFit::Contain),
-                    self.label("原始六面贴图 · 随目标版本自动转换"),
+                    self.label(if self.sky_preview_daytime {
+                        "正午时段 · 随目标版本自动转换"
+                    } else {
+                        "未找到白天天空 · 显示其他时段"
+                    }),
                     self.label("天空显示可能不准确，能显示则是正常。")
                 ]
                 .spacing(8),
             );
+        } else if self.sky_day_missing {
+            content = content.push(self.label("未找到可预览的天空"));
         }
         self.panel(content)
     }

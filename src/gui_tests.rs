@@ -133,6 +133,8 @@ fn ignores_preview_from_previously_uploaded_pack() {
     app.generation = 3;
     let preview = fast_pack::compat::sky::Preview {
         names: vec!["old".into()],
+        selected_layer: "old".into(),
+        daytime: true,
         image: image::RgbaImage::new(3, 2),
     };
     app.sender
