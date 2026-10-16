@@ -75,7 +75,6 @@ enum Message {
     CrosshairColor(String),
     CrosshairSave,
     CrosshairDelete,
-    GlintPicker,
     CloseGlintPicker,
     GlintPreset([u8; 3]),
     GlintSaturationValue(f32, f32),
@@ -2209,9 +2208,6 @@ impl App {
                     });
                 }
             }
-            Message::GlintPicker if !self.busy() => {
-                self.open_color_picker(ColorTarget::Glint);
-            }
             Message::PickColor(target) if !self.busy() => self.open_color_picker(target),
             Message::FishingLine(enabled) if !self.busy() => {
                 self.fishing_line = enabled.then_some(self.fishing_line_color);
@@ -3106,36 +3102,13 @@ impl App {
     }
 
     fn glint_controls(&self) -> Element<'_, Message> {
-        let c = self.colors();
-        let active = self.active_glint_color();
-        let color = Color::from_rgb8(active[0], active[1], active[2]);
-        let swatch = container(space().width(16).height(16)).style(move |_| container::Style {
-            background: Some(color.into()),
-            border: Border {
-                radius: 5.0.into(),
-                width: 1.0,
-                color: c.line,
-            },
-            ..Default::default()
-        });
         row![
             checkbox(self.custom_glint)
                 .label("自定义附魔颜色")
                 .size(17)
                 .text_size(13)
                 .on_toggle_maybe((!self.busy()).then_some(Message::CustomGlint)),
-            swatch,
-            self.label(if self.custom_glint {
-                fast_pack::compat::glint::color_hex(self.glint_color)
-            } else {
-                "原版紫色".into()
-            }),
-            self.action(
-                33,
-                "调色",
-                (!self.busy()).then_some(Message::GlintPicker),
-                false
-            ),
+            self.palette_button(33, ColorTarget::Glint, !self.busy()),
             space().width(Length::Fill)
         ]
         .spacing(10)
@@ -4152,7 +4125,7 @@ impl App {
                 });
             widget::stack![base, widget::opaque(overlay)].into()
         } else {
-            base
+            widget::stack![base].into()
         }
     }
 }

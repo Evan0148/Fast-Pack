@@ -1,5 +1,5 @@
 use super::{App, Message, rgb_hsv};
-use iced::widget::{button, checkbox, column, container, row, space, text};
+use iced::widget::{checkbox, column, container, row, space};
 use iced::{Alignment, Border, Color, Element, Length};
 
 #[cfg(test)]
@@ -89,7 +89,7 @@ impl App {
     }
     pub(super) fn palette_button(
         &self,
-        _id: u8,
+        id: u8,
         target: ColorTarget,
         enabled: bool,
     ) -> Element<'_, Message> {
@@ -99,35 +99,29 @@ impl App {
             iced::widget::container::Style {
                 background: Some(Color::from_rgb8(color[0], color[1], color[2]).into()),
                 border: Border {
-                    radius: 4.0.into(),
+                    radius: 5.0.into(),
                     width: 1.0,
                     color: c.line,
                 },
                 ..Default::default()
             }
         });
-        button(
-            row![swatch, text("调色").size(13)]
-                .spacing(8)
-                .align_y(Alignment::Center),
-        )
-        .padding([8, 10])
-        .on_press_maybe(enabled.then_some(Message::PickColor(target)))
-        .style(move |_, status| iced::widget::button::Style {
-            background: Some(c.field.into()),
-            text_color: if enabled { c.foreground } else { c.muted },
-            border: Border {
-                radius: 8.0.into(),
-                width: 1.0,
-                color: if status == iced::widget::button::Status::Hovered {
-                    c.accent
-                } else {
-                    c.line
-                },
-            },
-            ..Default::default()
-        })
-        .into()
+        let mut control = row![swatch].spacing(10).align_y(Alignment::Center);
+        if target == ColorTarget::Glint {
+            control = control.push(self.label(if self.custom_glint {
+                fast_pack::compat::glint::color_hex(self.glint_color)
+            } else {
+                "原版紫色".into()
+            }));
+        }
+        control
+            .push(self.action(
+                id,
+                "调色",
+                enabled.then_some(Message::PickColor(target)),
+                false,
+            ))
+            .into()
     }
     pub(super) fn line_color_controls(&self) -> Element<'_, Message> {
         let supported = fast_pack::pack_format_of(&self.target).is_ok_and(|format| format >= 7);

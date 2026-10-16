@@ -414,6 +414,93 @@ fn fast_preview_requests_are_coalesced_while_a_read_is_active() {
 
 #[cfg(not(feature = "gpu-renderer"))]
 #[test]
+fn all_color_palettes_preserve_page_scroll_when_opened_and_closed() {
+    use iced::advanced::{
+        layout,
+        widget::{Id, Operation, Tree, operation},
+    };
+
+    #[derive(Default)]
+    struct ScrollPosition(Option<f32>);
+    impl Operation for ScrollPosition {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+            operate(self);
+        }
+        fn scrollable(
+            &mut self,
+            id: Option<&Id>,
+            _: iced::Rectangle,
+            _: iced::Rectangle,
+            translation: iced::Vector,
+            _: &mut dyn operation::Scrollable,
+        ) {
+            if id == Some(&Id::new("fast-pack-content")) {
+                self.0 = Some(translation.y);
+            }
+        }
+    }
+
+    let mut app = app();
+    app.reduced = true;
+    app.advanced = true;
+    app.advanced_motion.set(1.0, app.now, true);
+    ready(&mut app, 1, "palette-scroll.zip".into());
+    let renderer = iced::Renderer::new(
+        Font::with_name(crate::windows_compat::font_family()),
+        iced::Pixels(16.0),
+    );
+    let mut tree = Tree::new(app.view().as_widget());
+    let operate = |app: &App, tree: &mut Tree, operation: &mut dyn Operation| {
+        let mut view = app.view();
+        tree.diff(view.as_widget());
+        let node = view.as_widget_mut().layout(
+            tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(1040.0, 780.0)),
+        );
+        view.as_widget_mut().operate(
+            tree,
+            iced::advanced::Layout::new(&node),
+            &renderer,
+            operation,
+        );
+    };
+    for offset in [180.0, 430.0] {
+        operate(
+            &app,
+            &mut tree,
+            &mut operation::scrollable::scroll_to::<()>(
+                Id::new("fast-pack-content"),
+                operation::scrollable::AbsoluteOffset {
+                    x: None,
+                    y: Some(offset),
+                },
+            ),
+        );
+        let mut before = ScrollPosition::default();
+        operate(&app, &mut tree, &mut before);
+        assert_eq!(before.0, Some(offset));
+        for target in [
+            ColorTarget::Glint,
+            ColorTarget::Crosshair,
+            ColorTarget::ItemOutline,
+            ColorTarget::FishingLine,
+            ColorTarget::BlockOutline,
+        ] {
+            let _ = app.update(Message::PickColor(target));
+            let mut opened = ScrollPosition::default();
+            operate(&app, &mut tree, &mut opened);
+            assert_eq!(opened.0, before.0, "opening {target:?}");
+            let _ = app.update(Message::CloseGlintPicker);
+            let mut closed = ScrollPosition::default();
+            operate(&app, &mut tree, &mut closed);
+            assert_eq!(closed.0, before.0, "closing {target:?}");
+        }
+    }
+}
+
+#[cfg(not(feature = "gpu-renderer"))]
+#[test]
 fn repeated_partial_redraw_does_not_darken_panels_in_either_theme() {
     use iced::advanced::Renderer as _;
     use iced::advanced::{layout, renderer, widget::Tree};
