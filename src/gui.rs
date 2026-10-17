@@ -291,6 +291,7 @@ struct App {
     glint_picker_motion: Tween,
     glint_color_motion: [Tween; 3],
     glint_preview_started: Instant,
+    rainbow_preview_started: Instant,
     extra: Vec<(String, String)>,
     report: Option<String>,
     result_note: Option<String>,
@@ -494,6 +495,7 @@ impl App {
             glint_color_motion: active_glint_color
                 .map(|channel| Tween::new(channel as f32 / 255.0, 180)),
             glint_preview_started: now,
+            rainbow_preview_started: now,
             extra: Vec::new(),
             report: None,
             result_note: None,
@@ -719,6 +721,7 @@ impl App {
                 .iter()
                 .any(|entry| entry.phase == Phase::Identifying)
             || self.animation_active()
+            || self.rainbow_preview_active()
             || self.phase == Phase::Identifying
             || self.busy()
             || self.mapping_pending
@@ -3221,14 +3224,7 @@ impl App {
             .color(if valid { c.muted } else { c.danger }),
         );
         let color = if self.rainbow_for(target) {
-            let rgb = fast_pack::compat::rainbow::color(if self.reduced {
-                0.0
-            } else {
-                self.now
-                    .saturating_duration_since(self.glint_preview_started)
-                    .as_secs_f32()
-                    / 6.0
-            });
+            let rgb = self.rainbow_preview_color();
             Color::from_rgb8(rgb[0], rgb[1], rgb[2])
         } else {
             Color {

@@ -37,6 +37,67 @@ impl App {
             ColorTarget::BlockOutline => self.rainbow.block_outline,
         }
     }
+    fn palette_rainbow(&self, target: ColorTarget) -> bool {
+        self.rainbow_for(target)
+            && match target {
+                ColorTarget::Glint => self.custom_glint,
+                ColorTarget::Crosshair => self.custom_crosshair,
+                ColorTarget::ItemOutline => self.item_editor.outline_palette_visible(),
+                ColorTarget::FishingLine => self.fishing_line.is_some(),
+                ColorTarget::BlockOutline => self.block_outline.is_some(),
+            }
+    }
+    pub(super) fn rainbow_preview_color(&self) -> [u8; 3] {
+        let phase = if self.reduced {
+            0.0
+        } else {
+            self.now
+                .saturating_duration_since(self.rainbow_preview_started)
+                .as_secs_f32()
+                / 6.0
+        };
+        fast_pack::compat::rainbow::color(phase)
+    }
+    fn palette_color(&self, target: ColorTarget) -> [u8; 3] {
+        if self.palette_rainbow(target) {
+            self.rainbow_preview_color()
+        } else {
+            self.color_for(target)
+        }
+    }
+    fn palette_caption(&self, target: ColorTarget) -> Option<String> {
+        if self.palette_rainbow(target) {
+            Some("动态彩色".into())
+        } else if target == ColorTarget::Glint {
+            Some(if self.custom_glint {
+                fast_pack::compat::glint::color_hex(self.glint_color)
+            } else {
+                "原版紫色".into()
+            })
+        } else {
+            None
+        }
+    }
+    pub(super) fn rainbow_preview_active(&self) -> bool {
+        if self.reduced || self.learn_more {
+            return false;
+        }
+        if self.glint_picker {
+            return self.rainbow_for(self.color_target);
+        }
+        if self.phase == super::Phase::Done || self.advanced_motion.value(self.now) < 0.001 {
+            return false;
+        }
+        [
+            ColorTarget::Glint,
+            ColorTarget::Crosshair,
+            ColorTarget::ItemOutline,
+            ColorTarget::FishingLine,
+            ColorTarget::BlockOutline,
+        ]
+        .into_iter()
+        .any(|target| self.palette_rainbow(target))
+    }
     pub(super) fn set_rainbow(&mut self, enabled: bool) {
         match self.color_target {
             ColorTarget::Glint => {
@@ -145,7 +206,7 @@ impl App {
         target: ColorTarget,
         enabled: bool,
     ) -> Element<'_, Message> {
-        let color = self.color_for(target);
+        let color = self.palette_color(target);
         let c = self.colors();
         let swatch = container(space().width(16).height(16)).style(move |_| {
             iced::widget::container::Style {
@@ -159,14 +220,8 @@ impl App {
             }
         });
         let mut control = row![swatch].spacing(10).align_y(Alignment::Center);
-        if target == ColorTarget::Glint {
-            control = control.push(self.label(if self.custom_glint && self.rainbow.glint {
-                "动态彩色".into()
-            } else if self.custom_glint {
-                fast_pack::compat::glint::color_hex(self.glint_color)
-            } else {
-                "原版紫色".into()
-            }));
+        if let Some(caption) = self.palette_caption(target) {
+            control = control.push(self.label(caption));
         }
         control
             .push(self.action(

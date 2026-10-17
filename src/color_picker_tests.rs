@@ -52,6 +52,91 @@ fn rainbow_switches_are_independent_and_fixed_colors_survive() {
     assert_eq!(old.rainbow, fast_pack::compat::rainbow::Settings::default());
 }
 
+#[test]
+fn all_dynamic_palette_indicators_animate_without_changing_saved_colors() {
+    let mut app = app();
+    let _ = app.update(Message::Items(super::super::item_editor::Event::Open));
+    let _ = app.update(Message::Items(super::super::item_editor::Event::Catalog(
+        "1.20.1".into(),
+        fast_pack::compat::custom_items::items("1.20.1"),
+    )));
+    for target in [
+        ColorTarget::Glint,
+        ColorTarget::Crosshair,
+        ColorTarget::ItemOutline,
+        ColorTarget::FishingLine,
+        ColorTarget::BlockOutline,
+    ] {
+        app.open_color_picker(target);
+        app.set_picker_color([11, 22, 33]);
+        app.set_rainbow(true);
+        app.close_glint_picker();
+        assert_eq!(app.palette_caption(target).as_deref(), Some("动态彩色"));
+        let start = app.rainbow_preview_started;
+        app.now = start + std::time::Duration::from_secs(1);
+        let first = app.palette_color(target);
+        app.now = start + std::time::Duration::from_secs(3);
+        assert_ne!(first, app.palette_color(target), "{target:?} stayed static");
+        assert_eq!(app.palette_color(target), app.rainbow_preview_color());
+        // Opening another palette must not reset the shared rainbow phase.
+        let before = app.palette_color(target);
+        app.open_color_picker(target);
+        assert_eq!(app.palette_color(target), before);
+        app.now = start + std::time::Duration::from_secs(7);
+        assert_eq!(app.palette_color(target), first);
+        assert_eq!(app.color_for(target), [11, 22, 33]);
+        app.set_rainbow(false);
+        app.close_glint_picker();
+        assert_ne!(app.palette_caption(target).as_deref(), Some("动态彩色"));
+        assert_eq!(app.palette_color(target), [11, 22, 33]);
+    }
+}
+
+#[test]
+fn dynamic_swatches_keep_refreshing_after_picker_closes_and_stop_when_hidden() {
+    use std::time::Duration;
+    let subscriptions =
+        |app: &App| iced::advanced::subscription::into_recipes(app.subscription()).len();
+    let mut app = app();
+    app.startup_frame = false;
+    app.open_color_picker(ColorTarget::FishingLine);
+    app.set_rainbow(true);
+    app.close_glint_picker();
+    app.now += Duration::from_secs(1);
+    let idle = subscriptions(&app);
+    assert!(!app.rainbow_preview_active());
+    app.advanced = true;
+    app.advanced_motion.set(1.0, app.now, true);
+    assert!(app.rainbow_preview_active());
+    assert!(subscriptions(&app) > idle);
+    assert!(
+        !app.animation_active(),
+        "swatches only need the shared 25 Hz tick"
+    );
+    app.learn_more = true;
+    assert_eq!(subscriptions(&app), idle);
+    app.learn_more = false;
+    app.reduced = true;
+    let fixed = app.palette_color(ColorTarget::FishingLine);
+    app.now += Duration::from_secs(1);
+    assert_eq!(fixed, app.palette_color(ColorTarget::FishingLine));
+    assert_eq!(subscriptions(&app), idle);
+    app.reduced = false;
+    app.fishing_line = None;
+    assert_eq!(subscriptions(&app), idle);
+    app.custom_glint = false;
+    app.rainbow.glint = true;
+    assert_eq!(
+        app.palette_caption(ColorTarget::Glint).as_deref(),
+        Some("原版紫色")
+    );
+    assert_eq!(
+        app.palette_color(ColorTarget::Glint),
+        fast_pack::compat::glint::VANILLA_COLOR
+    );
+    assert_eq!(subscriptions(&app), idle);
+}
+
 fn app() -> App {
     let (mut app, _) = App::boot();
     app.target = "1.20.1".into();

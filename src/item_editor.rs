@@ -308,6 +308,9 @@ impl Editor {
     pub fn outline_rainbow(&self) -> bool {
         self.rainbow
     }
+    pub fn outline_palette_visible(&self) -> bool {
+        self.open && self.selected.is_some() && self.border
+    }
     pub fn set_outline_rainbow(&mut self, enabled: bool) {
         self.rainbow = enabled;
         self.border = true;
