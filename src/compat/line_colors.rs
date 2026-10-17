@@ -61,6 +61,13 @@ impl Widths {
     }
 }
 
+/// Explicit current selections; absent selections preserve generated source-pack colors.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ColorSelection {
+    pub fishing: bool,
+    pub outline: bool,
+}
+
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct Settings {
@@ -260,6 +267,30 @@ pub fn apply_custom(
     widths: Widths,
     report: &mut AssetReport,
 ) -> Result<()> {
+    apply_selected(
+        root,
+        version,
+        fishing,
+        outline,
+        fishing_rainbow,
+        outline_rainbow,
+        widths,
+        None,
+        report,
+    )
+}
+
+pub fn apply_selected(
+    root: &Path,
+    version: &str,
+    fishing: Option<[u8; 3]>,
+    outline: Option<[u8; 3]>,
+    fishing_rainbow: bool,
+    outline_rainbow: bool,
+    widths: Widths,
+    selection: Option<ColorSelection>,
+    report: &mut AssetReport,
+) -> Result<()> {
     widths.validate()?;
     let cache = root.join("fastpack/line-colors.json");
     let original: Settings = if cache.pack_is_file() {
@@ -285,12 +316,34 @@ pub fn apply_custom(
             outline: widths.outline.or(original.widths.sanitized().outline),
         },
     };
-    let settings = Settings {
+    let mut settings = Settings {
         fishing: settings.fishing.or(fishing_rainbow.then_some([0; 3])),
         outline: settings.outline.or(outline_rainbow.then_some([0; 3])),
         ..settings
     };
-    if settings.fishing.is_none() && settings.outline.is_none() && !settings.widths.active() {
+    if let Some(selection) = selection {
+        if !selection.fishing {
+            settings.fishing = None;
+            settings.fishing_rainbow = false;
+        } else {
+            settings.fishing_rainbow = fishing_rainbow;
+        }
+        if !selection.outline {
+            settings.outline = None;
+            settings.outline_rainbow = false;
+        } else {
+            settings.outline_rainbow = outline_rainbow;
+        }
+    }
+    // Rebuild the generated shader even when the last color was unchecked.
+    // Otherwise the old helper remains active despite clearing the cached flags.
+    let clearing_colors =
+        selection.is_some() && (original.fishing.is_some() || original.outline.is_some());
+    if settings.fishing.is_none()
+        && settings.outline.is_none()
+        && !settings.widths.active()
+        && !clearing_colors
+    {
         return Ok(());
     }
     if crate::pack_format_of(version)? < 7 {
@@ -411,6 +464,138 @@ pub fn apply_custom(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn current_color_selection_clears_cached_other_channel_without_losing_widths() {
+        for (version, _) in crate::tables().pack_formats.iter().filter(|(_, f)| *f >= 7) {
+            for fishing_only in [true, false] {
+                let temp = tempfile::tempdir().unwrap();
+                let root = temp.path();
+                let mut report = AssetReport::default();
+                let widths = Widths {
+                    fishing: Some(2.0),
+                    outline: Some(3.0),
+                };
+                apply_custom(
+                    root,
+                    version,
+                    Some([12, 34, 56]),
+                    Some([90, 80, 70]),
+                    true,
+                    true,
+                    widths,
+                    &mut report,
+                )
+                .unwrap();
+                apply_selected(
+                    root,
+                    version,
+                    fishing_only.then_some([12, 34, 56]),
+                    (!fishing_only).then_some([90, 80, 70]),
+                    fishing_only,
+                    !fishing_only,
+                    Widths::default(),
+                    Some(ColorSelection {
+                        fishing: fishing_only,
+                        outline: !fishing_only,
+                    }),
+                    &mut report,
+                )
+                .unwrap();
+                let saved: Settings = serde_json::from_slice(
+                    &std::fs::read(root.join("fastpack/line-colors.json")).unwrap(),
+                )
+                .unwrap();
+                assert_eq!(saved.fishing.is_some(), fishing_only, "{version}");
+                assert_eq!(saved.outline.is_some(), !fishing_only, "{version}");
+                assert_eq!(saved.fishing_rainbow, fishing_only);
+                assert_eq!(saved.outline_rainbow, !fishing_only);
+                assert_eq!(saved.widths, widths);
+                let shader = std::fs::read_to_string(
+                    root.join("assets/minecraft/shaders/core/rendertype_lines.vsh"),
+                )
+                .unwrap();
+                let color = shader.split("float fastpack_line_width").next().unwrap();
+                assert_eq!(color.contains("original.a > 0.99 ?"), fishing_only);
+                assert_eq!(color.contains("original.a < 0.45 ?"), !fishing_only);
+                assert_eq!(color.matches(super::super::rainbow::GLSL).count(), 1);
+                apply_selected(
+                    root,
+                    version,
+                    None,
+                    None,
+                    false,
+                    false,
+                    Widths::default(),
+                    Some(ColorSelection::default()),
+                    &mut report,
+                )
+                .unwrap();
+                let shader = std::fs::read_to_string(
+                    root.join("assets/minecraft/shaders/core/rendertype_lines.vsh"),
+                )
+                .unwrap();
+                assert!(!shader.contains(super::super::rainbow::GLSL));
+                assert!(shader.contains("return 2.000;") && shader.contains("return 3.000;"));
+            }
+        }
+    }
+
+    #[test]
+    fn unchecking_the_last_color_rebuilds_identity_even_without_widths() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let native = &CATALOG.profiles[&CATALOG.versions["1.20.1"]].vertex;
+        write(
+            root,
+            "vsh",
+            native
+                .replace("VIEW_SHRINK = 1.0", "VIEW_SHRINK = 0.99")
+                .as_bytes(),
+        )
+        .unwrap();
+        write(root, "fsh", b"authored fragment").unwrap();
+        let mut report = AssetReport::default();
+        apply_custom(
+            root,
+            "1.20.1",
+            None,
+            Some([1, 2, 3]),
+            false,
+            true,
+            Widths::default(),
+            &mut report,
+        )
+        .unwrap();
+        apply_selected(
+            root,
+            "1.20.1",
+            None,
+            None,
+            false,
+            false,
+            Widths::default(),
+            Some(ColorSelection::default()),
+            &mut report,
+        )
+        .unwrap();
+        let shader = std::fs::read_to_string(
+            root.join("assets/minecraft/shaders/core/rendertype_lines.vsh"),
+        )
+        .unwrap();
+        assert!(!shader.contains(super::super::rainbow::GLSL));
+        assert!(!shader.contains("original.a > 0.35"));
+        assert!(shader.contains("VIEW_SHRINK = 0.99"));
+        assert_eq!(
+            std::fs::read(root.join("assets/minecraft/shaders/core/rendertype_lines.fsh")).unwrap(),
+            b"authored fragment"
+        );
+        let saved: Settings =
+            serde_json::from_slice(&std::fs::read(root.join("fastpack/line-colors.json")).unwrap())
+                .unwrap();
+        assert!(saved.fishing.is_none() && saved.outline.is_none());
+        assert!(!saved.fishing_rainbow && !saved.outline_rainbow);
+    }
+
     #[test]
     fn widths_work_independently_in_every_native_shader_and_do_not_accumulate() {
         for (version, _) in crate::tables().pack_formats.iter().filter(|(_, f)| *f >= 7) {

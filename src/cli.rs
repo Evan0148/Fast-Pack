@@ -183,6 +183,14 @@ pub fn run() -> Result<()> {
         convert_lang: !args.no_lang,
         fishing_line_color: args.fishing_line_color,
         block_outline_color: args.block_outline_color,
+        line_color_selection: (args.fishing_line_color.is_some()
+            || args.block_outline_color.is_some()
+            || args.rainbow_fishing_line
+            || args.rainbow_block_outline)
+            .then_some(crate::compat::line_colors::ColorSelection {
+                fishing: args.fishing_line_color.is_some() || args.rainbow_fishing_line,
+                outline: args.block_outline_color.is_some() || args.rainbow_block_outline,
+            }),
         line_widths: crate::compat::line_colors::Widths {
             fishing: args.fishing_line_width,
             outline: args.block_outline_width,

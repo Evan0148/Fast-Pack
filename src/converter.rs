@@ -39,6 +39,7 @@ pub struct ConversionOptions {
     pub custom_items: Vec<crate::compat::custom_items::Rule>,
     pub fishing_line_color: Option<[u8; 3]>,
     pub block_outline_color: Option<[u8; 3]>,
+    pub line_color_selection: Option<crate::compat::line_colors::ColorSelection>,
     pub line_widths: crate::compat::line_colors::Widths,
     pub rainbow: crate::compat::rainbow::Settings,
 }
@@ -65,6 +66,7 @@ impl Default for ConversionOptions {
             custom_items: Vec::new(),
             fishing_line_color: None,
             block_outline_color: None,
+            line_color_selection: None,
             line_widths: Default::default(),
             rainbow: Default::default(),
         }
@@ -1391,7 +1393,7 @@ pub fn convert_pack(
         )?;
     }
     report.compatibility.warnings.extend(sky_notes);
-    crate::compat::line_colors::apply_custom(
+    crate::compat::line_colors::apply_selected(
         &root,
         options
             .target_version
@@ -1402,6 +1404,7 @@ pub fn convert_pack(
         options.rainbow.fishing_line,
         options.rainbow.block_outline,
         options.line_widths,
+        options.line_color_selection,
         &mut report.assets,
     )?;
     if !options.custom_items.is_empty() {

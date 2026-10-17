@@ -1,6 +1,25 @@
 use super::*;
 
 #[test]
+fn fishing_rainbow_does_not_enable_outline_and_unchecking_outline_is_authoritative() {
+    let mut app = app();
+    app.rainbow.block_outline = true; // previously saved palette choice, currently unchecked
+    app.block_outline = None;
+    app.open_color_picker(ColorTarget::FishingLine);
+    let _ = app.update(Message::RainbowColor(true));
+    assert!(app.fishing_line.is_some() && app.rainbow.fishing_line);
+    assert!(app.block_outline.is_none());
+    assert!(app.palette_caption(ColorTarget::BlockOutline).is_none());
+    assert!(!app.palette_rainbow(ColorTarget::BlockOutline));
+    app.open_color_picker(ColorTarget::BlockOutline);
+    let _ = app.update(Message::RainbowColor(true));
+    assert!(app.block_outline.is_some());
+    let _ = app.update(Message::BlockOutline(false));
+    assert!(!app.palette_rainbow(ColorTarget::BlockOutline));
+    assert!(app.fishing_line.is_some() && app.rainbow.fishing_line);
+}
+
+#[test]
 fn rainbow_switches_are_independent_and_fixed_colors_survive() {
     let mut app = app();
     let _ = app.update(Message::Items(super::super::item_editor::Event::Open));

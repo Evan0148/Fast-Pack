@@ -253,7 +253,7 @@ pub fn build(
         crate::compat::glint::migrate(&root, format, format, options.glint_color, &mut assets)?;
     }
     progress("制作线条外观", 28);
-    crate::compat::line_colors::apply_custom(
+    crate::compat::line_colors::apply_selected(
         &root,
         &options.version,
         options.fishing_line_color,
@@ -261,6 +261,10 @@ pub fn build(
         options.rainbow.fishing_line,
         options.rainbow.block_outline,
         options.line_widths,
+        Some(crate::compat::line_colors::ColorSelection {
+            fishing: options.fishing_line_color.is_some() || options.rainbow.fishing_line,
+            outline: options.block_outline_color.is_some() || options.rainbow.block_outline,
+        }),
         &mut assets,
     )?;
     progress("制作物品设置", 45);

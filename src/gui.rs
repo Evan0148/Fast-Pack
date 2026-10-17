@@ -1605,6 +1605,12 @@ impl App {
             custom_items: self.item_editor.applied(&self.target),
             fishing_line_color: (target_format >= 7).then_some(self.fishing_line).flatten(),
             block_outline_color: (target_format >= 7).then_some(self.block_outline).flatten(),
+            line_color_selection: (target_format >= 7).then_some(
+                fast_pack::compat::line_colors::ColorSelection {
+                    fishing: self.fishing_line.is_some(),
+                    outline: self.block_outline.is_some(),
+                },
+            ),
             line_widths: if target_format >= 7 {
                 self.line_widths
             } else {
