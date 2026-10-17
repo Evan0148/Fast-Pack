@@ -4,6 +4,7 @@ pub mod atlas;
 pub(crate) mod attack_indicator;
 mod beds;
 mod cit;
+mod cit_conditions;
 mod cit_items;
 mod cit_rules;
 mod connected_textures;
@@ -25,6 +26,7 @@ pub mod line_colors;
 mod model_integrity;
 mod modern_gui;
 mod modern_items;
+pub(crate) mod native_cit;
 mod netherite;
 mod players;
 pub mod properties;
@@ -46,16 +48,23 @@ pub(crate) fn migrate_versioned_assets(
     heypixel_compat: bool,
 ) -> anyhow::Result<()> {
     beds::migrate(root, target, version, report)?;
-    let cit_rules = cit::migrate_from(root, Some(source), target, Some(version), report)?;
+    native_cit::migrate(root, target, version, report)?;
+    let mut cit_rules = cit::migrate_from(root, Some(source), target, Some(version), report)?;
+    if target < 46 {
+        let generated = native_cit::generated_rules(root)?;
+        cit_rules.retain(|path, _| !generated.contains(path));
+    }
     if version == "1.20.1" && !heypixel_compat {
         via_items::disable(root, report)?;
     } else {
         via_items::migrate(root, target, version, report)?;
         via_sounds::migrate(root, target, version, report)?;
     }
+    native_cit::preserve_restored_definitions(root, target)?;
     cit_items::migrate(root, target, version, &cit_rules, report)?;
     connected_textures::migrate(root, target, report)?;
-    model_integrity::migrate(root, target, report)
+    model_integrity::migrate(root, target, report)?;
+    native_cit::finalize(root)
 }
 
 use crate::packfs::WalkDir;

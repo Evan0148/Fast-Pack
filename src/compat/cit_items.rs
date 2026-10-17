@@ -12,8 +12,10 @@ const PREFIX: &str = "item/fastpack_cit/";
 
 #[path = "cit_legacy.rs"]
 mod legacy;
+#[path = "cit_native_rules.rs"]
+mod native;
 
-fn id(value: &str) -> Result<(String, String)> {
+pub(super) fn id(value: &str) -> Result<(String, String)> {
     let (namespace, name) = value.split_once(':').unwrap_or(("minecraft", value));
     ensure!(
         !namespace.is_empty()
@@ -380,7 +382,7 @@ struct Rule {
     unsupported: Option<String>,
 }
 
-const CMD_KEYS: &[&str] = &[
+pub(super) const CMD_KEYS: &[&str] = &[
     "nbt.CustomModelData",
     "components.custom_model_data",
     "components.minecraft:custom_model_data",
@@ -481,7 +483,7 @@ fn upper(value: i32) -> f64 {
     })
 }
 
-fn dispatch(base: &Value, cases: &BTreeMap<i32, Value>) -> Value {
+pub(super) fn dispatch(base: &Value, cases: &BTreeMap<i32, Value>) -> Value {
     let mut entries: BTreeMap<u32, (f64, Value)> = BTreeMap::new();
     for (&number, model) in cases {
         let order = |value: f32| {
@@ -511,6 +513,9 @@ pub(super) fn migrate(
 ) -> Result<()> {
     if target < 46 {
         return legacy::migrate(root, target, version, paths, report);
+    }
+    if target >= 55 && native::needed(paths)? {
+        return native::migrate(root, target, version, paths, report);
     }
     let cache = root.join("fastpack/cit-items.json");
     if target < 46 || paths.is_empty() && !cache.pack_is_file() {

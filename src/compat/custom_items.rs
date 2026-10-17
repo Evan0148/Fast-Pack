@@ -216,7 +216,44 @@ fn read_model(root: &Path, format: u32, reference: &str) -> Result<Value> {
     if path.pack_is_file() {
         return Ok(serde_json::from_slice(&fs::read(path)?)?);
     }
-    reference_model(format, reference).context("未找到物品模型参考")
+    reference_model(format, reference).with_context(|| format!("未找到物品模型参考 {reference}"))
+}
+
+pub(super) fn cit_model(root: &Path, format: u32, reference: &str) -> Result<Value> {
+    let mut model = read_model(root, format, reference)?;
+    model["textures"] = inherited(root, format, &model, "textures", &mut BTreeSet::new());
+    model["display"] = inherited(root, format, &model, "display", &mut BTreeSet::new());
+    let mut current = model.clone();
+    let mut seen = BTreeSet::new();
+    loop {
+        if current.get("elements").is_some() {
+            model["elements"] = current["elements"].clone();
+            break;
+        }
+        let Some(parent) = current["parent"].as_str() else {
+            break;
+        };
+        if matches!(
+            parent,
+            "item/generated"
+                | "minecraft:item/generated"
+                | "builtin/generated"
+                | "minecraft:builtin/generated"
+                | "item/handheld"
+                | "minecraft:item/handheld"
+                | "item/handheld_rod"
+                | "minecraft:item/handheld_rod"
+        ) {
+            model["parent"] = json!(parent);
+            break;
+        }
+        ensure!(
+            seen.len() < 48 && seen.insert(parent.to_string()),
+            "CIT 模型父链循环或过深"
+        );
+        current = read_model(root, format, parent)?;
+    }
+    Ok(model)
 }
 
 fn inherited(

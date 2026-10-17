@@ -68,6 +68,134 @@ fn cit(root: &Path, folder: &str, file: &str, body: &str) {
 }
 
 #[test]
+fn native_component_bridge_preserves_bow_states_and_rebuilds_without_nesting() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    cit(
+        root,
+        "optifine",
+        "future_pack/bow",
+        "items=bow\nenchantments=power\nenchantmentLevels=3-5\ntexture=./idle\ntexture.bow_pulling_0=./pull0\ntexture.bow_pulling_1=./pull1\ntexture.bow_pulling_2=./pull2\n",
+    );
+    for (index, name) in ["idle", "pull0", "pull1", "pull2"].into_iter().enumerate() {
+        RgbaImage::from_pixel(16, 16, Rgba([index as u8 * 50, 45, 67, 180]))
+            .save(root.join(format!(
+                "assets/minecraft/optifine/cit/future_pack/{name}.png"
+            )))
+            .unwrap();
+    }
+    let report = run(root, 69, "1.21.10");
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let path = "assets/minecraft/items/bow.json";
+    let first = json_file(root, path);
+    assert_eq!(first["model"]["predicate"], "minecraft:enchantments");
+    assert_eq!(
+        first["model"]["value"][0]["levels"],
+        json!({"min":3,"max":5})
+    );
+    fn leaves(node: &Value, refs: &mut BTreeSet<String>) {
+        if node["type"] == "minecraft:model" {
+            refs.insert(node["model"].as_str().unwrap().into());
+        }
+        match node {
+            Value::Object(map) => {
+                for child in map.values() {
+                    leaves(child, refs);
+                }
+            }
+            Value::Array(list) => {
+                for child in list {
+                    leaves(child, refs);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut refs = BTreeSet::new();
+    leaves(&first["model"]["on_true"], &mut refs);
+    assert_eq!(refs.len(), 4);
+    let textures: BTreeSet<_> = refs
+        .iter()
+        .map(|reference| {
+            let model: Value =
+                serde_json::from_slice(&disk::read(model_path(root, reference)).unwrap()).unwrap();
+            assert!(color_path(root, &model).is_file());
+            image::open(color_path(root, &model))
+                .unwrap()
+                .to_rgba8()
+                .get_pixel(5, 5)
+                .0[0]
+        })
+        .collect();
+    assert_eq!(textures, [0, 50, 100, 150].into_iter().collect());
+    run(root, 69, "1.21.10");
+    assert_eq!(json_file(root, path), first);
+}
+
+#[test]
+fn unknown_or_broken_priority_rules_cannot_expose_a_lower_rule_in_their_place() {
+    for unknown in [true, false] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        authored_fallback(root);
+        cit(
+            root,
+            "optifine",
+            "low",
+            "items=diamond_sword\ntexture=./low\nweight=0\n",
+        );
+        cit(
+            root,
+            "optifine",
+            "high",
+            if unknown {
+                "items=diamond_sword\ntexture=./high\nenchantmentLevels=8\nweight=10\n"
+            } else {
+                "items=diamond_sword\ntexture=./missing\nenchantments=sharpness\nenchantmentLevels=2\nweight=10\n"
+            },
+        );
+        let report = run(root, 69, "1.21.10");
+        assert!(!report.warnings.is_empty());
+        let definition = json_file(root, "assets/minecraft/items/diamond_sword.json");
+        if unknown {
+            assert_eq!(definition["model"]["model"], "demo:item/base");
+        } else {
+            assert_eq!(definition["model"]["on_true"]["model"], "demo:item/base");
+            assert_eq!(definition["model"]["predicate"], "minecraft:enchantments");
+            assert_ne!(definition["model"]["on_false"]["model"], "demo:item/base");
+        }
+        assert!(
+            root.join("assets/minecraft/optifine/cit/high.properties")
+                .is_file()
+        );
+    }
+}
+
+#[test]
+fn component_predicates_are_only_emitted_after_the_native_api_was_introduced() {
+    for (format, version) in [(46, "1.21.4"), (55, "1.21.5"), (69, "1.21.10")] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        cit(
+            root,
+            "optifine",
+            "test",
+            "items=diamond_sword\nenchantments=sharpness\nenchantmentLevels=3\ntexture=./test\n",
+        );
+        run(root, format, version);
+        let path = root.join("assets/minecraft/items/diamond_sword.json");
+        let definition: Value = disk::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or(Value::Null);
+        assert_eq!(
+            definition.to_string().contains("minecraft:component"),
+            format >= 55
+        );
+    }
+}
+
+#[test]
 fn upstream_cmd_case_uses_numeric_exact_dispatch_and_preserves_default_tree() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();

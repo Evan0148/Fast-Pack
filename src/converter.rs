@@ -1298,6 +1298,8 @@ pub fn convert_pack(
     progress("扫描文件", 10);
     report.files_total = walk_files(&root)?.len();
     let model_json_notes = crate::model_json::normalize(&root)?;
+    let native_cit_notes =
+        crate::compat::native_cit::prepare(&root, src_format, options.tgt_format)?;
     let sky_notes = crate::compat::sky::prepare(&root)?;
     if src_format < 3 && 3 <= options.tgt_format {
         progress("小写规范化", 15);
@@ -1349,6 +1351,7 @@ pub fn convert_pack(
     )?;
     report.assets.converted.extend(default_notes);
     report.assets.converted.extend(model_json_notes);
+    report.assets.converted.extend(native_cit_notes);
     crate::compat::migrate_versioned_assets(
         &root,
         src_format,
