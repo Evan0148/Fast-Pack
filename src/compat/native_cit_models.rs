@@ -146,7 +146,8 @@ fn texture(
 fn clear(outputs: &mut BTreeMap<String, Vec<u8>>) -> Result<&'static str> {
     const PATH: &str = "assets/minecraft/textures/item/fastpack_native_cit/transparent.png";
     if !outputs.contains_key(PATH) {
-        let image = image::RgbaImage::from_pixel(1, 1, image::Rgba([0; 4]));
+        // One 1x1 sprite reduces the mip level of the entire block/item atlas.
+        let image = image::RgbaImage::from_pixel(16, 16, image::Rgba([0; 4]));
         let mut bytes = std::io::Cursor::new(Vec::new());
         image.write_to(&mut bytes, image::ImageFormat::Png)?;
         outputs.insert(PATH.into(), bytes.into_inner());

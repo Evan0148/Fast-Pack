@@ -8,13 +8,15 @@ fn json_file(root: &Path, path: &str, value: &Value) {
 }
 fn definition() -> Value {
     json!({"hand_animation_on_swap":false,"model":{
-        "type":"minecraft:select","property":"minecraft:display_context","cases":[{"when":"gui","model":{
             "type":"minecraft:composite","models":[{"type":"minecraft:model","model":"minecraft:item/diamond_sword"},{
                 "type":"minecraft:condition","property":"minecraft:component","predicate":"minecraft:enchantments","value":[{"enchantments":"minecraft:sharpness","levels":{"min":3}}],
                 "on_true":{"type":"minecraft:model","model":"another_namespace:item/number"},"on_false":{"type":"minecraft:empty"}
             }]
-        }}],"fallback":{"type":"minecraft:model","model":"minecraft:item/diamond_sword"}
     }})
+}
+
+fn scoped_definition() -> Value {
+    json!({"model":{"type":"minecraft:select","property":"minecraft:display_context","cases":[{"when":"gui","model":definition()["model"]}],"fallback":{"type":"minecraft:model","model":"minecraft:item/diamond_sword"}}})
 }
 fn fixture(root: &Path) -> Value {
     let definition = definition();
@@ -273,4 +275,161 @@ fn future_or_non_equivalent_predicate_fields_are_preserved_instead_of_ignored() 
             .is_err()
         );
     }
+}
+
+#[test]
+fn gui_only_overlays_never_enter_legacy_hand_ground_or_frame_models() {
+    let work = tempfile::tempdir().unwrap();
+    let root = work.path();
+    fixture(root);
+    let original = scoped_definition();
+    json_file(root, "assets/minecraft/items/diamond_sword.json", &original);
+    let report = down(root);
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|text| text.contains("背包专用数字或标记未应用"))
+    );
+    assert!(generated_rules(root).unwrap().is_empty());
+    assert!(tree::compile(&original["model"]).is_err());
+    let (node, removed) = tree::legacy_contexts(&original["model"]).unwrap();
+    assert_eq!(removed, 1);
+    assert_eq!(node["model"], "minecraft:item/diamond_sword");
+    prepare(root, 15, 69).unwrap();
+    assert_eq!(
+        crate::model_json::parse(
+            &disk::read(root.join("assets/minecraft/items/diamond_sword.json")).unwrap()
+        )
+        .unwrap(),
+        original
+    );
+}
+
+#[test]
+fn old_generated_gui_models_are_repaired_but_author_edits_are_preserved() {
+    for edited in [false, true] {
+        let work = tempfile::tempdir().unwrap();
+        let root = work.path();
+        let original = fixture(root);
+        down(root);
+        let path = generated_rules(root).unwrap().pop_first().unwrap();
+        let mut state: State =
+            serde_json::from_slice(&disk::read(root.join(CACHE)).unwrap()).unwrap();
+        state.generator = 0;
+        state.definitions.insert(
+            "assets/minecraft/items/diamond_sword.json".into(),
+            scoped_definition(),
+        );
+        disk::write(root.join(CACHE), serde_json::to_vec(&state).unwrap()).unwrap();
+        if edited {
+            disk::write(&path, b"items=diamond_sword\ntexture=mine\n").unwrap();
+        }
+        let mut report = AssetReport::default();
+        migrate(root, 15, "1.20.1", &mut report).unwrap();
+        if edited {
+            assert!(path.exists());
+            assert!(
+                report
+                    .warnings
+                    .iter()
+                    .any(|text| text.contains("保留用户改动"))
+            );
+        } else {
+            assert!(generated_rules(root).unwrap().is_empty());
+            assert!(!path.exists());
+        }
+        assert_ne!(original, scoped_definition());
+    }
+}
+
+#[test]
+fn instant_potion_custom_effects_match_exact_type_and_amplifier_without_color_guesses() {
+    let base = properties::parse(b"items=minecraft:splash_potion\nnbt.Potion=minecraft:healing\nmodel=minecraft:item/healing\nweight=99979\n").unwrap();
+    let variants = potions::variants(&base, 15, "minecraft:splash_potion");
+    assert_eq!(variants.len(), 1);
+    let variant = &variants[0].1;
+    assert_eq!(variant["nbt.CustomPotionEffects.count"], "1");
+    assert_eq!(variant["nbt.CustomPotionEffects.0.Id"], "6");
+    assert_eq!(variant["nbt.CustomPotionEffects.0.Amplifier"], "0");
+    assert_eq!(variant["weight"], "199979");
+    assert!(!variant.contains_key("nbt.display.Name"));
+    assert!(!variant.contains_key("nbt.CustomPotionColor"));
+    let mut strong = base.clone();
+    strong.insert("nbt.Potion".into(), "minecraft:strong_healing".into());
+    assert_eq!(
+        potions::variants(&strong, 15, "minecraft:splash_potion")[0].1["nbt.CustomPotionEffects.0.Amplifier"],
+        "1"
+    );
+    let mut other = base.clone();
+    other.insert("nbt.Potion".into(), "minecraft:swiftness".into());
+    assert!(potions::variants(&other, 15, "minecraft:splash_potion").is_empty());
+    assert!(potions::variants(&base, 32, "minecraft:splash_potion").is_empty());
+}
+
+#[test]
+fn transparent_potion_sprites_do_not_reduce_the_shared_atlas_mip_level() {
+    let work = tempfile::tempdir().unwrap();
+    let root = work.path();
+    json_file(
+        root,
+        "assets/test/models/item/potion.json",
+        &json!({"parent":"minecraft:item/generated","textures":{"layer0":"minecraft:item/diamond_sword"}}),
+    );
+    let mut outputs = BTreeMap::new();
+    let model = models::compose(
+        root,
+        15,
+        "minecraft:potion",
+        &[json!({"type":"minecraft:model","model":"test:item/potion"})],
+        &mut outputs,
+    )
+    .unwrap();
+    assert_eq!(model["textures"]["layer1"], "minecraft:item/diamond_sword");
+    let image = image::load_from_memory(outputs.values().next().unwrap())
+        .unwrap()
+        .to_rgba8();
+    assert_eq!(image.dimensions(), (16, 16));
+    assert!(image.pixels().all(|pixel| pixel.0[3] == 0));
+}
+
+#[test]
+fn potion_type_nbt_and_component_paths_follow_the_actual_version_boundary() {
+    let body = "items=minecraft:splash_potion\nnbt.Potion=minecraft:strong_healing\n";
+    let original = properties::parse(body.as_bytes()).unwrap();
+    let mut current = original.clone();
+    super::super::cit_rules::conditions(&mut current, Some(15), 32, Some("1.20.6"));
+    assert_eq!(
+        current
+            .get("components.minecraft:potion_contents.potion")
+            .map(String::as_str),
+        Some("minecraft:strong_healing")
+    );
+    assert!(!current.contains_key("nbt.Potion"));
+    super::super::cit_rules::conditions(&mut current, Some(32), 15, Some("1.20.1"));
+    assert_eq!(current, original);
+}
+
+#[test]
+fn malformed_context_definition_does_not_abort_other_items_or_delete_old_generated_files() {
+    let work = tempfile::tempdir().unwrap();
+    let root = work.path();
+    fixture(root);
+    let mut broken = scoped_definition();
+    broken["model"].as_object_mut().unwrap().remove("fallback");
+    json_file(root, "assets/minecraft/items/iron_sword.json", &broken);
+    let report = down(root);
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|text| text.contains("缺少 fallback"))
+    );
+    let rules = generated_rules(root).unwrap();
+    assert_eq!(rules.len(), 2);
+    let mut state: State = serde_json::from_slice(&disk::read(root.join(CACHE)).unwrap()).unwrap();
+    state.generator = 0;
+    disk::write(root.join(CACHE), serde_json::to_vec(&state).unwrap()).unwrap();
+    migrate(root, 1, "1.8.9", &mut AssetReport::default()).unwrap();
+    assert!(rules.iter().all(|path| path.exists()));
 }

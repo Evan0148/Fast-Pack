@@ -11,6 +11,8 @@ use std::path::{Component, Path, PathBuf};
 
 #[path = "native_cit_models.rs"]
 mod models;
+#[path = "native_cit_potions.rs"]
+mod potions;
 #[cfg(test)]
 #[path = "native_cit_tests.rs"]
 mod tests;
@@ -19,6 +21,7 @@ mod tree;
 
 const CACHE: &str = "fastpack/native-cit.json";
 const FOLDER: &str = "assets/minecraft/optifine/cit/fastpack_native";
+const GENERATOR: u32 = 2;
 
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))[..24].into()
@@ -55,6 +58,7 @@ struct State {
     generated: BTreeMap<String, String>,
     ready: bool,
     restoring: bool,
+    generator: u32,
 }
 
 impl State {
@@ -250,12 +254,30 @@ pub(super) fn migrate(
     }
     let mut state: State = serde_json::from_slice(&fs::read(root.join(CACHE))?)?;
     state.validate()?;
-    if state.ready {
-        return Ok(());
-    }
     if target < 4 {
         report.warnings.push("原版条件模型：此旧版本没有可等价表达所有模型／组件条件的标准接口，完整原始模型树保留供再次升级".into());
         return Ok(());
+    }
+    if state.ready {
+        if state.generator >= GENERATOR {
+            return Ok(());
+        }
+        if state.generated.iter().any(|(path, expected)| {
+            fs::read(root.join(path))
+                .map(|bytes| hash(&bytes) != *expected)
+                .unwrap_or(true)
+        }) {
+            report.warnings.push("旧版条件模型修复：生成文件已被编辑或删除，保留用户改动；使用原包重新转换可应用最新修复".into());
+            return Ok(());
+        }
+        for path in state.generated.keys() {
+            if root.join(path).pack_is_file() {
+                fs::remove_file(root.join(path))?;
+            }
+        }
+        state.generated.clear();
+        state.ready = false;
+        report.converted.push("重新生成旧版条件模型，修复此前转换的背包数字层与药水匹配；用户未修改的旧生成文件已替换".into());
     }
     let catalog: BTreeSet<_> = super::custom_items::items(version)
         .iter()
@@ -274,7 +296,25 @@ pub(super) fn migrate(
             skipped += 1;
             continue;
         }
-        match tree::compile(&definition["model"]) {
+        let (legacy_tree, omitted) = match tree::legacy_contexts(&definition["model"]) {
+            Ok(value) => value,
+            Err(error) => {
+                report.warnings.push(format!(
+                    "原版条件模型 {item}：{error:#}；保留完整原定义，继续处理其他物品"
+                ));
+                continue;
+            }
+        };
+        if omitted > 0 {
+            report.warnings.push(format!("原版条件模型 {item}：目标 CIT 不支持显示场景条件，保留非场景基础外观；背包专用数字或标记未应用，避免出现在手持、掉落及展示模型上。完整定义保留供再次升级"));
+            // The ordinary model binding has already migrated this fallback.
+            // Do not emit a high-priority unconditional CIT that would mask
+            // the player's actual sword/bow pack after omitting a GUI overlay.
+            if !conditional(&legacy_tree) {
+                continue;
+            }
+        }
+        match tree::compile(&legacy_tree) {
             Ok(cases) => match emit(root, target, &item, &cases, &mut state, report) {
                 Ok(count) => total += count,
                 Err(error) => report.warnings.push(format!(
@@ -288,7 +328,7 @@ pub(super) fn migrate(
     }
     if total > 0 {
         report.converted.push(format!("原版条件模型降级：为 {version} 生成 {total} 条 OptiFine CIT 规则，处理附魔、药水、耐久与叠加图层，保留弓的拉弓状态"));
-        report.warnings.push("旧版 CIT 需要启用 OptiFine 自定义物品。新版仅在背包显示的叠加标记降级为物品图层，在手持等场景也可能显示；再次升回支持原版条件的版本时恢复原始显示范围".into());
+        report.warnings.push("旧版条件外观需要启用兼容客户端的自定义物品功能；无法表达的场景专用效果保留原数据，不扩展到手持或世界显示".into());
     }
     if skipped > 0 {
         report.warnings.push(format!(
@@ -296,6 +336,7 @@ pub(super) fn migrate(
         ));
     }
     state.ready = true;
+    state.generator = GENERATOR;
     for path in state.definitions.keys() {
         if root.join(path).pack_is_file() {
             fs::remove_file(root.join(path))?;
@@ -388,6 +429,15 @@ fn emit(
                 "weight".into(),
                 (100000usize.saturating_sub(priority)).to_string(),
             );
+            for (suffix, variant) in potions::variants(&props, target, item) {
+                pending.insert(
+                    format!(
+                        "{FOLDER}/{}-{suffix}.properties",
+                        hash(format!("{item}:{identity}").as_bytes())
+                    ),
+                    properties::write(&variant).into_bytes(),
+                );
+            }
             let name = hash(format!("{item}:{identity}").as_bytes());
             pending.insert(
                 format!("{FOLDER}/{name}.properties"),

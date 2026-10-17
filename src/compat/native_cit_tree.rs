@@ -24,6 +24,39 @@ pub(super) struct Case {
 pub(super) fn compile(node: &Value) -> Result<Vec<Case>> {
     expand(node, 0)
 }
+
+/// Standard legacy CIT cannot test display_context. Choose the authored
+/// non-GUI fallback instead of making a GUI-only overlay visible everywhere.
+pub(super) fn legacy_contexts(node: &Value) -> Result<(Value, usize)> {
+    fn walk(node: &Value, depth: usize, omitted: &mut usize) -> Result<Value> {
+        ensure!(depth < 128, "模型树嵌套超过安全深度");
+        if kind(node, "type") == "select" && kind(node, "property") == "display_context" {
+            *omitted += 1;
+            return walk(
+                node.get("fallback").context("显示场景选择缺少 fallback")?,
+                depth + 1,
+                omitted,
+            );
+        }
+        Ok(match node {
+            Value::Object(map) => Value::Object(
+                map.iter()
+                    .map(|(key, value)| Ok((key.clone(), walk(value, depth + 1, omitted)?)))
+                    .collect::<Result<_>>()?,
+            ),
+            Value::Array(values) => Value::Array(
+                values
+                    .iter()
+                    .map(|value| walk(value, depth + 1, omitted))
+                    .collect::<Result<_>>()?,
+            ),
+            value => value.clone(),
+        })
+    }
+    let mut omitted = 0;
+    let value = walk(node, 0, &mut omitted)?;
+    Ok((value, omitted))
+}
 fn kind<'a>(value: &'a Value, key: &str) -> &'a str {
     value[key]
         .as_str()
@@ -106,16 +139,7 @@ fn expand(node: &Value, depth: usize) -> Result<Vec<Case>> {
             let entries = node["cases"].as_array().context("选择模型缺少 cases")?;
             match kind(node, "property") {
                 "display_context" => {
-                    let gui = entries.iter().find(|entry| {
-                        entry["when"] == "gui"
-                            || entry["when"]
-                                .as_array()
-                                .is_some_and(|values| values.iter().any(|value| value == "gui"))
-                    });
-                    expand(
-                        gui.map_or(&node["fallback"], |entry| &entry["model"]),
-                        depth + 1,
-                    )?
+                    bail!("旧版 CIT 无法表达显示场景条件，必须先选择安全的非场景基础外观")
                 }
                 "trim_material" => {
                     let mut result = vec![];

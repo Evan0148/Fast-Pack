@@ -92,6 +92,7 @@ fn mapped_key(key: &str, target: u32) -> String {
         .into();
     }
     for (nbt, modern) in [
+        ("Potion", "potion_contents.potion"),
         ("display.Name", "custom_name"),
         ("display.Lore", "lore"),
         ("Damage", "damage"),
