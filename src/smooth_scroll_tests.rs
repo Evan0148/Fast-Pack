@@ -23,6 +23,15 @@ fn wheel_motion_is_continuous_accumulates_and_settles_exactly() {
     motion.push(value, -600.0, 500.0, start + Duration::from_millis(220));
     assert_eq!(motion.target, Some(0.0));
     assert!(motion.advance(value, 50.0, start + Duration::from_millis(240)) < value);
+    let mut motion = Motion::default();
+    motion.push(200.0, 240.0, 1000.0, start);
+    let current = motion.advance(200.0, 1000.0, start + Duration::from_millis(16));
+    motion.push(current, -60.0, 1000.0, start + Duration::from_millis(16));
+    assert!(
+        motion.target.unwrap() < current,
+        "reversing the wheel must discard the previous direction's backlog"
+    );
+    assert!(motion.advance(current, 1000.0, start + Duration::from_millis(24)) < current);
 }
 
 #[cfg(not(feature = "gpu-renderer"))]

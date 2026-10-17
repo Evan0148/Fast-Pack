@@ -21,7 +21,11 @@ impl Motion {
         self.previous = None;
     }
     fn push(&mut self, current: f32, delta: f32, limit: f32, now: Instant) {
-        self.target = Some((self.target.unwrap_or(current) + delta).clamp(0.0, limit));
+        let base = self
+            .target
+            .filter(|target| (*target - current).signum() == delta.signum())
+            .unwrap_or(current);
+        self.target = Some((base + delta).clamp(0.0, limit));
         self.position.get_or_insert(current);
         self.previous.get_or_insert(now);
     }
