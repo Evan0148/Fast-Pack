@@ -959,10 +959,30 @@ fn gui(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Resul
                 rebuilt.insert(recipe.source.clone(), canvas);
             }
             let image = rebuilt.get_mut(&recipe.source).unwrap();
+            let atlas_scale = image.width() / recipe.source_width;
             ensure!(
-                image.width() == recipe.source_width * scale,
-                "GUI 精灵缩放比例不一致"
+                atlas_scale > 0 && image.width().is_multiple_of(recipe.source_width),
+                "现有 GUI 图集缩放比例无效"
             );
+            let scale = scale.max(atlas_scale);
+            if atlas_scale != scale {
+                *image = imageops::resize(
+                    image,
+                    recipe.source_width * scale,
+                    image.height() * scale / atlas_scale,
+                    imageops::FilterType::Nearest,
+                );
+            }
+            let tile = if tile.width() != recipe.width * scale {
+                imageops::resize(
+                    &tile,
+                    recipe.width * scale,
+                    recipe.height * scale,
+                    imageops::FilterType::Nearest,
+                )
+            } else {
+                tile
+            };
             imageops::replace(
                 image,
                 &tile,
@@ -982,6 +1002,10 @@ fn gui(root: &Path, source: u32, target: u32, report: &mut AssetReport) -> Resul
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "gui_sprite_tests.rs"]
+mod gui_sprite_tests;
 
 fn rewrite_model(value: &mut Value, source: u32, target: u32, relative: &str) -> bool {
     let old = value.clone();
