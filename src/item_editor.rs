@@ -450,7 +450,14 @@ impl App {
             }
             let results = column![
                 self.label(format!("{} 个结果", editor.results.len())),
-                scrollable(list).height(280).spacing(8),
+                super::smooth_scroll::scroll(
+                    scrollable(list)
+                        .height(280)
+                        .spacing(8)
+                        .id("custom-item-list"),
+                    "custom-item-list",
+                    self.reduced
+                ),
                 row![
                     self.action(
                         49,

@@ -336,11 +336,11 @@ impl App {
             && !self.reduced
             && !self.glint_picker
             && !self.learn_more
-            && [
-                self.overlay.name_document(),
-                self.overlay.description.clone(),
-            ]
-            .iter()
-            .any(|document| document.styles.iter().any(|style| style.obfuscated))
+            && self
+                .overlay
+                .name_styles
+                .iter()
+                .chain(&self.overlay.description.styles)
+                .any(|style| style.obfuscated)
     }
 }

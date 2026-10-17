@@ -5,6 +5,8 @@ mod color_picker;
 mod item_editor;
 #[path = "overlay_editor.rs"]
 mod overlay_editor;
+#[path = "smooth_scroll.rs"]
+mod smooth_scroll;
 use anyhow::{Context, Result, ensure};
 use color_picker::ColorTarget;
 use fast_pack::converter::load_extra_renames;
@@ -3729,9 +3731,11 @@ impl App {
                 content = content.push(self.label("左键逐格涂色，可按住拖动；右键擦除。画布草稿自动保存，选择的预设也能继续编辑。"));
             } else {
                 let name = self
-                    .selected_crosshair()
-                    .map(|crosshair| crosshair.name)
-                    .unwrap_or_else(|| "尚未选择预设".into());
+                    .crosshair_presets
+                    .iter()
+                    .find(|preset| Some(&preset.id) == self.crosshair_selected.as_ref())
+                    .map(|preset| preset.crosshair.name.as_str())
+                    .unwrap_or("尚未选择预设");
                 let details = column![
                     self.title(name, 14),
                     self.label("预览供参考，实际颜色随游戏背景变化。"),
@@ -3818,7 +3822,7 @@ impl App {
                     let height = (self.crosshair_presets.len().div_ceil(columns) as f32 * 106.0
                         - 10.0)
                         .min(212.0);
-                    content = content.push(
+                    content = content.push(smooth_scroll::scroll(
                         scrollable(gallery)
                             .direction(scrollable::Direction::Vertical(
                                 scrollable::Scrollbar::new()
@@ -3826,8 +3830,11 @@ impl App {
                                     .scroller_width(6)
                                     .spacing(12),
                             ))
-                            .height(height),
-                    );
+                            .height(height)
+                            .id("crosshair-gallery"),
+                        "crosshair-gallery",
+                        self.reduced,
+                    ));
                 }
             }
             content = content.push(self.label(
@@ -4268,7 +4275,7 @@ impl App {
             entries = entries.push(self.action(14, "清空日志", Some(Message::ClearLogs), false));
             body = body.push(self.panel(entries));
         }
-        let main = container(
+        let main = container(smooth_scroll::scroll(
             scrollable(container(body).padding(Padding {
                 top: 24.0,
                 right: 28.0,
@@ -4276,7 +4283,9 @@ impl App {
                 left: 28.0,
             }))
             .id("fast-pack-content"),
-        )
+            "fast-pack-content",
+            self.reduced,
+        ))
         .width(Length::Fill)
         .height(Length::Fill);
         let base: Element<'_, Message> = container(column![
