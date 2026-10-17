@@ -20,6 +20,9 @@ pub struct Preferences {
     pub crosshair_tint: Option<[u8; 3]>,
     pub fishing_line_color: [u8; 3],
     pub block_outline_color: [u8; 3],
+    pub line_widths: fast_pack::compat::line_colors::Widths,
+    pub fishing_line_width: f32,
+    pub block_outline_width: f32,
     pub rainbow: fast_pack::compat::rainbow::Settings,
     pub auto_save: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -52,6 +55,9 @@ impl Default for Preferences {
             crosshair_tint: None,
             fishing_line_color: [0; 3],
             block_outline_color: [0; 3],
+            line_widths: Default::default(),
+            fishing_line_width: fast_pack::compat::line_colors::DEFAULT_WIDTH,
+            block_outline_width: fast_pack::compat::line_colors::DEFAULT_WIDTH,
             rainbow: Default::default(),
             auto_save: true,
             target_version: None,
@@ -137,6 +143,19 @@ pub fn load() -> Preferences {
         .target_version
         .filter(|version| supported(version));
     restore_heypixel(&mut preferences);
+    preferences.line_widths = preferences.line_widths.sanitized();
+    for width in [
+        &mut preferences.fishing_line_width,
+        &mut preferences.block_outline_width,
+    ] {
+        if !width.is_finite()
+            || !(fast_pack::compat::line_colors::MIN_WIDTH
+                ..=fast_pack::compat::line_colors::MAX_WIDTH)
+                .contains(width)
+        {
+            *width = fast_pack::compat::line_colors::DEFAULT_WIDTH;
+        }
+    }
     preferences.export_directory = preferences
         .export_directory
         .filter(|path| path.is_absolute());
@@ -179,6 +198,28 @@ pub fn save(preferences: &Preferences) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn line_widths_restore_enabled_options_and_remember_disabled_values() {
+        let old: Preferences = serde_json::from_str("{}").unwrap();
+        assert!(!old.line_widths.active());
+        assert_eq!(old.fishing_line_width, 2.0);
+        let saved = Preferences {
+            line_widths: fast_pack::compat::line_colors::Widths {
+                fishing: Some(2.7),
+                outline: None,
+            },
+            fishing_line_width: 2.7,
+            block_outline_width: 4.2,
+            ..Default::default()
+        };
+        let restored: Preferences =
+            serde_json::from_slice(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        assert_eq!(restored.line_widths, saved.line_widths);
+        assert_eq!(restored.fishing_line_width, 2.7);
+        assert_eq!(restored.block_outline_width, 4.2);
+        assert!(restored.fishing_line.is_none() && restored.block_outline.is_none());
+    }
 
     #[test]
     fn restored_compatibility_defaults_on_once_then_preserves_the_user_choice() {

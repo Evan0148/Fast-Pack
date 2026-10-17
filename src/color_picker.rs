@@ -1,5 +1,5 @@
 use super::{App, Message, rgb_hsv};
-use iced::widget::{checkbox, column, container, row, space};
+use iced::widget::{checkbox, column, container, row, slider, space, text};
 use iced::{Alignment, Border, Color, Element, Length};
 
 #[cfg(test)]
@@ -268,12 +268,82 @@ impl App {
         ]
         .spacing(10)
         .align_y(Alignment::Center);
-        let mut controls = column![fishing, outline].spacing(10);
+        let mut controls = column![
+            fishing,
+            self.line_width_control(true, enabled, supported),
+            outline,
+            self.line_width_control(false, enabled, supported)
+        ]
+        .spacing(10);
         controls = controls.push(self.label(if supported {
-            "支持原版线条渲染；光影或客户端的渲染覆盖可能改变效果。"
+            "宽度 1× 为原版，颜色与宽度独立；光影或客户端的渲染覆盖可能改变效果。"
         } else {
-            "目标版本早于 1.17，普通材质包不能修改鱼线与方块选中边框颜色。"
+            "目标版本早于 1.17，普通材质包不能修改鱼线与方块选中边框的颜色或宽度。"
         }));
         container(controls).width(Length::Fill).into()
+    }
+
+    fn line_width_control(
+        &self,
+        fishing: bool,
+        enabled: bool,
+        supported: bool,
+    ) -> Element<'_, Message> {
+        let selected = if fishing {
+            self.line_widths.fishing
+        } else {
+            self.line_widths.outline
+        };
+        let value = if fishing {
+            self.fishing_line_width
+        } else {
+            self.block_outline_width
+        };
+        let mut control = row![
+            checkbox(supported && selected.is_some())
+                .label(if fishing {
+                    "自定义鱼竿线宽度"
+                } else {
+                    "自定义方块边框宽度"
+                })
+                .size(17)
+                .text_size(13)
+                .on_toggle_maybe(enabled.then_some(move |value| if fishing {
+                    Message::FishingWidthEnabled(value)
+                } else {
+                    Message::OutlineWidthEnabled(value)
+                }))
+        ]
+        .spacing(14)
+        .align_y(Alignment::Center);
+        if enabled && selected.is_some() {
+            control = control.push(
+                slider(
+                    fast_pack::compat::line_colors::MIN_WIDTH
+                        ..=fast_pack::compat::line_colors::MAX_WIDTH,
+                    value,
+                    move |value| {
+                        if fishing {
+                            Message::FishingWidth(value)
+                        } else {
+                            Message::OutlineWidth(value)
+                        }
+                    },
+                )
+                .step(0.1_f32)
+                .default(1.0_f32)
+                .width(180),
+            );
+            control = control.push(text(format!("{value:.1}×")).size(13));
+        } else if supported && selected.is_some() {
+            control = control.push(text(format!("{value:.1}×")).size(13));
+        } else {
+            control = control.push(self.label(if supported {
+                "沿用原包线宽"
+            } else {
+                "需要 1.17+"
+            }));
+        }
+        control.into()
     }
 }

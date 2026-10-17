@@ -23,6 +23,44 @@ static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {
     serde_json::from_str(include_str!("../../assets/line-colors.json")).expect("线条着色器参考无效")
 });
 
+pub const MIN_WIDTH: f32 = 0.5;
+pub const MAX_WIDTH: f32 = 8.0;
+pub const DEFAULT_WIDTH: f32 = 2.0;
+
+pub fn parse_width(value: &str) -> std::result::Result<f32, String> {
+    let value = value
+        .parse::<f32>()
+        .map_err(|_| "宽度须为 0.5–8 的倍数".to_string())?;
+    if !value.is_finite() || !(MIN_WIDTH..=MAX_WIDTH).contains(&value) {
+        return Err("宽度须为 0.5–8 的倍数，1 为原版宽度".into());
+    }
+    Ok(value)
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct Widths {
+    pub fishing: Option<f32>,
+    pub outline: Option<f32>,
+}
+
+impl Widths {
+    pub fn sanitized(self) -> Self {
+        let valid = |value: &f32| value.is_finite() && (MIN_WIDTH..=MAX_WIDTH).contains(value);
+        Self {
+            fishing: self.fishing.filter(valid),
+            outline: self.outline.filter(valid),
+        }
+    }
+    fn validate(self) -> Result<()> {
+        anyhow::ensure!(self == self.sanitized(), "线条宽度须为 0.5–8 的有限倍数");
+        Ok(())
+    }
+    pub fn active(self) -> bool {
+        self.fishing.is_some() || self.outline.is_some()
+    }
+}
+
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 struct Settings {
@@ -30,6 +68,7 @@ struct Settings {
     outline: Option<[u8; 3]>,
     fishing_rainbow: bool,
     outline_rainbow: bool,
+    widths: Widths,
 }
 
 fn hook(vertex: &str, settings: &Settings) -> Option<String> {
@@ -42,6 +81,11 @@ fn hook(vertex: &str, settings: &Settings) -> Option<String> {
     let vertex = function
         .replace_all(vertex, "\n")
         .replace("fastpack_line_color(Color)", "Color");
+    let width_function =
+        Regex::new(r"(?s)\nfloat fastpack_line_width\(vec4 original\) \{.*?\n\}\n").unwrap();
+    let vertex = width_function
+        .replace_all(&vertex, "\n")
+        .replace("(LineWidth * fastpack_line_width(Color))", "LineWidth");
     let animated = settings.fishing_rainbow || settings.outline_rainbow;
     let vertex = if animated
         && !vertex.contains("globals.glsl")
@@ -94,7 +138,38 @@ fn hook(vertex: &str, settings: &Settings) -> Option<String> {
         ));
     }
     custom.push_str("    return vec4(rgb, original.a);\n}\n\n");
+    if settings.widths.active() {
+        custom.push_str("float fastpack_line_width(vec4 original) {\n    bool blackLine = all(lessThan(abs(original.rgb), vec3(0.0001)));\n");
+        if let Some(width) = settings.widths.fishing {
+            custom.push_str(&format!(
+                "    if (blackLine && original.a > 0.99) return {width:.3};\n"
+            ));
+        }
+        if let Some(width) = settings.widths.outline {
+            custom.push_str(&format!(
+                "    if (blackLine && original.a > 0.35 && original.a < 0.45) return {width:.3};\n"
+            ));
+        }
+        custom.push_str("    return 1.0;\n}\n\n");
+    }
     let mut result = vertex.to_string();
+    if settings.widths.active() {
+        // Touch only the screen-space extrusion, never a custom shader's declarations.
+        let extrusion = Regex::new(r"\bvec2\s+lineOffset\s*=\s*[^;]+;").unwrap();
+        let mut matches = extrusion.find_iter(&result);
+        let offset = matches.next()?;
+        if matches.next().is_some() || offset.start() < start {
+            return None;
+        }
+        let variable = Regex::new(r"\bLineWidth\b").unwrap();
+        if !variable.is_match(offset.as_str()) {
+            return None;
+        }
+        let replacement = variable
+            .replace_all(offset.as_str(), "(LineWidth * fastpack_line_width(Color))")
+            .into_owned();
+        result.replace_range(offset.range(), &replacement);
+    }
     result.insert_str(start, &custom);
     Some(
         assignment
@@ -163,6 +238,29 @@ pub fn apply_animated(
     outline_rainbow: bool,
     report: &mut AssetReport,
 ) -> Result<()> {
+    apply_custom(
+        root,
+        version,
+        fishing,
+        outline,
+        fishing_rainbow,
+        outline_rainbow,
+        Widths::default(),
+        report,
+    )
+}
+
+pub fn apply_custom(
+    root: &Path,
+    version: &str,
+    fishing: Option<[u8; 3]>,
+    outline: Option<[u8; 3]>,
+    fishing_rainbow: bool,
+    outline_rainbow: bool,
+    widths: Widths,
+    report: &mut AssetReport,
+) -> Result<()> {
+    widths.validate()?;
     let cache = root.join("fastpack/line-colors.json");
     let original: Settings = if cache.pack_is_file() {
         serde_json::from_slice(&fs::read(&cache)?).unwrap_or_default()
@@ -182,19 +280,23 @@ pub fn apply_animated(
         } else {
             original.outline_rainbow
         },
+        widths: Widths {
+            fishing: widths.fishing.or(original.widths.sanitized().fishing),
+            outline: widths.outline.or(original.widths.sanitized().outline),
+        },
     };
     let settings = Settings {
         fishing: settings.fishing.or(fishing_rainbow.then_some([0; 3])),
         outline: settings.outline.or(outline_rainbow.then_some([0; 3])),
         ..settings
     };
-    if settings.fishing.is_none() && settings.outline.is_none() {
+    if settings.fishing.is_none() && settings.outline.is_none() && !settings.widths.active() {
         return Ok(());
     }
     if crate::pack_format_of(version)? < 7 {
         fs::create_dir_all(cache.parent().unwrap())?;
         fs::write_atomic(&cache, &serde_json::to_vec(&settings)?)?;
-        report.warnings.push("目标版本早于 1.17，普通资源包不能自定义鱼线与方块选中边框颜色；颜色配置保留供后续升级使用".into());
+        report.warnings.push("目标版本早于 1.17，普通资源包不能自定义鱼线与方块选中边框的颜色或宽度；配置保留供后续升级使用".into());
         return Ok(());
     }
     let profile = CATALOG
@@ -275,25 +377,243 @@ pub fn apply_animated(
     }
     fs::create_dir_all(cache.parent().unwrap())?;
     fs::write_atomic(&cache, &serde_json::to_vec(&settings)?)?;
-    report.converted.push(format!(
-        "线条颜色：按 {version} 原生管线{}{}，保留线条透明度与雾效",
-        if settings.fishing.is_some() {
-            "自定义鱼竿线"
-        } else {
-            ""
-        },
-        if settings.outline.is_some() {
-            " 自定义瞄准方块边框"
-        } else {
-            ""
+    if settings.fishing.is_some() || settings.outline.is_some() {
+        report.converted.push(format!(
+            "线条颜色：按 {version} 原生管线{}{}，保留线条透明度与雾效",
+            if settings.fishing.is_some() {
+                "自定义鱼竿线"
+            } else {
+                ""
+            },
+            if settings.outline.is_some() {
+                " 自定义瞄准方块边框"
+            } else {
+                ""
+            }
+        ));
+    }
+    if settings.widths.active() {
+        let mut values = vec![];
+        if let Some(width) = settings.widths.fishing {
+            values.push(format!("鱼竿线 {width:.1}×"));
         }
-    ));
+        if let Some(width) = settings.widths.outline {
+            values.push(format!("方块边框 {width:.1}×"));
+        }
+        report.converted.push(format!(
+            "线条宽度：{}；只缩放对应线条的原版屏幕宽度，保留颜色、透明度与雾效",
+            values.join("、")
+        ));
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn widths_work_independently_in_every_native_shader_and_do_not_accumulate() {
+        for (version, _) in crate::tables().pack_formats.iter().filter(|(_, f)| *f >= 7) {
+            let native = &CATALOG.profiles[&CATALOG.versions[version]].vertex;
+            let mut settings = Settings {
+                widths: Widths {
+                    fishing: Some(2.0),
+                    outline: Some(3.0),
+                },
+                ..Default::default()
+            };
+            let first = hook(native, &settings).unwrap_or_else(|| panic!("{version}"));
+            assert!(compatible(&first, native), "{version}");
+            assert!(first.contains("original.a > 0.99) return 2.000;"));
+            assert!(first.contains("original.a < 0.45) return 3.000;"));
+            assert_eq!(
+                first
+                    .matches("(LineWidth * fastpack_line_width(Color))")
+                    .count(),
+                1
+            );
+            assert!(first.contains("return vec4(rgb, original.a)"));
+            settings.widths.fishing = Some(1.0);
+            settings.widths.outline = Some(8.0);
+            settings.fishing = Some([255, 0, 0]);
+            settings.fishing_rainbow = true;
+            let second = hook(&first, &settings).unwrap();
+            assert!(compatible(&second, native), "{version}");
+            assert_eq!(second.matches("float fastpack_line_width(").count(), 1);
+            assert_eq!(
+                second
+                    .matches("(LineWidth * fastpack_line_width(Color))")
+                    .count(),
+                1
+            );
+            assert!(!second.contains("return 2.000;") && !second.contains("return 3.000;"));
+            assert!(second.contains("original.a > 0.99) return 1.000;"));
+            assert!(second.contains(super::super::rainbow::GLSL));
+            settings.widths = Widths::default();
+            let colors_only = hook(&second, &settings).unwrap();
+            assert!(!colors_only.contains("fastpack_line_width"));
+            assert!(compatible(&colors_only, native));
+        }
+    }
+
+    #[test]
+    fn authored_math_and_cached_widths_survive_repeated_conversions() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let source = &CATALOG.profiles[&CATALOG.versions["1.20.1"]].vertex;
+        write(
+            root,
+            "vsh",
+            source
+                .replace("VIEW_SHRINK = 1.0", "VIEW_SHRINK = 0.99")
+                .as_bytes(),
+        )
+        .unwrap();
+        write(root, "fsh", b"custom fragment").unwrap();
+        let mut report = AssetReport::default();
+        apply_custom(
+            root,
+            "1.20.1",
+            None,
+            None,
+            false,
+            false,
+            Widths {
+                fishing: Some(2.5),
+                outline: None,
+            },
+            &mut report,
+        )
+        .unwrap();
+        apply_custom(
+            root,
+            "1.20.1",
+            None,
+            Some([10, 20, 30]),
+            false,
+            true,
+            Widths {
+                fishing: None,
+                outline: Some(3.0),
+            },
+            &mut report,
+        )
+        .unwrap();
+        let file = root.join("assets/minecraft/shaders/core/rendertype_lines.vsh");
+        let shader = std::fs::read_to_string(&file).unwrap();
+        assert!(shader.contains("VIEW_SHRINK = 0.99"));
+        assert!(shader.contains("return 2.500;") && shader.contains("return 3.000;"));
+        assert_eq!(
+            std::fs::read(root.join("assets/minecraft/shaders/core/rendertype_lines.fsh")).unwrap(),
+            b"custom fragment"
+        );
+        apply_custom(
+            root,
+            "1.20.1",
+            None,
+            None,
+            false,
+            false,
+            Widths {
+                fishing: Some(1.0),
+                outline: None,
+            },
+            &mut report,
+        )
+        .unwrap();
+        let shader = std::fs::read_to_string(file).unwrap();
+        assert!(shader.contains("return 1.000;") && !shader.contains("return 2.500;"));
+        assert_eq!(shader.matches("float fastpack_line_width(").count(), 1);
+        let saved: Settings =
+            serde_json::from_slice(&std::fs::read(root.join("fastpack/line-colors.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            saved.widths,
+            Widths {
+                fishing: Some(1.0),
+                outline: Some(3.0)
+            }
+        );
+        assert!(saved.outline_rainbow);
+    }
+
+    #[test]
+    fn widths_do_not_rewrite_other_uses_of_the_native_width_variable() {
+        let native = &CATALOG.profiles[&CATALOG.versions["1.20.1"]].vertex;
+        let authored = native.replace(
+            "void main() {",
+            "void main() {\n    float savedWidth = LineWidth;",
+        );
+        let settings = Settings {
+            widths: Widths {
+                fishing: Some(4.0),
+                outline: None,
+            },
+            ..Default::default()
+        };
+        let shader = hook(&authored, &settings).unwrap();
+        assert!(shader.contains("float savedWidth = LineWidth;"));
+        assert_eq!(shader.matches("fastpack_line_width(Color)").count(), 1);
+        assert!(
+            hook(
+                &native.replace("vec2 lineOffset =", "vec2 unknownOffset ="),
+                &settings
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn invalid_widths_are_rejected_and_legacy_retains_only_configuration() {
+        for width in [f32::NAN, f32::INFINITY, 0.0, -1.0, 8.1] {
+            let temp = tempfile::tempdir().unwrap();
+            assert!(
+                apply_custom(
+                    temp.path(),
+                    "1.20.1",
+                    None,
+                    None,
+                    false,
+                    false,
+                    Widths {
+                        fishing: Some(width),
+                        outline: None
+                    },
+                    &mut AssetReport::default()
+                )
+                .is_err()
+            );
+            assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
+        }
+        for input in ["NaN", "inf", "-1", "8.1", "bad"] {
+            assert!(parse_width(input).is_err());
+        }
+        for input in ["0.5", "1", "2.5", "8"] {
+            assert!(parse_width(input).is_ok());
+        }
+        let legacy: Settings = serde_json::from_str(r#"{"fishing":[1,2,3]}"#).unwrap();
+        assert!(!legacy.widths.active());
+        let temp = tempfile::tempdir().unwrap();
+        let mut report = AssetReport::default();
+        apply_custom(
+            temp.path(),
+            "1.8.9",
+            None,
+            None,
+            false,
+            false,
+            Widths {
+                fishing: Some(2.0),
+                outline: Some(3.0),
+            },
+            &mut report,
+        )
+        .unwrap();
+        assert!(!temp.path().join("assets").exists());
+        assert!(temp.path().join("fastpack/line-colors.json").is_file());
+        assert_eq!(report.warnings.len(), 1);
+    }
+
     #[test]
     fn every_supported_shader_accepts_both_colors_and_repeated_edits() {
         for (version, _) in crate::tables()

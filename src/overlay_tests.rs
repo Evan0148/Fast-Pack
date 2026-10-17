@@ -241,6 +241,13 @@ fn individual_features_do_not_install_unselected_hud_or_glint_resources() {
             fishing_line_color: Some([1, 2, 3]),
             ..Default::default()
         },
+        Options {
+            line_widths: crate::compat::line_colors::Widths {
+                fishing: Some(2.0),
+                outline: Some(3.0),
+            },
+            ..Default::default()
+        },
     ]
     .into_iter()
     .enumerate()
@@ -251,8 +258,16 @@ fn individual_features_do_not_install_unselected_hud_or_glint_resources() {
         assert!(!files.keys().any(|name| name.contains("/gui/")
             || name.contains("/models/")
             || name.contains("/items/")));
-        if index == 1 {
+        if index >= 1 {
             assert!(!files.keys().any(|name| name.contains("glint")));
+        }
+        if index == 2 {
+            let shader =
+                std::str::from_utf8(&files["assets/minecraft/shaders/core/rendertype_lines.vsh"])
+                    .unwrap();
+            assert!(shader.contains("return 2.000;") && shader.contains("return 3.000;"));
+            let cache: Value = serde_json::from_slice(&files["fastpack/line-colors.json"]).unwrap();
+            assert!(cache["fishing"].is_null() && cache["outline"].is_null());
         }
     }
 }

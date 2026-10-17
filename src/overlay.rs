@@ -183,6 +183,7 @@ pub struct Options {
     pub glint_color: Option<[u8; 3]>,
     pub fishing_line_color: Option<[u8; 3]>,
     pub block_outline_color: Option<[u8; 3]>,
+    pub line_widths: crate::compat::line_colors::Widths,
     pub crosshair: Option<crate::crosshair::Crosshair>,
     pub show_attack_indicator: bool,
     pub custom_items: Vec<crate::compat::custom_items::Rule>,
@@ -199,6 +200,7 @@ impl Default for Options {
             glint_color: None,
             fishing_line_color: None,
             block_outline_color: None,
+            line_widths: Default::default(),
             crosshair: None,
             show_attack_indicator: true,
             custom_items: Vec::new(),
@@ -250,14 +252,15 @@ pub fn build(
     } else if options.glint_color.is_some() {
         crate::compat::glint::migrate(&root, format, format, options.glint_color, &mut assets)?;
     }
-    progress("制作线条颜色", 28);
-    crate::compat::line_colors::apply_animated(
+    progress("制作线条外观", 28);
+    crate::compat::line_colors::apply_custom(
         &root,
         &options.version,
         options.fishing_line_color,
         options.block_outline_color,
         options.rainbow.fishing_line,
         options.rainbow.block_outline,
+        options.line_widths,
         &mut assets,
     )?;
     progress("制作物品设置", 45);

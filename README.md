@@ -122,6 +122,14 @@ Fast Pack 的兼容规则负责转换渲染资源。自定义天空的显示取�
 
 输出包内缓存原始光效图案并核对当前贴图指纹，再次修改颜色时复用图案，避免重复染色越来越暗；选过黑色后也能换回其他颜色。自行修改过的贴图会作为新的图案处理。
 
+### 鱼竿线与瞄准方块边框宽度
+
+在“更多转换选项”或“覆盖包制作”中，分别勾选 **“自定义鱼竿线宽度”**、**“自定义方块边框宽度”**，拖动滑杆设置 **0.5×–8×** 的宽度，步长为 0.1×。1× 为原版宽度，首次勾选默认 2×。两个开关和宽度自动保存，取消勾选后仍记住上次的数值。
+
+宽度与颜色、动态彩色独立，可以只加粗而保留原有颜色。未开启的项目沿用原包设置；修改已经转换过的包时，填写新的倍数会替换原有设置，不会重复相乘。需要恢复原版粗细时设为 1×。
+
+这两项需要 **Minecraft 1.17+ 的原版核心着色器**。早于 1.17 的普通材质包不能修改这类线条，界面会禁用选项；光影或客户端自定义渲染可能覆盖效果。功能不改写客户端文件。
+
 ### 转换结果命名
 
 默认按 **`[目标版本]原材质包名.zip`** 命名，并保留版本号中的点。例如：`9178.zip` 转为 1.20.1 后得到 **`[1.20.1]9178.zip`**。
@@ -323,6 +331,7 @@ ViaBackwards 启动时将用户 NBT 与内置映射合并。运行中的游戏�
 .\fast-pack-cli-v1.3.3.exe old.zip --to 1.20.1 --crosshair crosshair-pack.zip
 .\fast-pack-cli-v1.3.3.exe old.zip --to 1.20.1 --hide-attack-indicator
 .\fast-pack-cli-v1.3.3.exe old.zip --to 1.20.1 --fishing-line-color '#38BBDD' --block-outline-color '#FA5070'
+.\fast-pack-cli-v1.3.13.exe old.zip --to 1.20.1 --fishing-line-width 2 --block-outline-width 3
 .\fast-pack-cli-v1.3.3.exe old.zip new.zip --renames names.json --report-json report.json
 ```
 

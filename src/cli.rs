@@ -81,6 +81,10 @@ struct Arguments {
     fishing_line_color: Option<[u8; 3]>,
     #[arg(long,value_parser=crate::compat::glint::parse_color,value_name="RRGGBB",help="自定义瞄准方块边框颜色，需要目标版本 1.17+")]
     block_outline_color: Option<[u8; 3]>,
+    #[arg(long, value_parser=crate::compat::line_colors::parse_width, value_name="MULTIPLIER", help="鱼竿线宽度倍数，0.5–8，1 为原版；需要 1.17+")]
+    fishing_line_width: Option<f32>,
+    #[arg(long, value_parser=crate::compat::line_colors::parse_width, value_name="MULTIPLIER", help="瞄准方块边框宽度倍数，0.5–8，1 为原版；需要 1.17+")]
+    block_outline_width: Option<f32>,
     #[arg(long, conflicts_with = "vanilla_glint", help = "动态彩虹附魔光效")]
     rainbow_glint: bool,
     #[arg(
@@ -179,6 +183,10 @@ pub fn run() -> Result<()> {
         convert_lang: !args.no_lang,
         fishing_line_color: args.fishing_line_color,
         block_outline_color: args.block_outline_color,
+        line_widths: crate::compat::line_colors::Widths {
+            fishing: args.fishing_line_width,
+            outline: args.block_outline_width,
+        },
         rainbow: crate::compat::rainbow::Settings {
             glint: args.rainbow_glint,
             crosshair: args.rainbow_crosshair,
@@ -220,4 +228,30 @@ pub fn run() -> Result<()> {
     }
     println!("✔ Fast Pack 完成：{}", output.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn width_arguments_accept_independent_values_and_reject_invalid_input() {
+        let args = Arguments::try_parse_from([
+            "fast-pack",
+            "pack.zip",
+            "--fishing-line-width",
+            "2.5",
+            "--block-outline-width",
+            "3",
+        ])
+        .unwrap();
+        assert_eq!(args.fishing_line_width, Some(2.5));
+        assert_eq!(args.block_outline_width, Some(3.0));
+        assert!(args.fishing_line_color.is_none() && args.block_outline_color.is_none());
+        for width in ["NaN", "inf", "0", "8.1"] {
+            assert!(
+                Arguments::try_parse_from(["fast-pack", "pack.zip", "--fishing-line-width", width])
+                    .is_err()
+            );
+        }
+    }
 }

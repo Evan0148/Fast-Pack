@@ -11,6 +11,34 @@ fn app() -> App {
     app
 }
 
+#[test]
+fn line_width_switches_are_independent_and_remember_their_values() {
+    let mut app = app();
+    assert!(!app.line_widths.active());
+    let _ = app.update(Message::FishingWidthEnabled(true));
+    let _ = app.update(Message::FishingWidth(2.7));
+    let _ = app.update(Message::OutlineWidthEnabled(true));
+    let _ = app.update(Message::OutlineWidth(4.2));
+    assert_eq!(app.line_widths.fishing, Some(2.7));
+    assert_eq!(app.line_widths.outline, Some(4.2));
+    assert!(app.fishing_line.is_none() && app.block_outline.is_none());
+    assert!(!app.rainbow.fishing_line && !app.rainbow.block_outline);
+    let _ = app.update(Message::FishingWidthEnabled(false));
+    assert_eq!(app.line_widths.fishing, None);
+    assert_eq!(app.line_widths.outline, Some(4.2));
+    let _ = app.update(Message::FishingWidthEnabled(true));
+    assert_eq!(app.line_widths.fishing, Some(2.7));
+    for width in [f32::NAN, f32::INFINITY, 0.0, 9.0] {
+        let _ = app.update(Message::FishingWidth(width));
+        assert_eq!(app.line_widths.fishing, Some(2.7));
+    }
+    app.phase = Phase::Running;
+    let _ = app.update(Message::FishingWidth(5.0));
+    let _ = app.update(Message::OutlineWidthEnabled(false));
+    assert_eq!(app.line_widths.fishing, Some(2.7));
+    assert_eq!(app.line_widths.outline, Some(4.2));
+}
+
 fn info(name: &str) -> PackInfo {
     PackInfo {
         ok: true,

@@ -35,6 +35,10 @@ enum Message {
     RainbowColor(bool),
     FishingLine(bool),
     BlockOutline(bool),
+    FishingWidthEnabled(bool),
+    OutlineWidthEnabled(bool),
+    FishingWidth(f32),
+    OutlineWidth(f32),
     ResetCrosshairColor,
     Items(item_editor::Event),
     Tick(Instant),
@@ -240,6 +244,9 @@ struct App {
     fishing_line_color: [u8; 3],
     block_outline: Option<[u8; 3]>,
     block_outline_color: [u8; 3],
+    line_widths: fast_pack::compat::line_colors::Widths,
+    fishing_line_width: f32,
+    block_outline_width: f32,
     crosshair_tint: Option<[u8; 3]>,
     rainbow: fast_pack::compat::rainbow::Settings,
     item_editor: item_editor::Editor,
@@ -436,6 +443,15 @@ impl App {
             block_outline_color: preferences
                 .block_outline
                 .unwrap_or(preferences.block_outline_color),
+            line_widths: preferences.line_widths,
+            fishing_line_width: preferences
+                .line_widths
+                .fishing
+                .unwrap_or(preferences.fishing_line_width),
+            block_outline_width: preferences
+                .line_widths
+                .outline
+                .unwrap_or(preferences.block_outline_width),
             crosshair_tint: preferences.crosshair_tint,
             rainbow: preferences.rainbow,
             profile: crate::ui_profile::Profile::load(),
@@ -680,6 +696,23 @@ impl App {
                     app.set_picker_color(color);
                 }
             }
+        }
+        if app.capture.is_some()
+            && let Ok(widths) = std::env::var("FAST_PACK_CAPTURE_LINE_WIDTHS")
+            && let Some((fishing, outline)) = widths.split_once(',')
+            && let (Ok(fishing), Ok(outline)) = (
+                fast_pack::compat::line_colors::parse_width(fishing),
+                fast_pack::compat::line_colors::parse_width(outline),
+            )
+        {
+            app.advanced = true;
+            app.advanced_motion.set(1.0, now, true);
+            app.fishing_line_width = fishing;
+            app.block_outline_width = outline;
+            app.line_widths = fast_pack::compat::line_colors::Widths {
+                fishing: Some(fishing),
+                outline: Some(outline),
+            };
         }
         (app, task)
     }
@@ -1320,6 +1353,9 @@ impl App {
                     rainbow: self.rainbow,
                     fishing_line_color: self.fishing_line_color,
                     block_outline_color: self.block_outline_color,
+                    line_widths: self.line_widths,
+                    fishing_line_width: self.fishing_line_width,
+                    block_outline_width: self.block_outline_width,
                     auto_save: self.auto_save,
                     target_version: self.saved_target.clone(),
                     auto_save_path: self.auto_save_path,
@@ -1569,6 +1605,11 @@ impl App {
             custom_items: self.item_editor.applied(&self.target),
             fishing_line_color: (target_format >= 7).then_some(self.fishing_line).flatten(),
             block_outline_color: (target_format >= 7).then_some(self.block_outline).flatten(),
+            line_widths: if target_format >= 7 {
+                self.line_widths
+            } else {
+                Default::default()
+            },
             rainbow: fast_pack::compat::rainbow::Settings {
                 glint: self.custom_glint && self.rainbow.glint,
                 crosshair: self.custom_crosshair && self.rainbow.crosshair,
@@ -2353,6 +2394,40 @@ impl App {
             }
             Message::BlockOutline(enabled) if !self.busy() => {
                 self.block_outline = enabled.then_some(self.block_outline_color);
+                self.save_preferences();
+            }
+            Message::FishingWidthEnabled(enabled) if !self.busy() => {
+                self.line_widths.fishing = enabled.then_some(self.fishing_line_width);
+                self.save_preferences();
+            }
+            Message::OutlineWidthEnabled(enabled) if !self.busy() => {
+                self.line_widths.outline = enabled.then_some(self.block_outline_width);
+                self.save_preferences();
+            }
+            Message::FishingWidth(width)
+                if !self.busy()
+                    && width.is_finite()
+                    && (fast_pack::compat::line_colors::MIN_WIDTH
+                        ..=fast_pack::compat::line_colors::MAX_WIDTH)
+                        .contains(&width) =>
+            {
+                self.fishing_line_width = (width * 10.0).round() / 10.0;
+                if self.line_widths.fishing.is_some() {
+                    self.line_widths.fishing = Some(self.fishing_line_width);
+                }
+                self.save_preferences();
+            }
+            Message::OutlineWidth(width)
+                if !self.busy()
+                    && width.is_finite()
+                    && (fast_pack::compat::line_colors::MIN_WIDTH
+                        ..=fast_pack::compat::line_colors::MAX_WIDTH)
+                        .contains(&width) =>
+            {
+                self.block_outline_width = (width * 10.0).round() / 10.0;
+                if self.line_widths.outline.is_some() {
+                    self.line_widths.outline = Some(self.block_outline_width);
+                }
                 self.save_preferences();
             }
             Message::ResetCrosshairColor if !self.busy() => {

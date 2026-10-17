@@ -527,6 +527,11 @@ impl App {
                 glint_color: self.custom_glint.then_some(self.glint_color),
                 fishing_line_color: (format >= 7).then_some(self.fishing_line).flatten(),
                 block_outline_color: (format >= 7).then_some(self.block_outline).flatten(),
+                line_widths: if format >= 7 {
+                    self.line_widths
+                } else {
+                    Default::default()
+                },
                 crosshair,
                 show_attack_indicator: self.show_attack_indicator,
                 custom_items: self.item_editor.applied(&self.target),
@@ -696,8 +701,12 @@ impl App {
         let format = fast_pack::pack_format_of(&self.target).unwrap_or(0);
         let features = usize::from(self.custom_glint)
             + usize::from(self.custom_crosshair)
-            + usize::from(format >= 7 && self.fishing_line.is_some())
-            + usize::from(format >= 7 && self.block_outline.is_some())
+            + usize::from(
+                format >= 7 && (self.fishing_line.is_some() || self.line_widths.fishing.is_some()),
+            )
+            + usize::from(
+                format >= 7 && (self.block_outline.is_some() || self.line_widths.outline.is_some()),
+            )
             + self.item_editor.applied_count(&self.target)
             + usize::from(format >= 2 && !self.show_attack_indicator);
         let mut body = column![
