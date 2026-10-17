@@ -26,6 +26,7 @@ mod modern_items;
 mod netherite;
 mod players;
 pub mod properties;
+pub mod rainbow;
 mod recent_resources;
 pub mod shaders;
 pub mod sky;

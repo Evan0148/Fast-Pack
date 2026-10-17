@@ -39,6 +39,8 @@ impl Default for Rule {
 pub struct Outline {
     pub color: [u8; 3],
     pub width: u8,
+    #[serde(default)]
+    pub rainbow: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -412,6 +414,29 @@ pub fn outlined(image: &RgbaImage, outline: &Outline) -> RgbaImage {
     result
 }
 
+fn outline_image(
+    image: &RgbaImage,
+    metadata: Option<Vec<u8>>,
+    outline: &Outline,
+) -> Result<(RgbaImage, Option<Vec<u8>>)> {
+    if outline.rainbow {
+        let (image, metadata) =
+            super::rainbow::animate(image, metadata.as_deref(), |image, color| {
+                outlined(
+                    image,
+                    &Outline {
+                        color,
+                        width: outline.width,
+                        rainbow: false,
+                    },
+                )
+            })?;
+        Ok((image, Some(metadata)))
+    } else {
+        Ok((outlined(image, outline), metadata))
+    }
+}
+
 fn baseline(root: &Path, version: &str, path: &Path) -> Result<()> {
     let relative = path.strip_prefix(root)?;
     let saved = root
@@ -623,7 +648,8 @@ impl Editor<'_> {
         );
         let (bytes, metadata) = texture_bytes(self.root, reference, self.format)?;
         let image = image::load_from_memory(&bytes)?.to_rgba8();
-        let image = outlined(&image, self.rule.outline.as_ref().unwrap());
+        let outline = self.rule.outline.as_ref().unwrap();
+        let (image, metadata) = outline_image(&image, metadata, outline)?;
         let name = private.strip_prefix("minecraft:").unwrap();
         let path = self
             .root
@@ -632,6 +658,8 @@ impl Editor<'_> {
         fs::save_image(&image, &path)?;
         if let Some(metadata) = metadata {
             fs::write(path.with_extension("png.mcmeta"), metadata)?;
+        } else if path.with_extension("png.mcmeta").pack_is_file() {
+            fs::remove_file(path.with_extension("png.mcmeta"))?;
         }
         self.textures.insert(reference.into(), private.clone());
         Ok(private)
@@ -685,13 +713,23 @@ pub fn apply(root: &Path, version: &str, rules: &[Rule], report: &mut AssetRepor
                     let name = crate::legacy_texture_name(&item.model, "item")
                         .unwrap_or_else(|| item.model.clone());
                     let reference = format!("minecraft:items/{name}");
-                    match texture_bytes(root, &reference, format)
-                        .and_then(|(bytes, _)| Ok(image::load_from_memory(&bytes)?.to_rgba8()))
-                    {
-                        Ok(image) => {
+                    let path = root.join(format!("assets/minecraft/textures/items/{name}.png"));
+                    baseline(root, version, &path)?;
+                    baseline(root, version, &path.with_extension("png.mcmeta"))?;
+                    match texture_bytes(root, &reference, format).and_then(|(bytes, metadata)| {
+                        outline_image(
+                            &image::load_from_memory(&bytes)?.to_rgba8(),
+                            metadata,
+                            outline,
+                        )
+                    }) {
+                        Ok((image, metadata)) => {
                             let path =
                                 root.join(format!("assets/minecraft/textures/items/{name}.png"));
-                            super::assets::save(root, &path, &outlined(&image, outline))?;
+                            super::assets::save(root, &path, &image)?;
+                            if let Some(metadata) = metadata {
+                                fs::write_atomic(&path.with_extension("png.mcmeta"), &metadata)?;
+                            }
                         }
                         Err(error) => report
                             .warnings

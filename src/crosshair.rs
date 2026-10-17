@@ -631,6 +631,7 @@ pub(crate) fn apply(
     report: &mut crate::compat::assets::AssetReport,
 ) -> Result<()> {
     let tile = normalized(crosshair.image.clone(), false, false)?;
+    crate::compat::rainbow::clear_crosshair_animation(root)?;
     let output = root.join(if target >= 18 { SPRITE } else { ICONS });
     if output.pack_is_file() {
         crate::compat::assets::backup(root, &output)?;

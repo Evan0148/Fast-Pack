@@ -46,6 +46,7 @@ pub(crate) struct Editor {
     held: String,
     dropped: String,
     border: bool,
+    rainbow: bool,
     color: String,
     width: u8,
     preview: Option<iced::widget::image::Handle>,
@@ -72,6 +73,7 @@ impl Editor {
             held: "100".into(),
             dropped: "100".into(),
             border: false,
+            rainbow: false,
             color: "#000000".into(),
             width: 1,
             preview: None,
@@ -141,6 +143,7 @@ impl Editor {
         self.held = rule.held_scale.to_string();
         self.dropped = rule.dropped_scale.to_string();
         self.border = rule.outline.is_some();
+        self.rainbow = rule.outline.as_ref().is_some_and(|outline| outline.rainbow);
         self.color = fast_pack::compat::glint::color_hex(
             rule.outline
                 .as_ref()
@@ -247,6 +250,7 @@ impl Editor {
                             Some(Outline {
                                 color: fast_pack::compat::glint::parse_color(&self.color)?,
                                 width: self.width,
+                                rainbow: self.rainbow,
                             })
                         } else {
                             None
@@ -301,6 +305,14 @@ impl Editor {
     pub fn outline_color(&self) -> [u8; 3] {
         fast_pack::compat::glint::parse_color(&self.color).unwrap_or([0; 3])
     }
+    pub fn outline_rainbow(&self) -> bool {
+        self.rainbow
+    }
+    pub fn set_outline_rainbow(&mut self, enabled: bool) {
+        self.rainbow = enabled;
+        self.border = true;
+        self.refresh_preview();
+    }
     pub fn set_outline_color(&mut self, color: [u8; 3]) {
         self.color = fast_pack::compat::glint::color_hex(color);
         self.border = true;
@@ -319,6 +331,7 @@ impl Editor {
                         &Outline {
                             color,
                             width: self.width,
+                            rainbow: self.rainbow,
                         },
                     )
                 })

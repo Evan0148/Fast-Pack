@@ -1,5 +1,57 @@
 use super::*;
 
+#[test]
+fn rainbow_switches_are_independent_and_fixed_colors_survive() {
+    let mut app = app();
+    let _ = app.update(Message::Items(super::super::item_editor::Event::Open));
+    let _ = app.update(Message::Items(super::super::item_editor::Event::Catalog(
+        "1.20.1".into(),
+        fast_pack::compat::custom_items::items("1.20.1"),
+    )));
+    for target in [
+        ColorTarget::Glint,
+        ColorTarget::Crosshair,
+        ColorTarget::ItemOutline,
+        ColorTarget::FishingLine,
+        ColorTarget::BlockOutline,
+    ] {
+        app.open_color_picker(target);
+        app.set_picker_color([11, 22, 33]);
+        let _ = app.update(Message::RainbowColor(true));
+        assert!(app.rainbow_for(target));
+        assert_eq!(app.color_for(target), [11, 22, 33]);
+        let _ = app.update(Message::RainbowColor(false));
+        assert!(!app.rainbow_for(target));
+        assert_eq!(app.color_for(target), [11, 22, 33]);
+        let _ = app.update(Message::RainbowColor(true));
+        app.close_glint_picker();
+    }
+    assert!(
+        app.rainbow.glint
+            && app.rainbow.crosshair
+            && app.rainbow.fishing_line
+            && app.rainbow.block_outline
+    );
+    assert!(app.item_editor.rules[0].outline.as_ref().unwrap().rainbow);
+    let preferences = crate::preferences::Preferences {
+        rainbow: app.rainbow,
+        custom_item_rules: app.item_editor.rules.clone(),
+        ..Default::default()
+    };
+    let restored: crate::preferences::Preferences =
+        serde_json::from_slice(&serde_json::to_vec(&preferences).unwrap()).unwrap();
+    assert_eq!(restored.rainbow, app.rainbow);
+    assert!(
+        restored.custom_item_rules[0]
+            .outline
+            .as_ref()
+            .unwrap()
+            .rainbow
+    );
+    let old: crate::preferences::Preferences = serde_json::from_str("{}").unwrap();
+    assert_eq!(old.rainbow, fast_pack::compat::rainbow::Settings::default());
+}
+
 fn app() -> App {
     let (mut app, _) = App::boot();
     app.target = "1.20.1".into();

@@ -24,9 +24,12 @@ static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {
 });
 
 #[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
 struct Settings {
     fishing: Option<[u8; 3]>,
     outline: Option<[u8; 3]>,
+    fishing_rainbow: bool,
+    outline_rainbow: bool,
 }
 
 fn hook(vertex: &str, settings: &Settings) -> Option<String> {
@@ -39,6 +42,20 @@ fn hook(vertex: &str, settings: &Settings) -> Option<String> {
     let vertex = function
         .replace_all(vertex, "\n")
         .replace("fastpack_line_color(Color)", "Color");
+    let animated = settings.fishing_rainbow || settings.outline_rainbow;
+    let vertex = if animated
+        && !vertex.contains("globals.glsl")
+        && !Regex::new(r"\buniform\s+float\s+GameTime\s*;")
+            .unwrap()
+            .is_match(&vertex)
+    {
+        let position = vertex.find('\n')? + 1;
+        let mut vertex = vertex.to_string();
+        vertex.insert_str(position, "\nuniform float GameTime;\n");
+        vertex
+    } else {
+        vertex
+    };
     let assignment = Regex::new(r"\bvertexColor\s*=\s*Color\s*;").unwrap();
     if assignment.find_iter(&vertex).count() != 1 {
         return None;
@@ -59,13 +76,21 @@ fn hook(vertex: &str, settings: &Settings) -> Option<String> {
     if let Some(color) = settings.fishing {
         custom.push_str(&format!(
             "    rgb = blackLine && original.a > 0.99 ? {} : rgb;\n",
-            vector(color)
+            if settings.fishing_rainbow {
+                super::rainbow::GLSL.into()
+            } else {
+                vector(color)
+            }
         ));
     }
     if let Some(color) = settings.outline {
         custom.push_str(&format!(
             "    rgb = blackLine && original.a > 0.35 && original.a < 0.45 ? {} : rgb;\n",
-            vector(color)
+            if settings.outline_rainbow {
+                super::rainbow::GLSL.into()
+            } else {
+                vector(color)
+            }
         ));
     }
     custom.push_str("    return vec4(rgb, original.a);\n}\n\n");
@@ -126,6 +151,18 @@ pub fn apply(
     outline: Option<[u8; 3]>,
     report: &mut AssetReport,
 ) -> Result<()> {
+    apply_animated(root, version, fishing, outline, false, false, report)
+}
+
+pub fn apply_animated(
+    root: &Path,
+    version: &str,
+    fishing: Option<[u8; 3]>,
+    outline: Option<[u8; 3]>,
+    fishing_rainbow: bool,
+    outline_rainbow: bool,
+    report: &mut AssetReport,
+) -> Result<()> {
     let cache = root.join("fastpack/line-colors.json");
     let original: Settings = if cache.pack_is_file() {
         serde_json::from_slice(&fs::read(&cache)?).unwrap_or_default()
@@ -135,6 +172,21 @@ pub fn apply(
     let settings = Settings {
         fishing: fishing.or(original.fishing),
         outline: outline.or(original.outline),
+        fishing_rainbow: if fishing.is_some() || fishing_rainbow {
+            fishing_rainbow
+        } else {
+            original.fishing_rainbow
+        },
+        outline_rainbow: if outline.is_some() || outline_rainbow {
+            outline_rainbow
+        } else {
+            original.outline_rainbow
+        },
+    };
+    let settings = Settings {
+        fishing: settings.fishing.or(fishing_rainbow.then_some([0; 3])),
+        outline: settings.outline.or(outline_rainbow.then_some([0; 3])),
+        ..settings
     };
     if settings.fishing.is_none() && settings.outline.is_none() {
         return Ok(());
@@ -200,6 +252,27 @@ pub fn apply(
         hook(&profile.vertex, &settings).context("目标版本线条颜色注入失败")?
     };
     write(root, "vsh", shader.as_bytes())?;
+    if settings.fishing_rainbow || settings.outline_rainbow {
+        if let Some(native) = &profile.program {
+            let mut value = if program.pack_is_file() {
+                serde_json::from_slice::<Value>(&fs::read(&program)?)?
+            } else {
+                native.clone()
+            };
+            let uniforms = value["uniforms"]
+                .as_array_mut()
+                .context("线条程序缺少 uniforms")?;
+            if !uniforms.iter().any(|value| value["name"] == "GameTime") {
+                uniforms.push(
+                    serde_json::json!({"name":"GameTime","type":"float","count":1,"values":[0.0]}),
+                );
+                write(root, "json", &serde_json::to_vec_pretty(&value)?)?;
+            }
+        }
+        report.converted.push(
+            "线条动态彩色：按游戏时间六秒循环，鱼线与方块边框独立控制，保留透明度与雾效".into(),
+        );
+    }
     fs::create_dir_all(cache.parent().unwrap())?;
     fs::write_atomic(&cache, &serde_json::to_vec(&settings)?)?;
     report.converted.push(format!(

@@ -16,6 +16,52 @@ const MODERN: [&str; 3] = [
 const LEGACY_TINT: [f32; 3] = [128.0 / 255.0, 64.0 / 255.0, 204.0 / 255.0];
 pub const VANILLA_COLOR: [u8; 3] = [128, 64, 204];
 
+pub(crate) fn rainbow(
+    root: &Path,
+    source: u32,
+    target: u32,
+    report: &mut AssetReport,
+) -> Result<()> {
+    let previous = report.converted.len();
+    migrate(root, source, target, Some([255; 3]), report)?;
+    report.converted.truncate(previous);
+    let directory = root.join("assets/minecraft/textures/misc");
+    let names: &[&str] = if target < 13 { &[LEGACY] } else { &MODERN };
+    let patterns = root.join("fastpack/glint-patterns");
+    let mut state: PatternState = serde_json::from_slice(&fs::read(patterns.join("state.json"))?)?;
+    for name in names {
+        let path = directory.join(format!("{name}.png"));
+        let pattern = fs::open_image(patterns.join(format!("{name}.png")))?.to_rgba8();
+        let mut output = pattern.clone();
+        for (x, y, pixel) in output.enumerate_pixels_mut() {
+            let color = super::rainbow::color(
+                x as f32 / pattern.width() as f32 + y as f32 / pattern.height() as f32,
+            );
+            let level = f32::from(
+                pattern.get_pixel(x, y).0[..3]
+                    .iter()
+                    .copied()
+                    .max()
+                    .unwrap(),
+            ) / 255.0;
+            for channel in 0..3 {
+                pixel[channel] = (f32::from(color[channel]) * level).round() as u8;
+            }
+        }
+        if target < 5 {
+            output = compensate_legacy(&output);
+        }
+        save(root, &path, &output)?;
+        state.outputs.insert((*name).into(), fingerprint(&output));
+    }
+    fs::write_atomic(&patterns.join("state.json"), &serde_json::to_vec(&state)?)?;
+    report.converted.push(
+        "附魔动态彩色：彩虹渐变随游戏原有光效流动，保留原图案与透明度；旧版紫色染色会影响最终亮度"
+            .into(),
+    );
+    Ok(())
+}
+
 pub fn parse_color(value: &str) -> Result<[u8; 3]> {
     let value = value.trim();
     let value = value.strip_prefix('#').unwrap_or(value);

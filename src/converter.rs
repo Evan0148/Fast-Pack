@@ -39,6 +39,7 @@ pub struct ConversionOptions {
     pub custom_items: Vec<crate::compat::custom_items::Rule>,
     pub fishing_line_color: Option<[u8; 3]>,
     pub block_outline_color: Option<[u8; 3]>,
+    pub rainbow: crate::compat::rainbow::Settings,
 }
 
 impl Default for ConversionOptions {
@@ -63,6 +64,7 @@ impl Default for ConversionOptions {
             custom_items: Vec::new(),
             fishing_line_color: None,
             block_outline_color: None,
+            rainbow: Default::default(),
         }
     }
 }
@@ -1369,7 +1371,9 @@ pub fn convert_pack(
         crate::compat::SkyRuntime::Auto,
         crate::compat::ShaderPolicy::Adaptive,
     )?;
-    if options.restore_vanilla_glint && options.glint_color.is_none() {
+    if options.rainbow.glint {
+        crate::compat::glint::rainbow(&root, src_format, options.tgt_format, &mut report.assets)?;
+    } else if options.restore_vanilla_glint && options.glint_color.is_none() {
         crate::compat::glint::restore_vanilla(&root, options.tgt_format, &mut report.assets)?;
     } else if options.glint_color.is_some() || report.compatibility.selected_variant.is_some() {
         crate::compat::glint::migrate(
@@ -1381,7 +1385,7 @@ pub fn convert_pack(
         )?;
     }
     report.compatibility.warnings.extend(sky_notes);
-    crate::compat::line_colors::apply(
+    crate::compat::line_colors::apply_animated(
         &root,
         options
             .target_version
@@ -1389,6 +1393,8 @@ pub fn convert_pack(
             .unwrap_or(&version_label_of(options.tgt_format)),
         options.fishing_line_color,
         options.block_outline_color,
+        options.rainbow.fishing_line,
+        options.rainbow.block_outline,
         &mut report.assets,
     )?;
     if !options.custom_items.is_empty() {
@@ -1405,6 +1411,9 @@ pub fn convert_pack(
     }
     if let Some(crosshair) = &options.crosshair {
         crate::crosshair::apply(&root, options.tgt_format, crosshair, &mut report.assets)?;
+        if options.rainbow.crosshair {
+            crate::compat::rainbow::crosshair(&root, options.tgt_format, &mut report.assets)?;
+        }
     }
     crate::compat::attack_indicator::apply(
         &root,

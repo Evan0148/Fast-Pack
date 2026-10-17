@@ -28,6 +28,58 @@ impl ColorTarget {
 }
 
 impl App {
+    pub(super) fn rainbow_for(&self, target: ColorTarget) -> bool {
+        match target {
+            ColorTarget::Glint => self.rainbow.glint,
+            ColorTarget::Crosshair => self.rainbow.crosshair,
+            ColorTarget::ItemOutline => self.item_editor.outline_rainbow(),
+            ColorTarget::FishingLine => self.rainbow.fishing_line,
+            ColorTarget::BlockOutline => self.rainbow.block_outline,
+        }
+    }
+    pub(super) fn set_rainbow(&mut self, enabled: bool) {
+        match self.color_target {
+            ColorTarget::Glint => {
+                self.rainbow.glint = enabled;
+                if enabled {
+                    self.custom_glint = true;
+                }
+            }
+            ColorTarget::Crosshair => {
+                self.rainbow.crosshair = enabled;
+                if enabled {
+                    self.custom_crosshair = true;
+                }
+            }
+            ColorTarget::ItemOutline => self.item_editor.set_outline_rainbow(enabled),
+            ColorTarget::FishingLine => {
+                self.rainbow.fishing_line = enabled;
+                if enabled {
+                    self.fishing_line = Some(self.fishing_line_color);
+                }
+            }
+            ColorTarget::BlockOutline => {
+                self.rainbow.block_outline = enabled;
+                if enabled {
+                    self.block_outline = Some(self.block_outline_color);
+                }
+            }
+        }
+        self.glint_preview_started = self.now;
+        self.glint_edited = Some(self.now);
+        self.commit_glint_color();
+    }
+    pub(super) fn rainbow_hint(&self, target: ColorTarget) -> &'static str {
+        match target {
+            ColorTarget::Glint => "彩虹渐变随附魔光效流动；关闭后使用所选的固定颜色。",
+            ColorTarget::Crosshair
+                if fast_pack::pack_format_of(&self.target).is_ok_and(|format| format < 18) =>
+            {
+                "此版本的动态准星需要 OptiFine 自定义动画；颜色设置自动保存。"
+            }
+            _ => "开启后在游戏中循环变色；关闭后使用所选的固定颜色。设置自动保存。",
+        }
+    }
     pub(super) fn color_for(&self, target: ColorTarget) -> [u8; 3] {
         match target {
             ColorTarget::Glint => self.active_glint_color(),
@@ -108,7 +160,9 @@ impl App {
         });
         let mut control = row![swatch].spacing(10).align_y(Alignment::Center);
         if target == ColorTarget::Glint {
-            control = control.push(self.label(if self.custom_glint {
+            control = control.push(self.label(if self.custom_glint && self.rainbow.glint {
+                "动态彩色".into()
+            } else if self.custom_glint {
                 fast_pack::compat::glint::color_hex(self.glint_color)
             } else {
                 "原版紫色".into()

@@ -81,6 +81,18 @@ struct Arguments {
     fishing_line_color: Option<[u8; 3]>,
     #[arg(long,value_parser=crate::compat::glint::parse_color,value_name="RRGGBB",help="自定义瞄准方块边框颜色，需要目标版本 1.17+")]
     block_outline_color: Option<[u8; 3]>,
+    #[arg(long, conflicts_with = "vanilla_glint", help = "动态彩虹附魔光效")]
+    rainbow_glint: bool,
+    #[arg(
+        long,
+        requires = "crosshair",
+        help = "动态彩色准星；旧版需要 OptiFine 动画"
+    )]
+    rainbow_crosshair: bool,
+    #[arg(long, help = "动态彩色鱼竿线，支持 1.17+")]
+    rainbow_fishing_line: bool,
+    #[arg(long, help = "动态彩色方块选中边框，支持 1.17+")]
+    rainbow_block_outline: bool,
     #[arg(long, help = "关闭小写规范化")]
     no_lowercase: bool,
     #[arg(long, help = "关闭语言文件转换")]
@@ -167,6 +179,12 @@ pub fn run() -> Result<()> {
         convert_lang: !args.no_lang,
         fishing_line_color: args.fishing_line_color,
         block_outline_color: args.block_outline_color,
+        rainbow: crate::compat::rainbow::Settings {
+            glint: args.rainbow_glint,
+            crosshair: args.rainbow_crosshair,
+            fishing_line: args.rainbow_fishing_line,
+            block_outline: args.rainbow_block_outline,
+        },
         extra_renames: args
             .renames
             .as_deref()

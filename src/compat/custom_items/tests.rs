@@ -1,5 +1,66 @@
 use super::*;
 
+#[test]
+fn rainbow_outlines_animate_only_the_private_item_texture_and_can_be_disabled() {
+    for version in ["1.7.10", "1.8.9", "1.20.1", "1.21.1", "26.4"] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let old = crate::pack_format_of(version).unwrap() < 4;
+        let texture = root.join(if old {
+            "assets/minecraft/textures/items/diamond_sword.png"
+        } else {
+            "assets/minecraft/textures/item/diamond_sword.png"
+        });
+        fs::create_dir_all(texture.parent().unwrap()).unwrap();
+        let mut image = RgbaImage::new(16, 16);
+        image.put_pixel(7, 7, Rgba([12, 34, 56, 255]));
+        fs::save_image(&image, &texture).unwrap();
+        let original = fs::read(&texture).unwrap();
+        let mut rule = rule(version, "diamond_sword");
+        rule.outline = Some(Outline {
+            color: [100, 50, 25],
+            width: 1,
+            rainbow: true,
+        });
+        let mut report = AssetReport::default();
+        apply(root, version, &[rule.clone()], &mut report).unwrap();
+        assert!(
+            report.warnings.is_empty(),
+            "{version}: {:?}",
+            report.warnings
+        );
+        if version != "1.7.10" {
+            assert_eq!(fs::read(&texture).unwrap(), original, "{version}");
+        }
+        let path = if version == "1.7.10" {
+            texture.clone()
+        } else {
+            root.join(format!(
+                "assets/minecraft/textures/{}/fastpack_custom/diamond_sword/t0.png",
+                if old { "items" } else { "item" }
+            ))
+        };
+        let animated = fs::open_image(&path).unwrap().to_rgba8();
+        assert_eq!(animated.dimensions(), (16, 384), "{version}");
+        for frame in 0..24 {
+            assert_eq!(
+                animated.get_pixel(7, 16 * frame + 7),
+                image.get_pixel(7, 7),
+                "{version}"
+            );
+        }
+        assert_ne!(animated.get_pixel(6, 7), animated.get_pixel(6, 16 * 8 + 7));
+        assert!(path.with_extension("png.mcmeta").pack_is_file());
+        rule.outline.as_mut().unwrap().rainbow = false;
+        apply(root, version, &[rule], &mut report).unwrap();
+        assert_eq!(fs::open_image(&path).unwrap().height(), 16, "{version}");
+        assert!(
+            !path.with_extension("png.mcmeta").pack_is_file(),
+            "{version}"
+        );
+    }
+}
+
 fn rule(version: &str, id: &str) -> Rule {
     Rule {
         version: version.into(),
@@ -77,6 +138,7 @@ fn outlines_preserve_original_pixels_and_never_bleed_into_adjacent_frames() {
     let out = outlined(
         &image,
         &Outline {
+            rainbow: false,
             color: [12, 34, 56],
             width: 1,
         },
@@ -129,6 +191,7 @@ fn item_outline_is_isolated_from_world_blocks_and_language_entries_survive() {
     value.name = Some("我的石头".into());
     value.inventory_scale = 150;
     value.outline = Some(Outline {
+        rainbow: false,
         color: [1, 2, 3],
         width: 1,
     });

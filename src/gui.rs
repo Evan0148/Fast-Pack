@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone)]
 enum Message {
     PickColor(ColorTarget),
+    RainbowColor(bool),
     FishingLine(bool),
     BlockOutline(bool),
     ResetCrosshairColor,
@@ -229,6 +230,7 @@ struct App {
     block_outline: Option<[u8; 3]>,
     block_outline_color: [u8; 3],
     crosshair_tint: Option<[u8; 3]>,
+    rainbow: fast_pack::compat::rainbow::Settings,
     item_editor: item_editor::Editor,
     profile: Option<crate::ui_profile::Profile>,
     preview_pending: Option<u64>,
@@ -421,6 +423,7 @@ impl App {
                 .block_outline
                 .unwrap_or(preferences.block_outline_color),
             crosshair_tint: preferences.crosshair_tint,
+            rainbow: preferences.rainbow,
             profile: crate::ui_profile::Profile::load(),
             preview_pending: None,
             preview_request: None,
@@ -644,6 +647,9 @@ impl App {
                     );
                 }
                 app.open_color_picker(target);
+                if std::env::var("FAST_PACK_CAPTURE_RAINBOW").as_deref() == Ok("1") {
+                    app.set_rainbow(true);
+                }
                 if let Ok(value) = std::env::var("FAST_PACK_CAPTURE_COLOR_VALUE")
                     && let Ok(color) = fast_pack::compat::glint::parse_color(&value)
                 {
@@ -661,19 +667,20 @@ impl App {
         Colors::at(self.theme_motion.value(self.now))
     }
     fn animation_active(&self) -> bool {
-        [
-            &self.progress,
-            &self.advanced_motion,
-            &self.result_motion,
-            &self.load_motion,
-            &self.theme_motion,
-            &self.auto_save_motion,
-            &self.auto_save_path_motion,
-            &self.heypixel_motion,
-            &self.glint_picker_motion,
-        ]
-        .into_iter()
-        .any(|value| value.active(self.now))
+        (!self.reduced && self.glint_picker && self.rainbow_for(self.color_target))
+            || [
+                &self.progress,
+                &self.advanced_motion,
+                &self.result_motion,
+                &self.load_motion,
+                &self.theme_motion,
+                &self.auto_save_motion,
+                &self.auto_save_path_motion,
+                &self.heypixel_motion,
+                &self.glint_picker_motion,
+            ]
+            .into_iter()
+            .any(|value| value.active(self.now))
             || self.hover.values().any(|value| value.active(self.now))
             || self
                 .glint_color_motion
@@ -1278,6 +1285,7 @@ impl App {
                     fishing_line: self.fishing_line,
                     block_outline: self.block_outline,
                     crosshair_tint: self.crosshair_tint,
+                    rainbow: self.rainbow,
                     fishing_line_color: self.fishing_line_color,
                     block_outline_color: self.block_outline_color,
                     auto_save: self.auto_save,
@@ -1525,6 +1533,16 @@ impl App {
             custom_items: self.item_editor.applied(&self.target),
             fishing_line_color: (target_format >= 7).then_some(self.fishing_line).flatten(),
             block_outline_color: (target_format >= 7).then_some(self.block_outline).flatten(),
+            rainbow: fast_pack::compat::rainbow::Settings {
+                glint: self.custom_glint && self.rainbow.glint,
+                crosshair: self.custom_crosshair && self.rainbow.crosshair,
+                fishing_line: target_format >= 7
+                    && self.fishing_line.is_some()
+                    && self.rainbow.fishing_line,
+                block_outline: target_format >= 7
+                    && self.block_outline.is_some()
+                    && self.rainbow.block_outline,
+            },
         };
         self.phase = Phase::Running;
         self.error = None;
@@ -2209,6 +2227,7 @@ impl App {
                 }
             }
             Message::PickColor(target) if !self.busy() => self.open_color_picker(target),
+            Message::RainbowColor(enabled) if !self.busy() => self.set_rainbow(enabled),
             Message::FishingLine(enabled) if !self.busy() => {
                 self.fishing_line = enabled.then_some(self.fishing_line_color);
                 self.save_preferences();
@@ -2218,6 +2237,7 @@ impl App {
                 self.save_preferences();
             }
             Message::ResetCrosshairColor if !self.busy() => {
+                self.rainbow.crosshair = false;
                 self.crosshair_tint = None;
                 self.edit_crosshair();
             }
@@ -3200,11 +3220,23 @@ impl App {
             .size(12)
             .color(if valid { c.muted } else { c.danger }),
         );
-        let color = Color {
-            r: self.glint_color_motion[0].value(self.now),
-            g: self.glint_color_motion[1].value(self.now),
-            b: self.glint_color_motion[2].value(self.now),
-            a: 1.0,
+        let color = if self.rainbow_for(target) {
+            let rgb = fast_pack::compat::rainbow::color(if self.reduced {
+                0.0
+            } else {
+                self.now
+                    .saturating_duration_since(self.glint_preview_started)
+                    .as_secs_f32()
+                    / 6.0
+            });
+            Color::from_rgb8(rgb[0], rgb[1], rgb[2])
+        } else {
+            Color {
+                r: self.glint_color_motion[0].value(self.now),
+                g: self.glint_color_motion[1].value(self.now),
+                b: self.glint_color_motion[2].value(self.now),
+                a: 1.0,
+            }
         };
         let preview: Element<'_, Message> = if target == ColorTarget::Glint {
             column![
@@ -3251,7 +3283,12 @@ impl App {
                 .into()
         } else {
             self.label(
-                if target == ColorTarget::Crosshair && self.crosshair_drawing {
+                if target == ColorTarget::Crosshair
+                    && self.crosshair_drawing
+                    && self.rainbow.crosshair
+                {
+                    "动态彩色作用于导出的整个准星，画布像素和笔色保留。"
+                } else if target == ColorTarget::Crosshair && self.crosshair_drawing {
                     "当前颜色用于画笔，已画好的像素保持原样。"
                 } else {
                     "颜色设置只保存在本机。"
@@ -3274,6 +3311,12 @@ impl App {
                         "拖动色卡选择颜色与明暗，右侧色相条切换色系。"
                     }),
                     palette,
+                    checkbox(self.rainbow_for(target))
+                        .label("动态彩色")
+                        .size(17)
+                        .text_size(13)
+                        .on_toggle_maybe((!self.busy()).then_some(Message::RainbowColor)),
+                    self.label(self.rainbow_hint(target)),
                     row![
                         column![
                             widget::canvas(GlintColorCard {
@@ -3349,7 +3392,9 @@ impl App {
                     self.action(
                         97,
                         "原色",
-                        (enabled && !self.crosshair_drawing && self.crosshair_tint.is_some())
+                        (enabled
+                            && !self.crosshair_drawing
+                            && (self.crosshair_tint.is_some() || self.rainbow.crosshair))
                             .then_some(Message::ResetCrosshairColor),
                         false
                     )
