@@ -177,6 +177,10 @@ fn main() -> Result<()> {
         model_notices.join("legacy-cit-items-NOTICE.txt"),
     )?;
     let crosshair_notices = license_source.path().join("CrosshairResources");
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/2-pyramid-NOTICE.txt"),
+        model_notices.join("2-pyramid-NOTICE.txt"),
+    )?;
     fs::create_dir_all(&crosshair_notices)?;
     for (source, name) in [
         ("assets/crosshair/NOTICE.txt", "legacy-icons-NOTICE.txt"),

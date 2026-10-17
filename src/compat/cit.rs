@@ -12,6 +12,21 @@ static ITEMS: LazyLock<BTreeMap<u32, String>> = LazyLock::new(|| {
         .expect("旧版耐久物品表无效")
 });
 
+struct Files {
+    paths: BTreeMap<PathBuf, PathBuf>,
+    folded: BTreeMap<String, PathBuf>,
+}
+
+impl Files {
+    fn lookup(&self, path: &Path) -> Option<(&PathBuf, &PathBuf)> {
+        self.paths.get_key_value(path).or_else(|| {
+            self.folded
+                .get(&path.to_string_lossy().to_lowercase())
+                .and_then(|path| self.paths.get_key_value(path))
+        })
+    }
+}
+
 fn clean(name: &str) -> String {
     if name
         .bytes()
@@ -62,7 +77,7 @@ fn reference(
     source: &Path,
     value: &str,
     extension: &str,
-    files: &BTreeMap<PathBuf, PathBuf>,
+    files: &Files,
     force: bool,
 ) -> Option<String> {
     if value.starts_with('#') || value.starts_with("builtin/") || value.is_empty() {
@@ -101,13 +116,10 @@ fn reference(
         ]
     };
     for candidate in candidates {
-        let candidate = lexical(root, &candidate)?;
-        let mapped = files.get_key_value(&candidate).or_else(|| {
-            let candidate = candidate.to_string_lossy().to_lowercase();
-            files
-                .iter()
-                .find(|(path, _)| path.to_string_lossy().to_lowercase() == candidate)
-        });
+        let Some(candidate) = lexical(root, &candidate) else {
+            continue;
+        };
+        let mapped = files.lookup(&candidate);
         let destination = mapped.map_or(&candidate, |(_, destination)| destination);
         if mapped.is_none() && !destination.pack_is_file() {
             continue;
@@ -128,7 +140,10 @@ fn reference(
 
 fn item_names(value: &str) -> Option<String> {
     let mut result = Vec::new();
-    for token in value.split_whitespace() {
+    for token in value
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|token| !token.is_empty())
+    {
         let numeric = token.strip_prefix("minecraft:").unwrap_or(token);
         if let Ok(id) = numeric.parse::<u32>() {
             result.push(format!("minecraft:{}", ITEMS.get(&id)?));
@@ -152,7 +167,7 @@ fn model_refs(
     value: &mut serde_json::Value,
     root: &Path,
     source: &Path,
-    files: &BTreeMap<PathBuf, PathBuf>,
+    files: &Files,
     force: bool,
 ) {
     match value {
@@ -188,9 +203,13 @@ fn model_refs(
     }
 }
 
-pub(super) fn migrate(root: &Path, target: u32, report: &mut AssetReport) -> Result<()> {
+pub(super) fn migrate(
+    root: &Path,
+    target: u32,
+    report: &mut AssetReport,
+) -> Result<BTreeMap<PathBuf, String>> {
     if target < 4 || !root.join("assets").pack_is_dir() {
-        return Ok(());
+        return Ok(BTreeMap::new());
     }
     let mut files = BTreeMap::new();
     for namespace in fs::read_dir(root.join("assets"))? {
@@ -221,10 +240,17 @@ pub(super) fn migrate(root: &Path, target: u32, report: &mut AssetReport) -> Res
         }
     }
     if files.is_empty() {
-        return Ok(());
+        return Ok(BTreeMap::new());
     }
+    let files = Files {
+        folded: files
+            .keys()
+            .map(|path| (path.to_string_lossy().to_lowercase(), path.clone()))
+            .collect(),
+        paths: files,
+    };
     let mut destinations = BTreeSet::new();
-    for (source, destination) in &files {
+    for (source, destination) in &files.paths {
         ensure!(destinations.insert(destination), "CIT 资源路径发生冲突");
         ensure!(
             source == destination
@@ -236,12 +262,12 @@ pub(super) fn migrate(root: &Path, target: u32, report: &mut AssetReport) -> Res
     }
     let mut changed = 0;
     let mut armor = 0;
-    for (source, destination) in &files {
+    for (source, destination) in &files.paths {
         let original = fs::read(source)?;
         let mut bytes = original.clone();
         if source
             .extension()
-            .is_some_and(|value| value == "properties")
+            .is_some_and(|value| value.to_string_lossy().eq_ignore_ascii_case("properties"))
         {
             let mut values = match properties::parse(&bytes) {
                 Ok(values) => values,
@@ -299,27 +325,30 @@ pub(super) fn migrate(root: &Path, target: u32, report: &mut AssetReport) -> Res
                 bytes = properties::write(&values).into_bytes();
             }
             changed += usize::from(bytes != original || source != destination);
-        } else if source.extension().is_some_and(|value| value == "json")
-            && let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&bytes)
+        } else if source
+            .extension()
+            .is_some_and(|value| value.to_string_lossy().eq_ignore_ascii_case("json"))
+            && let Ok(mut value) = crate::model_json::parse(&bytes)
         {
             model_refs(&mut value, root, source, &files, source != destination);
             let normalized = serde_json::to_vec_pretty(&value)?;
-            if serde_json::from_slice::<serde_json::Value>(&original)? != value {
+            if crate::model_json::parse(&original)? != value {
                 bytes = normalized;
             }
         }
         if source != destination || original != bytes {
-            if source
-                .extension()
-                .is_some_and(|value| value == "properties" || value == "json")
-            {
+            if source.extension().is_some_and(|value| {
+                ["properties", "json"]
+                    .iter()
+                    .any(|ext| value.to_string_lossy().eq_ignore_ascii_case(ext))
+            }) {
                 backup(root, source)?;
             }
             fs::create_dir_all(destination.parent().unwrap())?;
             fs::write_atomic(destination, &bytes)?;
         }
     }
-    for (source, destination) in &files {
+    for (source, destination) in &files.paths {
         if source != destination && destination.pack_is_file() {
             fs::remove_file(source)?;
         }
@@ -330,7 +359,30 @@ pub(super) fn migrate(root: &Path, target: u32, report: &mut AssetReport) -> Res
     if armor > 0 {
         report.warnings.push("耐久穿戴变色需要客户端启用兼容的 CIT 盔甲纹理功能（如 OptiFine 或支持 armor 的 CIT 实现）；原版客户端不会执行 CIT 规则，转换器不会修改客户端文件".into());
     }
-    Ok(())
+    Ok(files
+        .paths
+        .into_iter()
+        .filter(|(source, _)| {
+            source
+                .extension()
+                .is_some_and(|ext| ext.to_string_lossy().eq_ignore_ascii_case("properties"))
+        })
+        .map(|(source, destination)| {
+            let path = if destination.pack_is_file() {
+                destination
+            } else {
+                source.clone()
+            };
+            (
+                path,
+                source
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+            )
+        })
+        .collect())
 }
 
 #[cfg(test)]

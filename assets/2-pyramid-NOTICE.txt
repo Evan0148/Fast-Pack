@@ -1,0 +1,27 @@
+CIT item-definition conversion references the MIT-licensed 2-Pyramid implementation.
+Source: https://github.com/realLivedInCorner/2-Pyramid
+Reviewed revision: db02f8ba49dcb5219c02e86097a14c24394406d0
+Reviewed file: src-tauri/src/natives/surgeon/cit_item_definitions.rs
+Fast Pack adapts the conversion approach to its own filesystem and renderer pipeline, with numeric CustomModelData dispatch, resource validation, animation metadata, rule priority, fallback preservation and indexed path lookups.
+
+MIT License
+
+Copyright (c) 2025-2026 2-Pyramid Studio
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

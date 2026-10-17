@@ -62,6 +62,12 @@ fn clean(bytes: &[u8]) -> Option<Vec<u8>> {
     changed.then_some(output)
 }
 
+pub(crate) fn parse(bytes: &[u8]) -> Result<Value> {
+    Ok(serde_json::from_slice(
+        &clean(bytes).unwrap_or_else(|| bytes.to_vec()),
+    )?)
+}
+
 pub(crate) fn normalize(root: &Path) -> Result<Vec<String>> {
     if !root.join("assets").pack_is_dir() {
         return Ok(Vec::new());
