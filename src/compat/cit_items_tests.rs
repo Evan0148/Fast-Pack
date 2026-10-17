@@ -19,7 +19,8 @@ fn image(root: &Path, name: &str) {
 }
 fn run(root: &Path, target: u32, version: &str) -> AssetReport {
     let mut report = AssetReport::default();
-    let paths = super::super::cit::migrate(root, target, &mut report).unwrap();
+    let paths =
+        super::super::cit::migrate_versioned(root, target, Some(version), &mut report).unwrap();
     migrate(root, target, version, &paths, &mut report).unwrap();
     report
 }
@@ -180,7 +181,7 @@ fn weight_and_unsupported_conditions_never_widen_matching() {
         report
             .warnings
             .iter()
-            .any(|value| value.contains("nbt.display.Name"))
+            .any(|value| value.contains("custom_name"))
     );
     let value = json_file(root, "assets/minecraft/items/diamond_sword.json");
     assert_eq!(selected(&value["model"], Some(7.0)), "demo:item/base");
@@ -355,6 +356,136 @@ fn old_targets_keep_mod_rules_and_do_not_gain_modern_item_definitions() {
 }
 
 #[test]
+fn every_version_pair_preserves_cit_resources_conditions_and_directory_identity() {
+    let work = tempfile::tempdir().unwrap();
+    let profiles = &crate::tables().pack_formats;
+    let mut checked = 0;
+    for (source_version, source_format) in profiles {
+        for (target_version, target_format) in profiles {
+            let root = work.path().join(format!("case_{checked}"));
+            let _mount = crate::packfs::Mount::new(&root);
+            let base = "assets/minecraft/mcpatcher/cit/Armor Colors";
+            fs::create_dir_all(root.join(base)).unwrap();
+            for (name, text) in [
+                (
+                    "weapon",
+                    "type=item\nitems=diamond_sword\nnbt.CustomModelData=7\ntexture=./color\n",
+                ),
+                (
+                    "armor",
+                    "type=armor\nitems=diamond_chestplate\ndamage=25-75%\ndamageMask=65535\ntexture.diamond_layer_1=./color\n",
+                ),
+                (
+                    "named",
+                    "type=item\nitems=diamond_sword\nnbt.display.Name=ipattern:Ruby *\nnbt.display.Lore.*=pattern:Test *\ntexture=./color\n",
+                ),
+            ] {
+                fs::write(root.join(format!("{base}/{name}.properties")), text).unwrap();
+            }
+            let png = RgbaImage::from_pixel(16, 16, Rgba([12, 34, 56, 170]));
+            fs::save_image(&png, root.join(format!("{base}/color.png"))).unwrap();
+            let metadata = b"{\"animation\":{\"frametime\":3,\"frames\":[0]}}";
+            fs::write(root.join(format!("{base}/color.png.mcmeta")), metadata).unwrap();
+            let mut count = None;
+            for (version, format) in [
+                (source_version, *source_format),
+                (target_version, *target_format),
+                (source_version, *source_format),
+            ] {
+                let mut report = AssetReport::default();
+                let paths =
+                    super::super::cit::migrate_versioned(&root, format, Some(version), &mut report)
+                        .unwrap();
+                migrate(&root, format, version, &paths, &mut report).unwrap();
+                assert_eq!(paths.len(), 3, "{source_version} -> {target_version}");
+                let resources = Resources::new(&root, format).unwrap();
+                for (path, origin) in &paths {
+                    assert!(origin.starts_with("assets/minecraft/mcpatcher/cit/Armor Colors/"));
+                    let relative = path
+                        .strip_prefix(&root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    assert!(
+                        relative.starts_with(if format < 4 {
+                            "assets/minecraft/mcpatcher/cit/"
+                        } else {
+                            "assets/minecraft/optifine/cit/"
+                        }),
+                        "{version}: {relative}"
+                    );
+                    let values = properties::parse(&fs::read(path).unwrap()).unwrap();
+                    if origin.ends_with("weapon.properties") {
+                        assert_eq!(
+                            values[if format >= 46 {
+                                "components.minecraft:custom_model_data.floats.0"
+                            } else if format >= 32 {
+                                "components.minecraft:custom_model_data"
+                            } else {
+                                "nbt.CustomModelData"
+                            }],
+                            "7"
+                        );
+                    } else if origin.ends_with("armor.properties") {
+                        assert_eq!(values["damage"], "25-75%");
+                        assert_eq!(values["damageMask"], "65535");
+                    } else {
+                        assert_eq!(
+                            values[if format >= 32 {
+                                "components.minecraft:custom_name"
+                            } else {
+                                "nbt.display.Name"
+                            }],
+                            "ipattern:Ruby *"
+                        );
+                        assert_eq!(
+                            values[if format >= 32 {
+                                "components.minecraft:lore.*"
+                            } else {
+                                "nbt.display.Lore.*"
+                            }],
+                            "pattern:Test *"
+                        );
+                    }
+                    for (key, value) in &values {
+                        if key == "texture" || key.starts_with("texture.") {
+                            let texture = resources.resolve(path, value, ".png").unwrap();
+                            assert_eq!(fs::open_image(&texture).unwrap().to_rgba8(), png);
+                            assert_eq!(
+                                fs::read(texture.with_extension("png.mcmeta")).unwrap(),
+                                metadata
+                            );
+                        }
+                    }
+                }
+                let cit_files = WalkDir::new(root.join("assets/minecraft"))
+                    .into_iter()
+                    .map(Result::unwrap)
+                    .filter(|entry| {
+                        entry.file_type().is_file()
+                            && entry
+                                .path()
+                                .to_string_lossy()
+                                .replace('\\', "/")
+                                .contains("/cit/")
+                    })
+                    .count();
+                if let Some(previous) = count {
+                    assert_eq!(
+                        cit_files, previous,
+                        "CIT folder growth: {source_version} -> {target_version}"
+                    );
+                } else {
+                    count = Some(cit_files);
+                }
+            }
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, profiles.len() * profiles.len());
+}
+
+#[test]
 fn inherited_item_pose_and_user_edits_survive_conversion() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
@@ -397,6 +528,73 @@ fn inherited_item_pose_and_user_edits_survive_conversion() {
             .iter()
             .any(|value| value.contains("已生成定义被修改"))
     );
+}
+
+#[test]
+fn legacy_cmd_bindings_preserve_other_overrides_and_survive_repeated_downgrades() {
+    for version in ["1.14", "1.16.5", "1.20.1", "1.20.5", "1.21.1", "1.21.3"] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        write(root,"assets/minecraft/models/item/bow.json",br#"{"parent":"minecraft:item/generated","textures":{"layer0":"minecraft:item/bow"},"display":{"gui":{"scale":[0.5,0.5,0.5]}},"overrides":[{"predicate":{"pulling":1},"model":"minecraft:item/bow_pulling_0"},{"predicate":{"pulling":1,"pull":0.65},"model":"minecraft:item/bow_pulling_1"},{"predicate":{"custom_model_data":99},"model":"minecraft:item/other"}]}"#);
+        for code in [7, 9] {
+            cit(
+                root,
+                "optifine",
+                &format!("bow_{code}"),
+                &format!("items=bow\nnbt.CustomModelData={code}\n"),
+            );
+        }
+        let format = crate::pack_format_of(version).unwrap();
+        run(root, format, version);
+        let model = json_file(root, "assets/minecraft/models/item/bow.json");
+        let selected = |cmd: f64| {
+            model["overrides"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .rev()
+                .find(|entry| {
+                    entry["predicate"]
+                        .as_object()
+                        .unwrap()
+                        .iter()
+                        .all(|(key, value)| {
+                            let actual = match key.as_str() {
+                                "custom_model_data" => cmd,
+                                "pulling" => 1.0,
+                                "pull" => 0.9,
+                                _ => panic!(),
+                            };
+                            actual >= value.as_f64().unwrap()
+                        })
+                })
+                .unwrap()["model"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        for code in [7.0, 9.0] {
+            assert!(
+                selected(code).starts_with("minecraft:item/fastpack_cit/"),
+                "{version}"
+            );
+        }
+        for code in [0.0, 6.0, 8.0, 10.0] {
+            assert_eq!(
+                selected(code),
+                "minecraft:item/bow_pulling_1",
+                "{version} cmd={code}"
+            );
+        }
+        assert_eq!(selected(99.0), "minecraft:item/other");
+        assert_eq!(model["display"]["gui"]["scale"], json!([0.5, 0.5, 0.5]));
+        let first = disk::read(root.join("assets/minecraft/models/item/bow.json")).unwrap();
+        run(root, format, version);
+        assert_eq!(
+            disk::read(root.join("assets/minecraft/models/item/bow.json")).unwrap(),
+            first
+        );
+    }
 }
 
 #[test]

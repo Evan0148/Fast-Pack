@@ -10,6 +10,9 @@ use std::path::{Component, Path, PathBuf};
 
 const PREFIX: &str = "item/fastpack_cit/";
 
+#[path = "cit_legacy.rs"]
+mod legacy;
+
 fn id(value: &str) -> Result<(String, String)> {
     let (namespace, name) = value.split_once(':').unwrap_or(("minecraft", value));
     ensure!(
@@ -179,7 +182,13 @@ impl<'a> Resources<'a> {
         (namespace == "minecraft"
             && (matches!(
                 name.as_str(),
-                "builtin/generated"
+                "block/cube_all"
+                    | "block/cube"
+                    | "block/block"
+                    | "block/cube_bottom_top"
+                    | "block/orientable"
+                    | "block/cross"
+                    | "builtin/generated"
                     | "builtin/entity"
                     | "item/generated"
                     | "item/handheld"
@@ -500,6 +509,9 @@ pub(super) fn migrate(
     paths: &BTreeMap<PathBuf, String>,
     report: &mut AssetReport,
 ) -> Result<()> {
+    if target < 46 {
+        return legacy::migrate(root, target, version, paths, report);
+    }
     let cache = root.join("fastpack/cit-items.json");
     if target < 46 || paths.is_empty() && !cache.pack_is_file() {
         return Ok(());

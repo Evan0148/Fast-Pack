@@ -1351,6 +1351,7 @@ pub fn convert_pack(
     report.assets.converted.extend(model_json_notes);
     crate::compat::migrate_versioned_assets(
         &root,
+        src_format,
         options.tgt_format,
         options
             .target_version

@@ -5,6 +5,7 @@ pub(crate) mod attack_indicator;
 mod beds;
 mod cit;
 mod cit_items;
+mod cit_rules;
 mod connected_textures;
 pub mod custom_items;
 mod effect_panels;
@@ -38,13 +39,14 @@ mod via_sounds;
 
 pub(crate) fn migrate_versioned_assets(
     root: &std::path::Path,
+    source: u32,
     target: u32,
     version: &str,
     report: &mut assets::AssetReport,
     heypixel_compat: bool,
 ) -> anyhow::Result<()> {
     beds::migrate(root, target, version, report)?;
-    let cit_rules = cit::migrate(root, target, report)?;
+    let cit_rules = cit::migrate_from(root, Some(source), target, Some(version), report)?;
     if version == "1.20.1" && !heypixel_compat {
         via_items::disable(root, report)?;
     } else {

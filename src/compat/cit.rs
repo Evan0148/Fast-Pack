@@ -1,13 +1,13 @@
 use super::assets::{AssetReport, backup};
 use super::properties;
 use crate::packfs::{self as fs, PathExt, WalkDir};
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 
-static ITEMS: LazyLock<BTreeMap<u32, String>> = LazyLock::new(|| {
+pub(super) static ITEMS: LazyLock<BTreeMap<u32, String>> = LazyLock::new(|| {
     serde_json::from_str(include_str!("../../assets/legacy-cit-items.json"))
         .expect("旧版耐久物品表无效")
 });
@@ -27,7 +27,7 @@ impl Files {
     }
 }
 
-fn clean(name: &str) -> String {
+pub(super) fn clean(name: &str) -> String {
     if name
         .bytes()
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"._-".contains(&c))
@@ -78,7 +78,7 @@ fn reference(
     value: &str,
     extension: &str,
     files: &Files,
-    force: bool,
+    _force: bool,
 ) -> Option<String> {
     if value.starts_with('#') || value.starts_with("builtin/") || value.is_empty() {
         return None;
@@ -86,7 +86,6 @@ fn reference(
     let relative = source.strip_prefix(root.join("assets")).ok()?;
     let namespace = relative.components().next()?.as_os_str().to_str()?;
     let value = value.replace('\\', "/");
-    let force = force || value.chars().any(|c| c.is_ascii_uppercase() || c == ' ');
     let value = if value.to_ascii_lowercase().ends_with(extension) {
         value
     } else {
@@ -98,7 +97,7 @@ fn reference(
     } else {
         "textures"
     };
-    let candidates = if let Some((namespace, name)) = value.split_once(':') {
+    let mut candidates = if let Some((namespace, name)) = value.split_once(':') {
         let base = root.join("assets").join(namespace);
         vec![base.join(name), base.join(kind).join(name)]
     } else if let Some(value) = value.strip_prefix("~/") {
@@ -115,6 +114,9 @@ fn reference(
             source.parent()?.join(&value),
         ]
     };
+    for candidate in candidates.clone() {
+        candidates.extend(super::cit_rules::texture_candidates(&candidate));
+    }
     for candidate in candidates {
         let Some(candidate) = lexical(root, &candidate) else {
             continue;
@@ -124,15 +126,19 @@ fn reference(
         if mapped.is_none() && !destination.pack_is_file() {
             continue;
         }
-        if !force && destination == &candidate {
-            return None;
-        }
         let name = destination
             .strip_prefix(root.join("assets"))
             .ok()?
             .to_str()?
             .replace('\\', "/");
         let (namespace, name) = name.split_once('/')?;
+        let name = name
+            .strip_prefix(if extension == ".json" {
+                "models/"
+            } else {
+                "textures/"
+            })
+            .unwrap_or(name);
         return Some(format!("{namespace}:{}", name.trim_end_matches(extension)));
     }
     None
@@ -203,15 +209,60 @@ fn model_refs(
     }
 }
 
+#[cfg(test)]
 pub(super) fn migrate(
     root: &Path,
     target: u32,
     report: &mut AssetReport,
 ) -> Result<BTreeMap<PathBuf, String>> {
-    if target < 4 || !root.join("assets").pack_is_dir() {
+    migrate_versioned(root, target, None, report)
+}
+
+#[cfg(test)]
+pub(super) fn migrate_versioned(
+    root: &Path,
+    target: u32,
+    version: Option<&str>,
+    report: &mut AssetReport,
+) -> Result<BTreeMap<PathBuf, String>> {
+    migrate_from(root, None, target, version, report)
+}
+
+pub(super) fn migrate_from(
+    root: &Path,
+    source: Option<u32>,
+    target: u32,
+    version: Option<&str>,
+    report: &mut AssetReport,
+) -> Result<BTreeMap<PathBuf, String>> {
+    if !root.join("assets").pack_is_dir() {
         return Ok(BTreeMap::new());
     }
+    let cache = root.join("fastpack/cit-paths.json");
+    let format_cache = root.join("fastpack/cit-format.json");
+    let source_format = source
+        .or_else(|| {
+            fs::read(&format_cache)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<u32>(&bytes).ok())
+        })
+        .or_else(|| {
+            fs::read(root.join("pack.mcmeta"))
+                .ok()
+                .and_then(|bytes| crate::model_json::parse(&bytes).ok())
+                .and_then(|value| {
+                    value["pack"]["pack_format"]
+                        .as_u64()
+                        .map(|value| value as u32)
+                })
+        });
+    let previous: BTreeMap<String, String> = if cache.pack_is_file() {
+        serde_json::from_slice(&fs::read(&cache)?).unwrap_or_default()
+    } else {
+        BTreeMap::new()
+    };
     let mut files = BTreeMap::new();
+    let mut origins = BTreeMap::new();
     for namespace in fs::read_dir(root.join("assets"))? {
         let namespace = namespace?.path();
         for runtime in ["mcpatcher", "optifine", "citresewn"] {
@@ -219,23 +270,25 @@ pub(super) fn migrate(
             if !directory.pack_is_dir() {
                 continue;
             }
-            let destination = if runtime == "mcpatcher" {
-                namespace.join("optifine/cit/fastpack_legacy")
-            } else {
-                directory.clone()
-            };
             for entry in WalkDir::new(&directory).min_depth(1) {
                 let entry = entry?;
                 if !entry.file_type().is_file() {
                     continue;
                 }
-                let relative: PathBuf = entry
+                let relative = entry
                     .path()
-                    .strip_prefix(&directory)?
-                    .components()
-                    .map(|part| clean(&part.as_os_str().to_string_lossy()))
-                    .collect();
-                files.insert(entry.path().to_path_buf(), destination.join(relative));
+                    .strip_prefix(root)?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let origin = previous
+                    .get(&relative)
+                    .cloned()
+                    .unwrap_or_else(|| relative.clone());
+                let destination = super::cit_rules::destination(root, &origin, target)
+                    .or_else(|| super::cit_rules::destination(root, &relative, target))
+                    .context("CIT 来源路径无效")?;
+                origins.insert(entry.path().to_path_buf(), origin);
+                files.insert(entry.path().to_path_buf(), destination);
             }
         }
     }
@@ -293,6 +346,13 @@ pub(super) fn migrate(
                     }
                 }
             }
+            for warning in super::cit_rules::conditions(&mut values, source_format, target, version)
+            {
+                report.warnings.push(format!(
+                    "CIT {}：{warning}",
+                    source.strip_prefix(root)?.display()
+                ));
+            }
             for (key, value) in &mut values {
                 if key == "texture"
                     || key.starts_with("texture.")
@@ -304,14 +364,7 @@ pub(super) fn migrate(
                     } else {
                         ".png"
                     };
-                    if let Some(name) = reference(
-                        root,
-                        source,
-                        value,
-                        extension,
-                        &files,
-                        source != destination,
-                    ) {
+                    if let Some(name) = reference(root, source, value, extension, &files, true) {
                         *value = name;
                     } else if source != destination {
                         report.warnings.push(format!(
@@ -330,6 +383,17 @@ pub(super) fn migrate(
             .is_some_and(|value| value.to_string_lossy().eq_ignore_ascii_case("json"))
             && let Ok(mut value) = crate::model_json::parse(&bytes)
         {
+            if let Some(format) = source_format {
+                super::item_display::migrate(
+                    &mut value,
+                    format,
+                    target,
+                    &source
+                        .strip_prefix(root)?
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                );
+            }
             model_refs(&mut value, root, source, &files, source != destination);
             let normalized = serde_json::to_vec_pretty(&value)?;
             if crate::model_json::parse(&original)? != value {
@@ -359,6 +423,27 @@ pub(super) fn migrate(
     if armor > 0 {
         report.warnings.push("耐久穿戴变色需要客户端启用兼容的 CIT 盔甲纹理功能（如 OptiFine 或支持 armor 的 CIT 实现）；原版客户端不会执行 CIT 规则，转换器不会修改客户端文件".into());
     }
+    let next: BTreeMap<_, _> = files
+        .paths
+        .iter()
+        .map(|(source, destination)| {
+            let path = if destination.pack_is_file() {
+                destination
+            } else {
+                source
+            };
+            (
+                path.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+                origins[source].clone(),
+            )
+        })
+        .collect();
+    fs::create_dir_all(cache.parent().unwrap())?;
+    fs::write_atomic(&cache, &serde_json::to_vec(&next)?)?;
+    fs::write_atomic(&format_cache, &serde_json::to_vec(&target)?)?;
     Ok(files
         .paths
         .into_iter()
@@ -373,14 +458,7 @@ pub(super) fn migrate(
             } else {
                 source.clone()
             };
-            (
-                path,
-                source
-                    .strip_prefix(root)
-                    .unwrap()
-                    .to_string_lossy()
-                    .replace('\\', "/"),
-            )
+            (path, origins[&source].clone())
         })
         .collect())
 }
