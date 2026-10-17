@@ -1,4 +1,5 @@
 use crate::packfs::PathExt;
+mod animals;
 pub mod assets;
 pub mod atlas;
 pub(crate) mod attack_indicator;

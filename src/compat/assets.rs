@@ -1779,6 +1779,7 @@ fn migrate_assets(
         timer = std::time::Instant::now();
     }
     super::versioned_textures::migrate(root, source, target, &mut report)?;
+    super::animals::migrate(root, source, target, &mut report)?;
     if detailed {
         eprintln!(
             "PROFILE super::versioned_textures::migrate: {:.3}ms",
