@@ -1,0 +1,415 @@
+//! Standalone overlay packs: only explicitly requested features are generated.
+use crate::compat::assets::AssetReport;
+use crate::packfs::{self as fs, WalkDir};
+use anyhow::{Context, Result, ensure};
+use image::{ImageFormat, Rgba, RgbaImage, imageops};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::io::{Cursor, Write};
+use std::ops::Range;
+use std::path::{Path, PathBuf};
+use zip::ZipWriter;
+
+pub const DESCRIPTION_LIMIT: usize = 2048;
+pub const LEGACY_COLORS: [[u8; 3]; 16] = [
+    [0, 0, 0],
+    [0, 0, 170],
+    [0, 170, 0],
+    [0, 170, 170],
+    [170, 0, 0],
+    [170, 0, 170],
+    [255, 170, 0],
+    [170, 170, 170],
+    [85, 85, 85],
+    [85, 85, 255],
+    [85, 255, 85],
+    [85, 255, 255],
+    [255, 85, 85],
+    [255, 85, 255],
+    [255, 255, 85],
+    [255, 255, 255],
+];
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Description {
+    pub text: String,
+    /// One optional color per Unicode scalar, independent of UTF-8 byte offsets.
+    pub colors: Vec<Option<[u8; 3]>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Draft {
+    pub name: String,
+    pub description: Description,
+    pub icon: Option<Vec<u8>>,
+    pub ink: [u8; 3],
+    pub as_zip: bool,
+}
+
+impl Default for Draft {
+    fn default() -> Self {
+        Self {
+            name: "我的覆盖包".into(),
+            description: Description::plain("我的自定义覆盖包"),
+            icon: None,
+            ink: [170; 3],
+            as_zip: true,
+        }
+    }
+}
+
+pub fn supports_hex(version: &str) -> bool {
+    !version.starts_with("1.")
+        || version
+            .split('.')
+            .nth(1)
+            .and_then(|part| part.parse::<u32>().ok())
+            .is_some_and(|minor| minor >= 16)
+}
+
+fn legacy_index(color: [u8; 3]) -> usize {
+    LEGACY_COLORS
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, candidate)| {
+            candidate
+                .iter()
+                .zip(color)
+                .map(|(a, b)| (i32::from(*a) - i32::from(b)).pow(2))
+                .sum::<i32>()
+        })
+        .unwrap()
+        .0
+}
+
+pub fn display_color(color: [u8; 3], version: &str) -> [u8; 3] {
+    if supports_hex(version) {
+        color
+    } else {
+        LEGACY_COLORS[legacy_index(color)]
+    }
+}
+
+impl Description {
+    pub fn plain(text: impl Into<String>) -> Self {
+        let text = text.into();
+        Self {
+            colors: vec![None; text.chars().count()],
+            text,
+        }
+    }
+
+    pub fn paint(&mut self, range: Range<usize>, color: Option<[u8; 3]>) {
+        let length = self.text.chars().count();
+        self.colors.resize(length, None);
+        for current in &mut self.colors
+            [range.start.min(length)..range.end.min(length).max(range.start.min(length))]
+        {
+            *current = color;
+        }
+    }
+
+    /// Reconcile an edit at its actual cursor anchor (including repeated text).
+    pub fn edit(&mut self, text: String, anchor: usize, ink: [u8; 3]) -> Result<()> {
+        let before: Vec<_> = self.text.chars().collect();
+        let after: Vec<_> = text.chars().collect();
+        ensure!(
+            after.len() <= DESCRIPTION_LIMIT,
+            "简介最多 {DESCRIPTION_LIMIT} 个字符"
+        );
+        let prefix = before
+            .iter()
+            .zip(&after)
+            .take(anchor)
+            .take_while(|(a, b)| a == b)
+            .count();
+        let suffix = before[prefix..]
+            .iter()
+            .rev()
+            .zip(after[prefix..].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        self.colors.resize(before.len(), None);
+        self.colors.splice(
+            prefix..before.len() - suffix,
+            vec![Some(ink); after.len() - prefix - suffix],
+        );
+        self.text = text;
+        Ok(())
+    }
+
+    pub fn runs(&self, version: &str) -> Vec<(String, Option<[u8; 3]>)> {
+        let mut runs: Vec<(String, Option<[u8; 3]>)> = Vec::new();
+        for (index, character) in self.text.chars().enumerate() {
+            let color = self
+                .colors
+                .get(index)
+                .copied()
+                .flatten()
+                .map(|color| display_color(color, version));
+            if let Some((text, previous)) =
+                runs.last_mut().filter(|(_, previous)| *previous == color)
+            {
+                let _ = previous;
+                text.push(character);
+            } else {
+                runs.push((character.to_string(), color));
+            }
+        }
+        runs
+    }
+
+    pub fn component(&self, version: &str) -> Value {
+        if self.text.is_empty() {
+            return Value::String(String::new());
+        }
+        if supports_hex(version) {
+            let extra: Vec<_> = self
+                .runs(version)
+                .into_iter()
+                .map(|(text, color)| {
+                    let mut span = json!({"text": text});
+                    if let Some(color) = color {
+                        span["color"] = crate::compat::glint::color_hex(color).into();
+                    }
+                    span
+                })
+                .collect();
+            json!({"text": "", "extra": extra})
+        } else {
+            let mut output = String::new();
+            for (text, color) in self.runs(version) {
+                output.push('§');
+                output.push(color.map_or('r', |color| {
+                    b"0123456789abcdef"[legacy_index(color)] as char
+                }));
+                output.push_str(&text);
+            }
+            output.into()
+        }
+    }
+}
+
+pub fn prepare_icon(bytes: &[u8]) -> Result<Vec<u8>> {
+    ensure!(bytes.len() <= 16 * 1024 * 1024, "图标文件不能超过 16 MB");
+    let mut reader = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(4096);
+    limits.max_image_height = Some(4096);
+    limits.max_alloc = Some(80 * 1024 * 1024);
+    reader.limits(limits);
+    let image = reader
+        .decode()
+        .context("请选择 PNG 或 JPG 图片")?
+        .to_rgba8();
+    let side = image.width().max(image.height()).max(1);
+    let image = imageops::resize(
+        &image,
+        (image.width() * 128 / side).max(1),
+        (image.height() * 128 / side).max(1),
+        imageops::FilterType::Lanczos3,
+    );
+    let mut square = RgbaImage::from_pixel(128, 128, Rgba([0; 4]));
+    imageops::replace(
+        &mut square,
+        &image,
+        i64::from((128 - image.width()) / 2),
+        i64::from((128 - image.height()) / 2),
+    );
+    let mut output = Cursor::new(Vec::new());
+    square.write_to(&mut output, ImageFormat::Png)?;
+    Ok(output.into_inner())
+}
+
+#[derive(Clone, Debug)]
+pub struct Options {
+    pub version: String,
+    pub description: Description,
+    pub icon: Option<Vec<u8>>,
+    pub as_zip: bool,
+    pub glint_color: Option<[u8; 3]>,
+    pub fishing_line_color: Option<[u8; 3]>,
+    pub block_outline_color: Option<[u8; 3]>,
+    pub crosshair: Option<crate::crosshair::Crosshair>,
+    pub show_attack_indicator: bool,
+    pub custom_items: Vec<crate::compat::custom_items::Rule>,
+    pub rainbow: crate::compat::rainbow::Settings,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            version: "1.20.1".into(),
+            description: Description::default(),
+            icon: None,
+            as_zip: true,
+            glint_color: None,
+            fishing_line_color: None,
+            block_outline_color: None,
+            crosshair: None,
+            show_attack_indicator: true,
+            custom_items: Vec::new(),
+            rainbow: Default::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Report {
+    pub output: PathBuf,
+    pub files: usize,
+    pub assets: AssetReport,
+}
+
+pub fn filename(name: &str, version: &str, as_zip: bool) -> String {
+    let safe: String = name
+        .trim()
+        .chars()
+        .take(80)
+        .map(|c| {
+            if c.is_control() || "<>:\"/\\|?*".contains(c) {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let safe = safe.trim_matches([' ', '.']);
+    let safe = if safe.is_empty() { "覆盖包" } else { safe };
+    // A prefix also avoids Windows reserved device names.
+    format!("[{version}] {safe}{}", if as_zip { ".zip" } else { "" })
+}
+
+pub fn build(
+    destination: &Path,
+    options: &Options,
+    mut progress: impl FnMut(&str, u8),
+) -> Result<Report> {
+    let format = crate::pack_format_of(&options.version)?;
+    ensure!(!destination.exists(), "输出已存在，请更换文件名后重试");
+    ensure!(
+        options.description.text.chars().count() <= DESCRIPTION_LIMIT,
+        "简介过长"
+    );
+    ensure!(
+        options
+            .custom_items
+            .iter()
+            .all(|rule| rule.version == options.version),
+        "物品设置与覆盖包版本不一致"
+    );
+    for rule in &options.custom_items {
+        crate::compat::custom_items::validate(rule)?;
+    }
+    let work = tempfile::tempdir()?;
+    let root = work.path().join("overlay");
+    let _memory = fs::Mount::new(work.path());
+    fs::create_dir_all(&root)?;
+    let mut assets = AssetReport::default();
+    progress("制作附魔光效", 12);
+    if options.rainbow.glint {
+        crate::compat::glint::rainbow(&root, format, format, &mut assets)?;
+    } else if options.glint_color.is_some() {
+        crate::compat::glint::migrate(&root, format, format, options.glint_color, &mut assets)?;
+    }
+    progress("制作线条颜色", 28);
+    crate::compat::line_colors::apply_animated(
+        &root,
+        &options.version,
+        options.fishing_line_color,
+        options.block_outline_color,
+        options.rainbow.fishing_line,
+        options.rainbow.block_outline,
+        &mut assets,
+    )?;
+    progress("制作物品设置", 45);
+    if !options.custom_items.is_empty() {
+        crate::compat::custom_items::apply(
+            &root,
+            &options.version,
+            &options.custom_items,
+            &mut assets,
+        )?;
+    }
+    progress("制作准星", 68);
+    if let Some(crosshair) = &options.crosshair {
+        crate::crosshair::apply(&root, format, crosshair, &mut assets)?;
+        if options.rainbow.crosshair {
+            crate::compat::rainbow::crosshair(&root, format, &mut assets)?;
+        }
+    }
+    // Leaving the default on must not replace the pack underneath with vanilla HUD sprites.
+    if !options.show_attack_indicator {
+        crate::compat::attack_indicator::apply(&root, format, false, &mut assets)?;
+    }
+    progress("写入图标与简介", 82);
+    let icon = prepare_icon(
+        options
+            .icon
+            .as_deref()
+            .unwrap_or(include_bytes!("../assets/app.png")),
+    )?;
+    fs::write(root.join("pack.png"), icon)?;
+    let mut pack = json!({"pack_format": format, "description": options.description.component(&options.version)});
+    if format >= crate::NEW_META_MIN_FORMAT {
+        let components = crate::tables::format_components(Some(&options.version), format);
+        pack["min_format"] = json!(components);
+        pack["max_format"] = json!(components);
+    }
+    fs::write(
+        root.join("pack.mcmeta"),
+        serde_json::to_vec_pretty(&json!({"pack": pack}))?,
+    )?;
+    let mut files = Vec::new();
+    for entry in WalkDir::new(&root) {
+        let entry = entry?;
+        if entry.file_type().is_file() {
+            files.push(entry.into_path());
+        }
+    }
+    files.sort();
+    progress("保存覆盖包", 92);
+    let parent = destination
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    if options.as_zip {
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        {
+            let mut zip = ZipWriter::new(temporary.as_file_mut());
+            for file in &files {
+                let name = file
+                    .strip_prefix(&root)?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                zip.start_file(name, crate::converter::archive_options(file))?;
+                zip.write_all(&fs::read(file)?)?;
+            }
+            zip.finish()?.flush()?;
+        }
+        temporary
+            .persist_noclobber(destination)
+            .map_err(|error| error.error)?;
+    } else {
+        let staging = tempfile::tempdir_in(parent)?;
+        for file in &files {
+            let path = staging.path().join(file.strip_prefix(&root)?);
+            std::fs::create_dir_all(path.parent().unwrap())?;
+            std::fs::write(&path, fs::read(file)?)?;
+        }
+        ensure!(!destination.exists(), "输出已存在，请更换文件名后重试");
+        std::fs::rename(staging.path(), destination)?;
+    }
+    progress("覆盖包制作完成", 100);
+    Ok(Report {
+        output: destination.into(),
+        files: files.len(),
+        assets,
+    })
+}
+
+#[cfg(test)]
+#[path = "overlay_tests.rs"]
+mod tests;

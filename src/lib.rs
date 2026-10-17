@@ -4,6 +4,7 @@ pub mod client_audio;
 pub mod compat;
 pub mod converter;
 pub mod crosshair;
+pub mod overlay;
 pub mod tables;
 
 pub use converter::{

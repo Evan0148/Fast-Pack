@@ -299,6 +299,16 @@ impl Editor {
             Vec::new()
         }
     }
+    pub fn applied_count(&self, version: &str) -> usize {
+        if self.enabled {
+            self.rules
+                .iter()
+                .filter(|rule| rule.version == version)
+                .count()
+        } else {
+            0
+        }
+    }
     pub fn ready(&self, version: &str) -> bool {
         self.version == version && !self.entries.is_empty()
     }
@@ -364,7 +374,11 @@ impl App {
                 self.title("物品自定义", 14),
                 space().width(Length::Fill),
                 checkbox(editor.enabled)
-                    .label("转换时应用")
+                    .label(if self.overlay_mode {
+                        "制作时应用"
+                    } else {
+                        "转换时应用"
+                    })
                     .text_size(13)
                     .size(17)
                     .on_toggle_maybe(

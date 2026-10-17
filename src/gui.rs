@@ -3,6 +3,8 @@ use crate::motion::Tween;
 mod color_picker;
 #[path = "item_editor.rs"]
 mod item_editor;
+#[path = "overlay_editor.rs"]
+mod overlay_editor;
 use anyhow::{Context, Result, ensure};
 use color_picker::ColorTarget;
 use fast_pack::converter::load_extra_renames;
@@ -25,6 +27,8 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 enum Message {
+    Mode(bool),
+    Overlay(overlay_editor::Event),
     PickColor(ColorTarget),
     RainbowColor(bool),
     FishingLine(bool),
@@ -103,6 +107,9 @@ enum Message {
 }
 
 enum WorkEvent {
+    OverlayIcon(u64, std::result::Result<Vec<u8>, String>),
+    OverlayProgress(String, u8),
+    OverlayDone(std::result::Result<fast_pack::overlay::Report, String>),
     Probed(u64, PackInfo),
     Preview(u64, std::result::Result<Option<LoadedPreview>, String>),
     Batch(fast_pack::batch::Event),
@@ -224,6 +231,8 @@ fn hint_style(colors: Colors) -> container::Style {
 }
 
 struct App {
+    overlay_mode: bool,
+    overlay: overlay_editor::Composer,
     color_target: ColorTarget,
     fishing_line: Option<[u8; 3]>,
     fishing_line_color: [u8; 3],
@@ -414,6 +423,8 @@ impl App {
             });
         }
         let mut app = Self {
+            overlay_mode: false,
+            overlay: overlay_editor::Composer::from_draft(preferences.overlay),
             color_target: ColorTarget::Glint,
             fishing_line: preferences.fishing_line,
             fishing_line_color: preferences
@@ -558,7 +569,7 @@ impl App {
         if cfg!(test)
             || matches!(
                 app.capture_stage.as_str(),
-                "advanced" | "crosshair" | "canvas"
+                "advanced" | "crosshair" | "canvas" | "overlay"
             )
         {
             app.set_crosshair_presets(
@@ -580,6 +591,15 @@ impl App {
         }
         if matches!(app.capture_stage.as_str(), "crosshair" | "canvas") {
             app.custom_crosshair = true;
+        }
+        if app.capture_stage == "overlay" {
+            app.overlay_mode = true;
+            if let Some(path) = std::env::var_os("FAST_PACK_CAPTURE_OVERLAY_DRAFT")
+                && let Ok(bytes) = std::fs::read(path)
+                && let Ok(draft) = serde_json::from_slice(&bytes)
+            {
+                app.overlay = overlay_editor::Composer::from_draft(draft);
+            }
         }
         if app.capture_stage == "canvas" {
             app.crosshair_drawing = true;
@@ -663,7 +683,7 @@ impl App {
     }
 
     fn busy(&self) -> bool {
-        self.batch_options.is_some() || self.phase == Phase::Running
+        self.overlay.running || self.batch_options.is_some() || self.phase == Phase::Running
     }
     fn colors(&self) -> Colors {
         Colors::at(self.theme_motion.value(self.now))
@@ -680,6 +700,7 @@ impl App {
                 &self.auto_save_path_motion,
                 &self.heypixel_motion,
                 &self.glint_picker_motion,
+                &self.overlay.progress,
             ]
             .into_iter()
             .any(|value| value.active(self.now))
@@ -730,6 +751,7 @@ impl App {
             || self.crosshair_edited.is_some()
             || self.directory_edited.is_some()
             || self.glint_edited.is_some()
+            || self.overlay.edited.is_some()
             || self.glint_picker && !self.reduced
             || self.capture.is_some()
             || self.smoke
@@ -766,6 +788,9 @@ impl App {
     }
 
     fn load(&mut self, path: PathBuf) {
+        if self.overlay_mode {
+            return;
+        }
         let path = path.canonicalize().unwrap_or(path);
         let key = fast_pack::batch::path_key(&path);
         if self.queue.iter().any(|entry| {
@@ -1284,6 +1309,7 @@ impl App {
             if self
                 .preferences_sender
                 .send(crate::preferences::Preferences {
+                    overlay: self.overlay.draft(),
                     dark: self.dark,
                     fishing_line: self.fishing_line,
                     block_outline: self.block_outline,
@@ -1447,7 +1473,7 @@ impl App {
                 let _ = self.item_editor.update(
                     item_editor::Event::Save,
                     &self.target,
-                    self.source.clone(),
+                    self.customization_source(),
                 );
             }
             self.save_preferences();
@@ -1467,6 +1493,10 @@ impl App {
         self.settled_at = self.now;
     }
     fn start(&mut self) {
+        if self.overlay_mode {
+            self.start_overlay();
+            return;
+        }
         if self.busy() || self.phase == Phase::Identifying {
             return;
         }
@@ -1571,6 +1601,27 @@ impl App {
         self.dispatch_queue(false);
     }
     fn update(&mut self, message: Message) -> Task<Message> {
+        if let Message::Overlay(event) = message {
+            return self.overlay_update(event);
+        }
+        if let Message::Mode(overlay) = message {
+            if self.busy() {
+                return Task::none();
+            }
+            self.close_glint_picker();
+            self.overlay_mode = overlay;
+            return Task::batch([
+                self.item_editor
+                    .sync(&self.target, self.customization_source()),
+                widget::operation::snap_to(
+                    "fast-pack-content",
+                    widget::operation::RelativeOffset {
+                        x: Some(0.0),
+                        y: Some(0.0),
+                    },
+                ),
+            ]);
+        }
         if let Message::Items(event) = message {
             if self.busy()
                 && !matches!(
@@ -1588,7 +1639,7 @@ impl App {
                 self.capture_stage == "items" && matches!(event, item_editor::Event::Catalog(..));
             let task = self
                 .item_editor
-                .update(event, &self.target, self.source.clone());
+                .update(event, &self.target, self.customization_source());
             if save {
                 self.save_preferences();
             }
@@ -1645,6 +1696,12 @@ impl App {
             }
             Message::Tick(now) => {
                 self.now = now;
+                if self.overlay.edited.is_some_and(|edited| {
+                    now.saturating_duration_since(edited) >= Duration::from_millis(350)
+                }) {
+                    self.overlay.edited = None;
+                    self.save_preferences();
+                }
                 if self.crosshair_edited.is_some_and(|edited| {
                     now.saturating_duration_since(edited) >= Duration::from_millis(500)
                 }) {
@@ -1666,6 +1723,42 @@ impl App {
                 let events: Vec<_> = self.receiver.try_iter().collect();
                 for event in events {
                     match event {
+                        WorkEvent::OverlayIcon(revision, result) => {
+                            if revision == self.overlay.icon_revision {
+                                self.overlay.icon_pending = false;
+                                match result {
+                                    Ok(bytes) => {
+                                        self.overlay.icon_preview =
+                                            widget::image::Handle::from_bytes(bytes.clone());
+                                        self.overlay.icon = Some(bytes);
+                                        self.overlay.error = None;
+                                        self.overlay.edited = Some(now);
+                                    }
+                                    Err(error) => self.overlay.error = Some(error),
+                                }
+                            }
+                        }
+                        WorkEvent::OverlayProgress(step, percent) => {
+                            self.overlay.step = step;
+                            self.overlay.percent = percent;
+                            self.overlay.progress.set(percent as f32, now, self.reduced);
+                        }
+                        WorkEvent::OverlayDone(result) => {
+                            self.overlay.running = false;
+                            match result {
+                                Ok(report) => {
+                                    self.overlay.percent = 100;
+                                    self.overlay.result = Some(report);
+                                }
+                                Err(error) => self.overlay.error = Some(error),
+                            }
+                            if self.closing
+                                && self.preferences_pending == 0
+                                && !self.crosshair_pending
+                            {
+                                return iced::exit();
+                            }
+                        }
                         WorkEvent::Probed(id, info) => {
                             self.probing.remove(&id);
                             if let Some(entry) = self.queue.iter_mut().find(|entry| entry.id == id)
@@ -1844,6 +1937,7 @@ impl App {
                     return iced::exit();
                 }
                 let can_capture = match self.capture_stage.as_str() {
+                    "overlay" => self.overlay_mode,
                     "items" => self.item_editor.ready(&self.target),
                     "sky" => self.sky_preview.is_some(),
                     "running" => self.busy(),
@@ -1862,7 +1956,7 @@ impl App {
                     self.capture_requested = true;
                     return window::screenshot(window).map(Message::Captured);
                 }
-                if reset_scroll {
+                if reset_scroll && !self.overlay_mode {
                     return widget::operation::snap_to(
                         "fast-pack-content",
                         widget::operation::RelativeOffset {
@@ -1879,7 +1973,20 @@ impl App {
                     self.width = size.width;
                 }
                 window::Event::Resized(size) => self.width = size.width,
-                window::Event::FileDropped(path) => self.load(path),
+                window::Event::FileDropped(path) => {
+                    if self.overlay_mode {
+                        if path.extension().is_some_and(|extension| {
+                            ["png", "jpg", "jpeg"]
+                                .iter()
+                                .any(|expected| extension.eq_ignore_ascii_case(expected))
+                        }) {
+                            return self
+                                .overlay_update(overlay_editor::Event::IconPicked(Some(path)));
+                        }
+                    } else {
+                        self.load(path);
+                    }
+                }
                 window::Event::FileHovered(_) => {
                     self.hover
                         .entry(1)
@@ -1894,6 +2001,9 @@ impl App {
                 }
                 window::Event::CloseRequested => {
                     self.commit_glint_color();
+                    if self.overlay.edited.take().is_some() {
+                        self.save_preferences();
+                    }
                     if self.crosshair_edited.take().is_some() {
                         self.save_preferences();
                     }
@@ -1912,6 +2022,9 @@ impl App {
                 }
                 _ => {}
             },
+            Message::OpenFile if self.overlay_mode => {
+                return self.overlay_update(overlay_editor::Event::ChooseIcon);
+            }
             Message::OpenFile => {
                 return Task::perform(
                     async {
@@ -2492,6 +2605,7 @@ impl App {
                     self.auto_save_path_motion.snap();
                     self.heypixel_motion.snap();
                     self.glint_picker_motion.snap();
+                    self.overlay.progress.snap();
                     for motion in &mut self.glint_color_motion {
                         motion.snap();
                     }
@@ -2513,7 +2627,8 @@ impl App {
             }
             _ => {}
         }
-        self.item_editor.sync(&self.target, self.source.clone())
+        self.item_editor
+            .sync(&self.target, self.customization_source())
     }
 
     fn action<'a>(
@@ -3142,6 +3257,21 @@ impl App {
     fn glint_dialog(&self) -> Element<'_, Message> {
         let c = self.colors();
         let target = self.color_target;
+        let dynamic_controls: Element<'_, Message> = if target == ColorTarget::Description {
+            self.label("选中文字后调色，可在覆盖包页面实时查看效果。")
+                .into()
+        } else {
+            column![
+                checkbox(self.rainbow_for(target))
+                    .label("动态彩色")
+                    .size(17)
+                    .text_size(13)
+                    .on_toggle_maybe((!self.busy()).then_some(Message::RainbowColor)),
+                self.label(self.rainbow_hint(target))
+            ]
+            .spacing(12)
+            .into()
+        };
         let presets = [
             ("白色", [255, 255, 255]),
             ("经典紫", fast_pack::compat::glint::VANILLA_COLOR),
@@ -3273,7 +3403,11 @@ impl App {
         };
         let apply: Element<'_, Message> = if target == ColorTarget::Glint {
             checkbox(self.custom_glint)
-                .label("转换时应用自定义颜色")
+                .label(if self.overlay_mode {
+                    "制作时应用自定义颜色"
+                } else {
+                    "转换时应用自定义颜色"
+                })
                 .text_size(13)
                 .on_toggle(Message::CustomGlint)
                 .into()
@@ -3307,12 +3441,7 @@ impl App {
                         "拖动色卡选择颜色与明暗，右侧色相条切换色系。"
                     }),
                     palette,
-                    checkbox(self.rainbow_for(target))
-                        .label("动态彩色")
-                        .size(17)
-                        .text_size(13)
-                        .on_toggle_maybe((!self.busy()).then_some(Message::RainbowColor)),
-                    self.label(self.rainbow_hint(target)),
+                    dynamic_controls,
                     row![
                         column![
                             widget::canvas(GlintColorCard {
@@ -3340,6 +3469,8 @@ impl App {
     fn crosshair_controls(&self) -> Element<'_, Message> {
         let c = self.colors();
         let enabled = !self.busy() && !self.crosshair_pending;
+        let attack_supported =
+            !self.overlay_mode || pack_format_of(&self.target).is_ok_and(|format| format >= 2);
         let mut content = column![
             row![
                 checkbox(self.custom_crosshair)
@@ -3351,7 +3482,9 @@ impl App {
                     .label("显示攻击冷却进度条")
                     .size(17)
                     .text_size(13)
-                    .on_toggle_maybe((!self.busy()).then_some(Message::ShowAttackIndicator)),
+                    .on_toggle_maybe(
+                        (!self.busy() && attack_supported).then_some(Message::ShowAttackIndicator)
+                    ),
                 space().width(Length::Fill),
                 self.action(
                     60,
@@ -3373,8 +3506,13 @@ impl App {
         content = content.push(self.label("攻击冷却指示支持 1.9+，显示位置沿用游戏设置。"));
         if !self.custom_crosshair {
             content = content.push(self.label(format!(
-                "{} 个准星预设 · 开启后应用本次准星，转换结束自动关闭",
-                self.crosshair_presets.len()
+                "{} 个准星预设 · 开启后应用本次准星{}",
+                self.crosshair_presets.len(),
+                if self.overlay_mode {
+                    ""
+                } else {
+                    "，转换结束自动关闭"
+                }
             )));
         } else {
             content = content.push(
@@ -3864,101 +4002,149 @@ impl App {
             .width(38)
             .height(38)
             .content_fit(iced::ContentFit::Contain);
-        let header = container(
+        let navigation = container(
             row![
-                logo,
-                column![
-                    self.title("Fast Pack", 18),
-                    self.label("Minecraft Java 资源包转换")
-                ]
-                .spacing(3),
-                space().width(Length::Fill),
                 self.action(
-                    10,
-                    if self.dark { "浅色" } else { "深色" },
-                    Some(Message::Theme),
-                    false
+                    110,
+                    "材质包转换",
+                    (!self.busy()).then_some(Message::Mode(false)),
+                    !self.overlay_mode
                 ),
-                self.action(18, "了解详细", Some(Message::LearnMore), false)
+                self.action(
+                    111,
+                    "覆盖包制作",
+                    (!self.busy()).then_some(Message::Mode(true)),
+                    self.overlay_mode
+                )
             ]
-            .spacing(12)
-            .align_y(Alignment::Center),
+            .spacing(5),
+        )
+        .padding(4)
+        .style(move |_| container::Style {
+            background: Some(c.field.into()),
+            border: Border {
+                radius: 13.0.into(),
+                width: 1.0,
+                color: c.line,
+            },
+            ..Default::default()
+        });
+        let header = container(
+            column![
+                row![
+                    logo,
+                    column![
+                        self.title("Fast Pack", 18),
+                        self.label("Minecraft Java 资源包转换")
+                    ]
+                    .spacing(3),
+                    space().width(Length::Fill),
+                    self.action(
+                        10,
+                        if self.dark { "浅色" } else { "深色" },
+                        Some(Message::Theme),
+                        false
+                    ),
+                    self.action(18, "了解详细", Some(Message::LearnMore), false)
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center),
+                navigation
+            ]
+            .spacing(14),
         )
         .padding([18, 28]);
-        let mut intro = column![self.title(
+        let mut body = if self.overlay_mode {
+            self.overlay_body()
+        } else {
+            let mut intro = column![self.title(
+                if self.phase == Phase::Done {
+                    "转换完成"
+                } else {
+                    "材质包转换"
+                },
+                28
+            )]
+            .spacing(9);
             if self.phase == Phase::Done {
-                "转换完成"
+                intro = intro.push(self.label("转换结果已保存，原材质包没有改动。"));
+            }
+            let source_panel = if self.queue_mode || self.queue.len() > 1 {
+                self.queue_view()
             } else {
-                "材质包转换"
-            },
-            28
-        )]
-        .spacing(9);
-        if self.phase == Phase::Done {
-            intro = intro.push(self.label("转换结果已保存，原材质包没有改动。"));
-        }
-        let source_panel = if self.queue_mode || self.queue.len() > 1 {
-            self.queue_view()
-        } else {
-            self.source_panel()
-        };
-        let panels: Element<'_, Message> = if self.width < 940.0 {
-            column![source_panel, self.target_panel()]
-                .spacing(18)
+                self.source_panel()
+            };
+            let panels: Element<'_, Message> = if self.width < 940.0 {
+                column![source_panel, self.target_panel()]
+                    .spacing(18)
+                    .into()
+            } else {
+                row![
+                    container(source_panel).width(Length::FillPortion(1)),
+                    container(self.target_panel()).width(Length::FillPortion(1))
+                ]
+                .spacing(20)
                 .into()
-        } else {
-            row![
-                container(source_panel).width(Length::FillPortion(1)),
-                container(self.target_panel()).width(Length::FillPortion(1))
-            ]
-            .spacing(20)
-            .into()
+            };
+            let mut body = column![intro].spacing(20);
+            if self.phase == Phase::Done {
+                body = body.push(self.result_view()).push(self.queue_view());
+                if self.queue.len() < 2 {
+                    body = body.push(
+                        self.panel(
+                            column![
+                                self.title("输出材质包", 14),
+                                self.title(
+                                    Path::new(&self.output)
+                                        .file_name()
+                                        .unwrap_or_default()
+                                        .to_string_lossy(),
+                                    18
+                                ),
+                                self.label(self.output.clone()),
+                                self.label(format!("目标 Minecraft {}", self.target))
+                            ]
+                            .spacing(12),
+                        ),
+                    );
+                }
+            } else {
+                body = body
+                    .push(panels)
+                    .push(self.action(
+                        7,
+                        if self.advanced {
+                            "收起转换选项 ↑"
+                        } else {
+                            "更多转换选项 ↓"
+                        },
+                        Some(Message::Advanced),
+                        false,
+                    ))
+                    .push(self.advanced_view());
+                if self.error.is_some() {
+                    body = body.push(self.result_view());
+                }
+            }
+            body
         };
-        let mut body = column![intro].spacing(20);
-        if self.phase == Phase::Done {
-            body = body.push(self.result_view()).push(self.queue_view());
-            if self.queue.len() < 2 {
-                body = body.push(
-                    self.panel(
-                        column![
-                            self.title("输出材质包", 14),
-                            self.title(
-                                Path::new(&self.output)
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy(),
-                                18
-                            ),
-                            self.label(self.output.clone()),
-                            self.label(format!("目标 Minecraft {}", self.target))
-                        ]
-                        .spacing(12),
-                    ),
-                );
-            }
-        } else {
-            body = body
-                .push(panels)
-                .push(self.action(
-                    7,
-                    if self.advanced {
-                        "收起转换选项 ↑"
-                    } else {
-                        "更多转换选项 ↓"
-                    },
-                    Some(Message::Advanced),
-                    false,
-                ))
-                .push(self.advanced_view());
-            if self.error.is_some() {
-                body = body.push(self.result_view());
-            }
-        }
         let fixed_progress: Element<'_, Message> = if self.busy() {
-            let value = self
-                .progress
-                .value(self.now)
-                .min(self.actual_progress as f32);
+            let (value, step) = if self.overlay_mode {
+                (
+                    self.overlay
+                        .progress
+                        .value(self.now)
+                        .min(self.overlay.percent as f32),
+                    self.overlay.step.as_str(),
+                )
+            } else {
+                (
+                    self.progress
+                        .value(self.now)
+                        .min(self.actual_progress as f32),
+                    self.step.as_str(),
+                )
+            };
             let progress = progress_bar(0.0..=100.0, value).girth(6).style(move |_| {
                 widget::progress_bar::Style {
                     background: c.line.into(),
@@ -3972,7 +4158,7 @@ impl App {
             container(
                 column![
                     row![
-                        self.label(&self.step),
+                        self.label(step),
                         space().width(Length::Fill),
                         self.label(format!("{}%", value.round() as u8))
                     ]
@@ -3988,21 +4174,42 @@ impl App {
         } else {
             space().height(0).into()
         };
-        let status = match self.phase {
-            Phase::Empty => "数据仅在本机处理",
-            Phase::Identifying => "正在后台识别，你仍可操作界面",
-            Phase::Ready => "准备就绪 · 将生成新的材质包",
-            Phase::Running => {
-                if self.closing {
-                    "完成后关闭窗口"
-                } else {
-                    "转换在后台进行 · 原文件保留"
-                }
+        let status = if self.overlay_mode {
+            if self.overlay.running {
+                "正在本机制作覆盖包"
+            } else if self.overlay.result.is_some() {
+                "覆盖包已保存 · 放在其他材质包上方使用"
+            } else {
+                "独立制作覆盖包 · 无需导入材质包"
             }
-            Phase::Done => "转换结果已保存",
-            Phase::Failed => "请检查输入或输出路径",
+        } else {
+            match self.phase {
+                Phase::Empty => "数据仅在本机处理",
+                Phase::Identifying => "正在后台识别，你仍可操作界面",
+                Phase::Ready => "准备就绪 · 将生成新的材质包",
+                Phase::Running => {
+                    if self.closing {
+                        "完成后关闭窗口"
+                    } else {
+                        "转换在后台进行 · 原文件保留"
+                    }
+                }
+                Phase::Done => "转换结果已保存",
+                Phase::Failed => "请检查输入或输出路径",
+            }
         };
-        let action = if self.phase == Phase::Done {
+        let action = if self.overlay_mode {
+            self.action(
+                120,
+                if self.overlay.running {
+                    "正在制作…"
+                } else {
+                    "制作覆盖包 →"
+                },
+                (!self.busy() && !self.overlay.icon_pending).then_some(Message::Start),
+                true,
+            )
+        } else if self.phase == Phase::Done {
             self.action(12, "转换另一个包", Some(Message::NewPack), true)
         } else {
             self.action(
@@ -4030,7 +4237,7 @@ impl App {
                 .align_y(Alignment::Center),
         )
         .padding([18, 28]);
-        if !self.logs.is_empty() {
+        if !self.overlay_mode && !self.logs.is_empty() {
             body = body.push(self.action(
                 13,
                 if self.details {
@@ -4042,7 +4249,7 @@ impl App {
                 false,
             ));
         }
-        if self.details {
+        if !self.overlay_mode && self.details {
             let log = self.logs.join("\n");
             let mut entries = column![self.label(log)].spacing(12);
             if let Some(report) = &self.report {

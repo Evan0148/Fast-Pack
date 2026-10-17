@@ -13,6 +13,7 @@ use windows_sys::Win32::UI::Shell::{
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Preferences {
+    pub overlay: fast_pack::overlay::Draft,
     pub dark: bool,
     pub fishing_line: Option<[u8; 3]>,
     pub block_outline: Option<[u8; 3]>,
@@ -44,6 +45,7 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
+            overlay: Default::default(),
             dark: true,
             fishing_line: None,
             block_outline: None,
