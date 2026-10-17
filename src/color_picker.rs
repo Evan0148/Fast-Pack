@@ -14,6 +14,7 @@ pub(super) enum ColorTarget {
     FishingLine,
     BlockOutline,
     Description,
+    PackName,
 }
 
 impl ColorTarget {
@@ -25,6 +26,7 @@ impl ColorTarget {
             Self::FishingLine => "鱼竿线颜色",
             Self::BlockOutline => "瞄准方块边框颜色",
             Self::Description => "简介文字颜色",
+            Self::PackName => "覆盖包名称颜色",
         }
     }
 }
@@ -37,7 +39,7 @@ impl App {
             ColorTarget::ItemOutline => self.item_editor.outline_rainbow(),
             ColorTarget::FishingLine => self.rainbow.fishing_line,
             ColorTarget::BlockOutline => self.rainbow.block_outline,
-            ColorTarget::Description => false,
+            ColorTarget::Description | ColorTarget::PackName => false,
         }
     }
     fn palette_rainbow(&self, target: ColorTarget) -> bool {
@@ -48,7 +50,7 @@ impl App {
                 ColorTarget::ItemOutline => self.item_editor.outline_palette_visible(),
                 ColorTarget::FishingLine => self.fishing_line.is_some(),
                 ColorTarget::BlockOutline => self.block_outline.is_some(),
-                ColorTarget::Description => false,
+                ColorTarget::Description | ColorTarget::PackName => false,
             }
     }
     pub(super) fn rainbow_preview_color(&self) -> [u8; 3] {
@@ -131,7 +133,7 @@ impl App {
                     self.block_outline = Some(self.block_outline_color);
                 }
             }
-            ColorTarget::Description => return,
+            ColorTarget::Description | ColorTarget::PackName => return,
         }
         self.glint_preview_started = self.now;
         self.glint_edited = Some(self.now);
@@ -162,6 +164,7 @@ impl App {
             ColorTarget::FishingLine => self.fishing_line_color,
             ColorTarget::BlockOutline => self.block_outline_color,
             ColorTarget::Description => self.overlay.ink,
+            ColorTarget::PackName => self.overlay.name_ink,
         }
     }
     pub(super) fn picker_color(&self) -> [u8; 3] {
@@ -201,6 +204,7 @@ impl App {
                 self.block_outline = Some(color);
             }
             ColorTarget::Description => self.overlay.set_color(color),
+            ColorTarget::PackName => self.overlay.set_name_color(color),
         }
         self.glint_hsv = rgb_hsv(color, self.glint_hsv[0]);
         self.glint_hex = fast_pack::compat::glint::color_hex(color);

@@ -743,6 +743,7 @@ impl App {
                 .any(|entry| entry.phase == Phase::Identifying)
             || self.animation_active()
             || self.rainbow_preview_active()
+            || self.overlay_text_animation_active()
             || self.phase == Phase::Identifying
             || self.busy()
             || self.mapping_pending
@@ -3257,21 +3258,30 @@ impl App {
     fn glint_dialog(&self) -> Element<'_, Message> {
         let c = self.colors();
         let target = self.color_target;
-        let dynamic_controls: Element<'_, Message> = if target == ColorTarget::Description {
-            self.label("选中文字后调色，可在覆盖包页面实时查看效果。")
+        let dynamic_controls: Element<'_, Message> =
+            if matches!(target, ColorTarget::Description | ColorTarget::PackName) {
+                self.label(
+                    if target == ColorTarget::PackName
+                        || !fast_pack::overlay::supports_hex(&self.target)
+                    {
+                        "直接调色修改整段；选字后只改选中部分。此处匹配游戏支持的 16 色。"
+                    } else {
+                        "直接调色会修改整段；选中文字时只修改选中部分。"
+                    },
+                )
                 .into()
-        } else {
-            column![
-                checkbox(self.rainbow_for(target))
-                    .label("动态彩色")
-                    .size(17)
-                    .text_size(13)
-                    .on_toggle_maybe((!self.busy()).then_some(Message::RainbowColor)),
-                self.label(self.rainbow_hint(target))
-            ]
-            .spacing(12)
-            .into()
-        };
+            } else {
+                column![
+                    checkbox(self.rainbow_for(target))
+                        .label("动态彩色")
+                        .size(17)
+                        .text_size(13)
+                        .on_toggle_maybe((!self.busy()).then_some(Message::RainbowColor)),
+                    self.label(self.rainbow_hint(target))
+                ]
+                .spacing(12)
+                .into()
+            };
         let presets = [
             ("白色", [255, 255, 255]),
             ("经典紫", fast_pack::compat::glint::VANILLA_COLOR),

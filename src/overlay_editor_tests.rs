@@ -117,6 +117,93 @@ fn selected_description_colors_and_unicode_positions_round_trip_with_the_draft()
 }
 
 #[test]
+fn one_click_formatting_applies_to_whole_text_or_selection_and_keeps_fields_independent() {
+    let mut composer = Composer::new();
+    composer.set_name_color([255, 85, 85]);
+    composer.toggle_style(TextField::Name, Format::Bold);
+    assert!(
+        composer
+            .name_colors
+            .iter()
+            .all(|color| *color == Some([255, 85, 85]))
+    );
+    assert!(composer.name_styles.iter().all(|style| style.bold));
+    assert!(composer.description.colors.iter().all(Option::is_none));
+    composer.set_color([85, 255, 255]);
+    composer.toggle_style(TextField::Description, Format::Italic);
+    assert!(
+        composer
+            .description
+            .colors
+            .iter()
+            .all(|color| *color == Some([85, 255, 255]))
+    );
+    assert!(composer.description.styles.iter().all(|style| style.italic));
+    composer.content.move_to(Cursor {
+        position: Position { line: 0, column: 6 },
+        selection: Some(Position { line: 0, column: 3 }),
+    });
+    composer.toggle_style(TextField::Description, Format::Underlined);
+    assert!(composer.description.styles[1].underlined);
+    assert!(!composer.description.styles[0].underlined);
+    composer.clear_format(TextField::Description);
+    assert_eq!(composer.description.colors[1], None);
+    assert_eq!(composer.description.styles[1], TextStyle::default());
+    assert!(composer.description.styles[0].italic);
+    let restored = Composer::from_draft(
+        serde_json::from_slice(&serde_json::to_vec(&composer.draft()).unwrap()).unwrap(),
+    );
+    assert_eq!(restored.name_colors, composer.name_colors);
+    assert_eq!(restored.name_styles, composer.name_styles);
+    assert_eq!(restored.description.styles, composer.description.styles);
+}
+
+#[test]
+fn pasted_native_codes_become_editable_styles_and_name_edits_preserve_other_letters() {
+    let mut composer = Composer::new();
+    composer.content.perform(text_editor::Action::SelectAll);
+    composer.edit(text_editor::Action::Edit(text_editor::Edit::Paste(
+        std::sync::Arc::new("§c红§l粗\r\n§a绿§r原".into()),
+    )));
+    assert_eq!(composer.description.text, "红粗\n绿原");
+    assert_eq!(composer.content.text(), composer.description.text);
+    assert_eq!(composer.description.colors[0], Some([255, 85, 85]));
+    assert!(composer.description.styles[1].bold);
+    assert!(!composer.description.styles[3].bold);
+    composer.set_name_color([85, 255, 85]);
+    composer.toggle_style(TextField::Name, Format::Bold);
+    composer
+        .name_content
+        .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+    composer.edit_name(text_editor::Action::Edit(text_editor::Edit::Insert('新')));
+    assert_eq!(composer.name, "我的覆盖包新");
+    assert!(composer.name_styles.iter().all(|style| style.bold));
+    assert!(
+        composer
+            .name_colors
+            .iter()
+            .all(|color| *color == Some([85, 255, 85]))
+    );
+    composer.edit_name(text_editor::Action::Edit(text_editor::Edit::Enter));
+    assert!(!composer.name.contains('\n'));
+}
+
+#[test]
+fn older_drafts_with_native_codes_restore_fonts_and_colors_without_new_fields() {
+    let draft = serde_json::from_value(serde_json::json!({
+        "name":"§6§l旧名称", "description":{"text":"§b§o旧简介\r\n第二行","colors":[]}
+    }))
+    .unwrap();
+    let composer = Composer::from_draft(draft);
+    assert_eq!(composer.name, "旧名称");
+    assert_eq!(composer.name_ink, [255, 170, 0]);
+    assert!(composer.name_typing_style.bold);
+    assert_eq!(composer.description.text, "旧简介\n第二行");
+    assert_eq!(composer.ink, [85, 255, 255]);
+    assert!(composer.typing_style.italic);
+}
+
+#[test]
 fn switching_modes_preserves_the_conversion_queue_and_uses_native_item_previews() {
     let (mut app, _) = App::boot();
     app.load("source.zip".into());
@@ -141,7 +228,18 @@ fn standalone_overlay_generation_needs_no_source_pack_and_does_not_overwrite() {
     let _ = app.update(Message::Mode(true));
     app.target = "1.21.10".into();
     app.export_directory_input = directory.path().display().to_string();
+    app.overlay.set_name_color([255, 85, 85]);
+    app.overlay.toggle_style(TextField::Name, Format::Bold);
+    app.overlay
+        .toggle_style(TextField::Description, Format::Italic);
     let planned = app.overlay_destination().unwrap();
+    assert!(
+        planned
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("§c§l")
+    );
     app.start();
     assert!(app.overlay.running);
     assert!(app.queue.is_empty());
@@ -154,6 +252,10 @@ fn standalone_overlay_generation_needs_no_source_pack_and_does_not_overwrite() {
     assert!(app.overlay.error.is_none(), "{:?}", app.overlay.error);
     assert_eq!(app.overlay.result.as_ref().unwrap().output, planned);
     assert!(planned.is_file());
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&planned).unwrap()).unwrap();
+    let metadata: serde_json::Value =
+        serde_json::from_reader(archive.by_name("pack.mcmeta").unwrap()).unwrap();
+    assert_eq!(metadata["pack"]["description"]["extra"][0]["italic"], true);
     assert_ne!(app.overlay_destination().unwrap(), planned);
     assert!(app.source.is_none());
     assert_eq!(app.phase, super::super::Phase::Empty);

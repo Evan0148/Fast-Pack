@@ -11,6 +11,9 @@ use std::path::{Path, PathBuf};
 use zip::ZipWriter;
 
 pub const DESCRIPTION_LIMIT: usize = 2048;
+#[path = "overlay_text.rs"]
+mod text;
+pub use text::{Format, Run, TextStyle, formatted_filename};
 pub const LEGACY_COLORS: [[u8; 3]; 16] = [
     [0, 0, 0],
     [0, 0, 170],
@@ -31,10 +34,12 @@ pub const LEGACY_COLORS: [[u8; 3]; 16] = [
 ];
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Description {
     pub text: String,
     /// One optional color per Unicode scalar, independent of UTF-8 byte offsets.
     pub colors: Vec<Option<[u8; 3]>>,
+    pub styles: Vec<TextStyle>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -45,6 +50,11 @@ pub struct Draft {
     pub icon: Option<Vec<u8>>,
     pub ink: [u8; 3],
     pub as_zip: bool,
+    pub name_colors: Vec<Option<[u8; 3]>>,
+    pub name_styles: Vec<TextStyle>,
+    pub name_ink: [u8; 3],
+    pub name_typing_style: TextStyle,
+    pub typing_style: TextStyle,
 }
 
 impl Default for Draft {
@@ -55,6 +65,11 @@ impl Default for Draft {
             icon: None,
             ink: [170; 3],
             as_zip: true,
+            name_colors: Vec::new(),
+            name_styles: Vec::new(),
+            name_ink: [255; 3],
+            name_typing_style: TextStyle::default(),
+            typing_style: TextStyle::default(),
         }
     }
 }
@@ -96,6 +111,7 @@ impl Description {
         let text = text.into();
         Self {
             colors: vec![None; text.chars().count()],
+            styles: vec![TextStyle::default(); text.chars().count()],
             text,
         }
     }
@@ -112,82 +128,18 @@ impl Description {
 
     /// Reconcile an edit at its actual cursor anchor (including repeated text).
     pub fn edit(&mut self, text: String, anchor: usize, ink: [u8; 3]) -> Result<()> {
-        let before: Vec<_> = self.text.chars().collect();
-        let after: Vec<_> = text.chars().collect();
-        ensure!(
-            after.len() <= DESCRIPTION_LIMIT,
-            "简介最多 {DESCRIPTION_LIMIT} 个字符"
-        );
-        let prefix = before
-            .iter()
-            .zip(&after)
-            .take(anchor)
-            .take_while(|(a, b)| a == b)
-            .count();
-        let suffix = before[prefix..]
-            .iter()
-            .rev()
-            .zip(after[prefix..].iter().rev())
-            .take_while(|(a, b)| a == b)
-            .count();
-        self.colors.resize(before.len(), None);
-        self.colors.splice(
-            prefix..before.len() - suffix,
-            vec![Some(ink); after.len() - prefix - suffix],
-        );
-        self.text = text;
-        Ok(())
+        self.edit_styled(text, anchor, ink, TextStyle::default())
     }
 
     pub fn runs(&self, version: &str) -> Vec<(String, Option<[u8; 3]>)> {
-        let mut runs: Vec<(String, Option<[u8; 3]>)> = Vec::new();
-        for (index, character) in self.text.chars().enumerate() {
-            let color = self
-                .colors
-                .get(index)
-                .copied()
-                .flatten()
-                .map(|color| display_color(color, version));
-            if let Some((text, previous)) =
-                runs.last_mut().filter(|(_, previous)| *previous == color)
-            {
-                let _ = previous;
-                text.push(character);
-            } else {
-                runs.push((character.to_string(), color));
-            }
-        }
-        runs
+        self.formatted_runs(version)
+            .into_iter()
+            .map(|run| (run.text, run.color))
+            .collect()
     }
 
     pub fn component(&self, version: &str) -> Value {
-        if self.text.is_empty() {
-            return Value::String(String::new());
-        }
-        if supports_hex(version) {
-            let extra: Vec<_> = self
-                .runs(version)
-                .into_iter()
-                .map(|(text, color)| {
-                    let mut span = json!({"text": text});
-                    if let Some(color) = color {
-                        span["color"] = crate::compat::glint::color_hex(color).into();
-                    }
-                    span
-                })
-                .collect();
-            json!({"text": "", "extra": extra})
-        } else {
-            let mut output = String::new();
-            for (text, color) in self.runs(version) {
-                output.push('§');
-                output.push(color.map_or('r', |color| {
-                    b"0123456789abcdef"[legacy_index(color)] as char
-                }));
-                output.push_str(&text);
-            }
-            output.into()
-        }
+        self.styled_component(version)
     }
 }
 
@@ -263,22 +215,7 @@ pub struct Report {
 }
 
 pub fn filename(name: &str, version: &str, as_zip: bool) -> String {
-    let safe: String = name
-        .trim()
-        .chars()
-        .take(80)
-        .map(|c| {
-            if c.is_control() || "<>:\"/\\|?*".contains(c) {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect();
-    let safe = safe.trim_matches([' ', '.']);
-    let safe = if safe.is_empty() { "覆盖包" } else { safe };
-    // A prefix also avoids Windows reserved device names.
-    format!("[{version}] {safe}{}", if as_zip { ".zip" } else { "" })
+    formatted_filename(&Description::plain(name), version, as_zip)
 }
 
 pub fn build(

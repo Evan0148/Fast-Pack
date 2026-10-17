@@ -38,6 +38,82 @@ fn colored_description_preserves_unicode_selections_and_repeated_text_edits() {
 }
 
 #[test]
+fn native_formatting_codes_and_styles_export_without_leaking_into_other_runs() {
+    let mut text = Description::plain("红色加粗\n普通");
+    text.paint(0..4, Some([255, 85, 85]));
+    for format in [
+        Format::Bold,
+        Format::Italic,
+        Format::Underlined,
+        Format::Strikethrough,
+        Format::Obfuscated,
+    ] {
+        text.format(0..4, format, true);
+    }
+    let legacy = text.component("1.8.9");
+    assert_eq!(legacy, json!("§c§l§o§n§m§k红色加粗§r\n普通"));
+    let modern = text.component("1.21.10");
+    for key in [
+        "bold",
+        "italic",
+        "underlined",
+        "strikethrough",
+        "obfuscated",
+    ] {
+        assert_eq!(modern["extra"][0][key], true);
+    }
+    assert_eq!(modern["extra"][1], json!({"text":"\n普通"}));
+    text.reset(0..4);
+    assert_eq!(
+        text.component("1.21.10"),
+        json!({"text":"","extra":[{"text":"红色加粗\n普通"}]})
+    );
+    let mut codes = Description::plain("§c红§l粗§a绿§r原");
+    codes.materialize_codes();
+    assert_eq!(codes.text, "红粗绿原");
+    assert_eq!(codes.styles[1].bold, true);
+    assert_eq!(
+        codes.styles[2].bold, false,
+        "a color code resets prior font styles"
+    );
+    assert_eq!(
+        codes.colors,
+        [
+            Some([255, 85, 85]),
+            Some([255, 85, 85]),
+            Some([85, 255, 85]),
+            None
+        ]
+    );
+    let unknown = Description::plain("§q普通");
+    assert_eq!(unknown.formatted_runs("1.20.1")[0].text, "§q普通");
+}
+
+#[test]
+fn formatted_pack_names_are_real_filename_colors_and_stay_within_windows_limits() {
+    let mut name = Description::plain("我的覆盖包");
+    name.paint(0..5, Some([255, 85, 85]));
+    name.format(0..5, Format::Bold, true);
+    let filename = formatted_filename(&name, "1.20.1", true);
+    assert_eq!(filename, "[1.20.1] §c§l我的覆盖包§r.zip");
+    let decoded = Description::plain(filename).formatted_runs("1.8.9");
+    assert!(
+        decoded.iter().any(|run| run.text == "我的覆盖包"
+            && run.style.bold
+            && run.color == Some([255, 85, 85]))
+    );
+    let mut long = Description::plain("😀".repeat(80));
+    for index in 0..80 {
+        long.paint(index..index + 1, Some(LEGACY_COLORS[index % 16]));
+        long.format(index..index + 1, Format::Bold, index % 2 == 0);
+    }
+    let filename = formatted_filename(&long, "1.21.10", true);
+    assert!(filename.encode_utf16().count() <= 240);
+    assert!(filename.ends_with("§r.zip"));
+    assert!(!formatted_filename(&Description::plain("../*?:"), "1.8.9", true).contains('/'));
+}
+
+#[test]
 fn metadata_only_overlays_never_add_game_textures_or_overwrite_outputs() {
     let directory = tempfile::tempdir().unwrap();
     let output = directory.path().join("overlay.zip");

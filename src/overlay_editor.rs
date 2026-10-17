@@ -1,6 +1,6 @@
 use super::{App, ColorTarget, Message, WorkEvent};
 use crate::motion::Tween;
-use fast_pack::overlay::{self, Description};
+use fast_pack::overlay::{self, Description, Format, TextStyle};
 use iced::widget::{
     self, checkbox, column, container, pick_list, row, space, text, text_editor, text_input,
 };
@@ -9,16 +9,19 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::time::Instant;
 
+#[path = "overlay_text_editor.rs"]
+mod rich;
 #[cfg(test)]
 #[path = "overlay_editor_tests.rs"]
 mod tests;
 
 #[derive(Clone, Debug)]
 pub(super) enum Event {
-    Name(String),
+    NameEdit(text_editor::Action),
     Description(text_editor::Action),
-    PaintAll,
-    ClearColor,
+    Color(TextField, [u8; 3]),
+    Style(TextField, Format),
+    ClearFormat(TextField),
     ChooseIcon,
     IconPicked(Option<PathBuf>),
     ResetIcon,
@@ -26,11 +29,23 @@ pub(super) enum Event {
     OpenOutput,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TextField {
+    Name,
+    Description,
+}
+
 pub(super) struct Composer {
     pub name: String,
+    pub name_content: text_editor::Content,
+    pub name_colors: Vec<Option<[u8; 3]>>,
+    pub name_styles: Vec<TextStyle>,
+    pub name_ink: [u8; 3],
+    pub name_typing_style: TextStyle,
     pub content: text_editor::Content,
     pub description: Description,
     pub ink: [u8; 3],
+    pub typing_style: TextStyle,
     pub icon: Option<Vec<u8>>,
     pub icon_preview: widget::image::Handle,
     pub icon_revision: u64,
@@ -50,9 +65,15 @@ impl Composer {
         let text = "我的自定义覆盖包";
         Self {
             name: "我的覆盖包".into(),
+            name_content: text_editor::Content::with_text("我的覆盖包"),
+            name_colors: Vec::new(),
+            name_styles: Vec::new(),
+            name_ink: [255; 3],
+            name_typing_style: TextStyle::default(),
             content: text_editor::Content::with_text(text),
             description: Description::plain(text),
             ink: [170; 3],
+            typing_style: TextStyle::default(),
             icon: None,
             icon_preview: default_icon(),
             icon_revision: 0,
@@ -71,7 +92,19 @@ impl Composer {
     pub fn from_draft(draft: overlay::Draft) -> Self {
         let mut composer = Self::new();
         composer.name = draft.name.chars().take(80).collect();
+        composer.name_colors = draft.name_colors;
+        composer.name_styles = draft.name_styles;
+        composer.name_ink = draft.name_ink;
+        composer.name_typing_style = draft.name_typing_style;
+        let mut name = composer.name_document();
+        let name_codes = name.materialize_codes();
+        composer.assign_name(name);
+        if let Some((color, style)) = name_codes {
+            composer.name_ink = color.unwrap_or([255; 3]);
+            composer.name_typing_style = style;
+        }
         composer.description = draft.description;
+        composer.description.normalize_lines();
         composer.description.text = composer
             .description
             .text
@@ -82,8 +115,14 @@ impl Composer {
             .description
             .colors
             .resize(composer.description.text.chars().count(), None);
+        let description_codes = composer.description.materialize_codes();
         composer.content = text_editor::Content::with_text(&composer.description.text);
         composer.ink = draft.ink;
+        composer.typing_style = draft.typing_style;
+        if let Some((color, style)) = description_codes {
+            composer.ink = color.unwrap_or([170; 3]);
+            composer.typing_style = style;
+        }
         composer.as_zip = draft.as_zip;
         if let Some(icon) = draft
             .icon
@@ -102,6 +141,11 @@ impl Composer {
             icon: self.icon.clone(),
             ink: self.ink,
             as_zip: self.as_zip,
+            name_colors: self.name_colors.clone(),
+            name_styles: self.name_styles.clone(),
+            name_ink: self.name_ink,
+            name_typing_style: self.name_typing_style,
+            typing_style: self.typing_style,
         }
     }
 
@@ -114,12 +158,159 @@ impl Composer {
 
     pub fn set_color(&mut self, color: [u8; 3]) {
         self.ink = color;
-        if let Some(selection) = self.selection() {
-            self.description.paint(selection, Some(color));
+        let range = self.range(TextField::Description);
+        self.description.paint(range, Some(color));
+    }
+
+    pub fn name_document(&self) -> Description {
+        Description {
+            text: self.name.clone(),
+            colors: self.name_colors.clone(),
+            styles: self.name_styles.clone(),
         }
     }
 
-    fn edit(&mut self, action: text_editor::Action) {
+    fn assign_name(&mut self, name: Description) {
+        self.name = name.text;
+        self.name_colors = name.colors;
+        self.name_styles = name.styles;
+        self.name_content = text_editor::Content::with_text(&self.name);
+    }
+
+    fn range(&self, field: TextField) -> Range<usize> {
+        if field == TextField::Description {
+            return self
+                .selection()
+                .unwrap_or(0..self.description.text.chars().count());
+        }
+        let cursor = self.name_content.cursor();
+        let start = offset(&self.name, cursor.position);
+        if let Some(end) = cursor
+            .selection
+            .map(|position| offset(&self.name, position))
+            && start != end
+        {
+            return start.min(end)..start.max(end);
+        }
+        0..self.name.chars().count()
+    }
+
+    pub fn set_name_color(&mut self, color: [u8; 3]) {
+        self.name_ink = color;
+        let range = self.range(TextField::Name);
+        let mut name = self.name_document();
+        name.paint(range, Some(color));
+        self.name_colors = name.colors;
+    }
+
+    fn style_active(&self, field: TextField, format: Format) -> bool {
+        let (styles, typing) = match field {
+            TextField::Name => (&self.name_styles, self.name_typing_style),
+            TextField::Description => (&self.description.styles, self.typing_style),
+        };
+        let range = self.range(field);
+        if range.is_empty() {
+            return typing.get(format);
+        }
+        range
+            .into_iter()
+            .all(|index| styles.get(index).copied().unwrap_or_default().get(format))
+    }
+
+    fn toggle_style(&mut self, field: TextField, format: Format) {
+        let enabled = !self.style_active(field, format);
+        let range = self.range(field);
+        match field {
+            TextField::Name => {
+                let mut name = self.name_document();
+                name.format(range, format, enabled);
+                self.name_styles = name.styles;
+                self.name_typing_style.set(format, enabled);
+            }
+            TextField::Description => {
+                self.description.format(range, format, enabled);
+                self.typing_style.set(format, enabled);
+            }
+        }
+    }
+
+    fn clear_format(&mut self, field: TextField) {
+        let range = self.range(field);
+        match field {
+            TextField::Name => {
+                let mut name = self.name_document();
+                name.reset(range);
+                self.name_colors = name.colors;
+                self.name_styles = name.styles;
+                self.name_typing_style = TextStyle::default();
+                self.name_ink = [255; 3];
+            }
+            TextField::Description => {
+                self.description.reset(range);
+                self.typing_style = TextStyle::default();
+                self.ink = [170; 3];
+            }
+        }
+    }
+
+    fn edit_name(&mut self, mut action: text_editor::Action) {
+        if matches!(action, text_editor::Action::Edit(text_editor::Edit::Enter)) {
+            return;
+        }
+        if let text_editor::Action::Edit(text_editor::Edit::Paste(value)) = &action {
+            action = text_editor::Action::Edit(text_editor::Edit::Paste(std::sync::Arc::new(
+                value.replace(['\r', '\n'], " "),
+            )));
+        }
+        let editing = action.is_edit();
+        let cursor = self.name_content.cursor();
+        let position_before = offset(&self.name, cursor.position);
+        let anchor = cursor.selection.map_or(position_before, |selection| {
+            position_before.min(offset(&self.name, selection))
+        });
+        self.name_content.perform(action);
+        if !editing {
+            return;
+        }
+        let text = self.name_content.text();
+        let position = offset(&text, self.name_content.cursor().position);
+        if text.chars().count() > 80 {
+            self.name_content = text_editor::Content::with_text(&self.name);
+            self.name_content.move_to(cursor);
+            self.error = Some("覆盖包名称最多 80 个字符".into());
+            return;
+        }
+        let mut name = self.name_document();
+        let _ = name.edit_styled(
+            text,
+            anchor.min(position),
+            self.name_ink,
+            self.name_typing_style,
+        );
+        let mapped = visible_offset(&name.text, position);
+        let codes = name.materialize_codes();
+        self.name = name.text;
+        self.name_colors = name.colors;
+        self.name_styles = name.styles;
+        if let Some((color, style)) = codes {
+            self.name_content = text_editor::Content::with_text(&self.name);
+            self.name_content
+                .move_to(iced::advanced::text::editor::Cursor {
+                    position: position_at(&self.name, mapped),
+                    selection: None,
+                });
+            self.name_ink = color.unwrap_or([255; 3]);
+            self.name_typing_style = style;
+        }
+        self.error = None;
+    }
+
+    fn edit(&mut self, mut action: text_editor::Action) {
+        if let text_editor::Action::Edit(text_editor::Edit::Paste(value)) = &action {
+            action = text_editor::Action::Edit(text_editor::Edit::Paste(std::sync::Arc::new(
+                value.replace("\r\n", "\n").replace('\r', "\n"),
+            )));
+        }
         let editing = action.is_edit();
         let cursor = self.content.cursor();
         let before = offset(&self.description.text, cursor.position);
@@ -128,18 +319,52 @@ impl Composer {
         if editing {
             let after = self.content.text();
             let new_position = offset(&after, self.content.cursor().position);
-            if let Err(error) = self
-                .description
-                .edit(after, anchor.min(new_position), self.ink)
-            {
+            if let Err(error) = self.description.edit_styled(
+                after,
+                anchor.min(new_position),
+                self.ink,
+                self.typing_style,
+            ) {
                 self.content = text_editor::Content::with_text(&self.description.text);
                 self.content.move_to(cursor);
                 self.error = Some(error.to_string());
             } else {
+                let mapped = visible_offset(&self.description.text, new_position);
+                if let Some((color, style)) = self.description.materialize_codes() {
+                    self.content = text_editor::Content::with_text(&self.description.text);
+                    self.content.move_to(iced::advanced::text::editor::Cursor {
+                        position: position_at(&self.description.text, mapped),
+                        selection: None,
+                    });
+                    self.ink = color.unwrap_or([170; 3]);
+                    self.typing_style = style;
+                }
                 self.error = None;
             }
         }
     }
+}
+
+fn visible_offset(text: &str, offset: usize) -> usize {
+    let prefix: String = text.chars().take(offset).collect();
+    Description::plain(prefix)
+        .formatted_runs("1.16")
+        .iter()
+        .map(|run| run.text.chars().count())
+        .sum()
+}
+
+fn position_at(text: &str, offset: usize) -> iced::advanced::text::editor::Position {
+    let mut position = iced::advanced::text::editor::Position { line: 0, column: 0 };
+    for character in text.chars().take(offset) {
+        if character == '\n' {
+            position.line += 1;
+            position.column = 0;
+        } else {
+            position.column += character.len_utf8();
+        }
+    }
+    position
 }
 
 // Iced's columns are UTF-8 byte indices. Colors are indexed by Unicode scalars.
@@ -176,30 +401,21 @@ impl App {
             return Task::none();
         }
         let changed = match &event {
-            Event::Description(action) => action.is_edit(),
-            Event::Name(_)
-            | Event::PaintAll
-            | Event::ClearColor
+            Event::Description(action) | Event::NameEdit(action) => action.is_edit(),
+            Event::Color(..)
+            | Event::Style(..)
+            | Event::ClearFormat(_)
             | Event::ResetIcon
             | Event::Zip(_) => true,
             _ => false,
         };
         match event {
-            Event::Name(name) => self.overlay.name = name.chars().take(80).collect(),
+            Event::NameEdit(action) => self.overlay.edit_name(action),
             Event::Description(action) => self.overlay.edit(action),
-            Event::PaintAll => {
-                let length = self.overlay.description.text.chars().count();
-                self.overlay
-                    .description
-                    .paint(0..length, Some(self.overlay.ink));
-            }
-            Event::ClearColor => {
-                let range = self
-                    .overlay
-                    .selection()
-                    .unwrap_or(0..self.overlay.description.text.chars().count());
-                self.overlay.description.paint(range, None);
-            }
+            Event::Color(TextField::Name, color) => self.overlay.set_name_color(color),
+            Event::Color(TextField::Description, color) => self.overlay.set_color(color),
+            Event::Style(field, format) => self.overlay.toggle_style(field, format),
+            Event::ClearFormat(field) => self.overlay.clear_format(field),
             Event::ChooseIcon => {
                 return Task::perform(
                     async {
@@ -259,7 +475,11 @@ impl App {
             .parsed_export_directory()?
             .ok_or_else(|| anyhow::anyhow!("请先选择导出目录"))?;
         anyhow::ensure!(!self.overlay.name.trim().is_empty(), "请填写覆盖包名称");
-        let name = overlay::filename(&self.overlay.name, &self.target, self.overlay.as_zip);
+        let name = overlay::formatted_filename(
+            &self.overlay.name_document(),
+            &self.target,
+            self.overlay.as_zip,
+        );
         let first = directory.join(&name);
         if !first.exists() {
             return Ok(first);
@@ -352,98 +572,29 @@ impl App {
         let c = self.colors();
         let composer = &self.overlay;
         let enabled = !self.busy();
-        let mut name = text_input("覆盖包名称", &composer.name)
-            .padding(11)
-            .size(14)
-            .style(|_, status| self.input_style(status));
-        if enabled {
-            name = name.on_input(|value| Message::Overlay(Event::Name(value)));
-        }
-        let mut description = text_editor(&composer.content)
-            .id("overlay-description")
-            .placeholder("输入简介，选中文字后调色…")
-            .height(100)
-            .padding(12)
-            .size(14)
-            .font(iced::Font::with_name(crate::windows_compat::font_family()))
-            .style(move |_, status| text_editor::Style {
-                background: c.field.into(),
-                border: Border {
-                    radius: 10.0.into(),
-                    width: 1.0,
-                    color: if matches!(status, text_editor::Status::Focused { .. }) {
-                        c.accent
-                    } else {
-                        c.line
-                    },
-                },
-                placeholder: c.muted,
-                value: c.foreground,
-                selection: super::mix(c.field, c.accent, 0.4),
-            });
-        if enabled {
-            description =
-                description.on_action(|action| Message::Overlay(Event::Description(action)));
-        }
         let editor = column![
-            self.label("覆盖包名称"),
-            name,
-            self.label("简介"),
-            description,
-            row![
-                self.palette_button(113, ColorTarget::Description, enabled),
-                self.action(
-                    114,
-                    "整段应用",
-                    enabled.then_some(Message::Overlay(Event::PaintAll)),
-                    false
-                ),
-                self.action(
-                    115,
-                    "清除颜色",
-                    enabled.then_some(Message::Overlay(Event::ClearColor)),
-                    false
-                )
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-            self.label(if overlay::supports_hex(&self.target) {
-                "选中文字后调色；未选择文字时，颜色用于后续输入。"
-            } else {
-                "选中文字后调色；此版本的简介使用游戏原版 16 色。"
-            })
+            self.overlay_text_field(TextField::Name),
+            self.overlay_text_field(TextField::Description)
         ]
-        .spacing(10);
-        let spans: Vec<_> = composer
-            .description
-            .runs(&self.target)
-            .into_iter()
-            .map(|(value, color)| {
-                widget::span::<(), iced::Font>(value).color(
-                    color.map_or(Color::from_rgb8(170, 170, 170), |[r, g, b]| {
-                        Color::from_rgb8(r, g, b)
-                    }),
-                )
-            })
-            .collect();
-        let preview_text: Element<'_, Message> = widget::rich_text(spans).size(14).into();
+        .spacing(20);
+        let preview_text = self.formatted_preview(
+            &composer.description,
+            &self.target,
+            14,
+            Color::from_rgb8(170, 170, 170),
+        );
+        let filename =
+            overlay::formatted_filename(&composer.name_document(), &self.target, composer.as_zip);
+        let title = Description::plain(filename.strip_suffix(".zip").unwrap_or(&filename));
+        let preview_title = self.formatted_preview(&title, "1.8.9", 16, Color::WHITE);
         let preview = container(
             row![
                 widget::image(composer.icon_preview.clone())
                     .width(54)
                     .height(54),
-                column![
-                    text(if composer.name.is_empty() {
-                        "覆盖包名称"
-                    } else {
-                        &composer.name
-                    })
-                    .size(16)
-                    .color(Color::WHITE),
-                    widget::scrollable(preview_text).height(64)
-                ]
-                .spacing(6)
-                .width(Length::Fill)
+                column![preview_title, widget::scrollable(preview_text).height(64)]
+                    .spacing(6)
+                    .width(Length::Fill)
             ]
             .spacing(12)
             .align_y(Alignment::Start),
@@ -540,7 +691,8 @@ impl App {
         ]
         .spacing(18)
         .align_y(Alignment::End);
-        let filename = overlay::filename(&composer.name, &self.target, composer.as_zip);
+        let filename =
+            overlay::formatted_filename(&composer.name_document(), &self.target, composer.as_zip);
         let format = fast_pack::pack_format_of(&self.target).unwrap_or(0);
         let features = usize::from(self.custom_glint)
             + usize::from(self.custom_crosshair)
@@ -554,12 +706,17 @@ impl App {
                 self.label("选择版本和功能，直接制作。游戏内将覆盖包放在其他材质包上方。")
             ]
             .spacing(8),
-            self.panel(column![self.title("图标与简介", 15), metadata].spacing(18)),
+            self.panel(column![self.title("名称、图标与简介", 15), metadata].spacing(18)),
             self.panel(
                 column![
                     self.title("制作设置", 15),
                     settings,
-                    self.label(format!("导出文件：{filename}")),
+                    self.formatted_preview(
+                        &Description::plain(format!("导出文件：{filename}")),
+                        "1.8.9",
+                        12,
+                        c.muted
+                    ),
                     self.memory_controls()
                 ]
                 .spacing(15)
