@@ -9,6 +9,8 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
+#[path = "native_cit_context.rs"]
+mod contexts;
 #[path = "native_cit_models.rs"]
 mod models;
 #[path = "native_cit_potions.rs"]
@@ -21,7 +23,7 @@ mod tree;
 
 const CACHE: &str = "fastpack/native-cit.json";
 const FOLDER: &str = "assets/minecraft/optifine/cit/fastpack_native";
-const GENERATOR: u32 = 2;
+const GENERATOR: u32 = 3;
 
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))[..24].into()
@@ -296,31 +298,26 @@ pub(super) fn migrate(
             skipped += 1;
             continue;
         }
-        let (legacy_tree, omitted) = match tree::legacy_contexts(&definition["model"]) {
-            Ok(value) => value,
-            Err(error) => {
-                report.warnings.push(format!(
-                    "原版条件模型 {item}：{error:#}；保留完整原定义，继续处理其他物品"
-                ));
-                continue;
-            }
+        let compiled = if target >= 8 {
+            contexts::compile(&definition["model"])
+        } else {
+            tree::legacy_contexts(&definition["model"]).and_then(|(node, removed)| {
+                if removed > 0 { report.warnings.push(format!("原版条件模型 {item}：此目标没有可用的 Forge 场景模型接口，保留基础外观与完整原数据")); }
+                Ok((tree::compile(&node)?, false))
+            })
         };
-        if omitted > 0 {
-            report.warnings.push(format!("原版条件模型 {item}：目标 CIT 不支持显示场景条件，保留非场景基础外观；背包专用数字或标记未应用，避免出现在手持、掉落及展示模型上。完整定义保留供再次升级"));
-            // The ordinary model binding has already migrated this fallback.
-            // Do not emit a high-priority unconditional CIT that would mask
-            // the player's actual sword/bow pack after omitting a GUI overlay.
-            if !conditional(&legacy_tree) {
-                continue;
+        match compiled {
+            Ok((cases, scoped)) => {
+                if scoped {
+                    report.warnings.push(format!("原版条件模型 {item}：背包数字通过 Forge separate_transforms 单独显示；手持、掉落和展示保留对应基础模型。非 Forge 客户端使用基础外观"));
+                }
+                match emit(root, target, &item, &cases, &mut state, report) {
+                    Ok(count) => total += count,
+                    Err(error) => report.warnings.push(format!(
+                        "原版条件模型 {item}：{error:#}；完整原始定义已保留"
+                    )),
+                }
             }
-        }
-        match tree::compile(&legacy_tree) {
-            Ok(cases) => match emit(root, target, &item, &cases, &mut state, report) {
-                Ok(count) => total += count,
-                Err(error) => report.warnings.push(format!(
-                    "原版条件模型 {item}：{error:#}；完整原始定义已保留"
-                )),
-            },
             Err(error) => report.warnings.push(format!(
                 "原版条件模型 {item}：{error:#}；原数据保留，不放宽条件"
             )),
@@ -328,7 +325,7 @@ pub(super) fn migrate(
     }
     if total > 0 {
         report.converted.push(format!("原版条件模型降级：为 {version} 生成 {total} 条 OptiFine CIT 规则，处理附魔、药水、耐久与叠加图层，保留弓的拉弓状态"));
-        report.warnings.push("旧版条件外观需要启用兼容客户端的自定义物品功能；无法表达的场景专用效果保留原数据，不扩展到手持或世界显示".into());
+        report.warnings.push("旧版条件外观需要启用兼容客户端的自定义物品功能；显示场景模型需 Forge，原版客户端仍使用基础模型".into());
     }
     if skipped > 0 {
         report.warnings.push(format!(
@@ -390,16 +387,23 @@ fn emit(
     let mut outputs = BTreeMap::new();
     let mut missing = BTreeSet::new();
     for (identity, (mut props, variants)) in grouped {
+        if props.is_empty()
+            && variants.iter().all(|(_, case)| {
+                !case.perspectives.is_empty()
+                    && case.perspectives.values().all(|parts| *parts == case.parts)
+            })
+        {
+            continue;
+        }
         let mut pending = BTreeMap::new();
         let result = (|| -> Result<()> {
             let base = variants
                 .iter()
-                .rev()
                 .find(|(_, case)| case.runtime.is_empty())
                 .or_else(|| variants.last())
                 .unwrap()
                 .1;
-            let mut model = models::compose(root, target, item, &base.parts, &mut pending)?;
+            let mut model = contexts::model(root, target, item, base, &mut pending)?;
             let mut overrides = vec![];
             let mut dynamic = variants
                 .iter()
@@ -409,7 +413,7 @@ fn emit(
                 x.runtime.len().cmp(&y.runtime.len()).then_with(|| b.cmp(a))
             });
             for (_, case) in dynamic {
-                let value = models::compose(root, target, item, &case.parts, &mut pending)?;
+                let value = contexts::model(root, target, item, case, &mut pending)?;
                 let reference = model_output(&value, &mut pending)?;
                 overrides.push(json!({"predicate":case.runtime,"model":reference}));
             }
@@ -438,6 +442,7 @@ fn emit(
                     properties::write(&variant).into_bytes(),
                 );
             }
+            potions::prioritize(&mut props, target, item);
             let name = hash(format!("{item}:{identity}").as_bytes());
             pending.insert(
                 format!("{FOLDER}/{name}.properties"),

@@ -18,7 +18,9 @@ pub(super) enum Atom {
 pub(super) struct Case {
     pub tests: Vec<Atom>,
     pub runtime: BTreeMap<String, f64>,
+    pub runtime_max: BTreeMap<String, f64>,
     pub parts: Vec<Value>,
+    pub perspectives: BTreeMap<String, Vec<Value>>,
 }
 
 pub(super) fn compile(node: &Value) -> Result<Vec<Case>> {
@@ -88,11 +90,17 @@ fn expand(node: &Value, depth: usize) -> Result<Vec<Case>> {
                         merged.parts.extend(child.parts.clone());
                         let mut compatible = true;
                         for (key, value) in &child.runtime {
-                            if merged.runtime.get(key).is_some_and(|old| old != value) {
-                                compatible = false;
-                                break;
-                            }
-                            merged.runtime.insert(key.clone(), *value);
+                            let threshold = merged.runtime.entry(key.clone()).or_insert(*value);
+                            *threshold = threshold.max(*value);
+                        }
+                        for (key, value) in &child.runtime_max {
+                            let threshold = merged.runtime_max.entry(key.clone()).or_insert(*value);
+                            *threshold = threshold.min(*value);
+                        }
+                        if merged.runtime_max.iter().any(|(key, upper)| {
+                            merged.runtime.get(key).copied().unwrap_or(0.0) >= *upper
+                        }) {
+                            compatible = false;
                         }
                         if compatible {
                             product.push(merged);
@@ -105,7 +113,7 @@ fn expand(node: &Value, depth: usize) -> Result<Vec<Case>> {
         }
         "condition" => {
             let mut yes = expand(&node["on_true"], depth + 1)?;
-            let no = expand(&node["on_false"], depth + 1)?;
+            let mut no = expand(&node["on_false"], depth + 1)?;
             match kind(node, "property") {
                 "component" => {
                     let predicate = node["predicate"]
@@ -129,6 +137,9 @@ fn expand(node: &Value, depth: usize) -> Result<Vec<Case>> {
                 "using_item" => {
                     for case in &mut yes {
                         case.runtime.insert("__using_item".into(), 1.0);
+                    }
+                    for case in &mut no {
+                        case.runtime_max.insert("__using_item".into(), 0.5);
                     }
                 }
                 other => bail!("旧版 CIT 无法等价表达布尔属性 {other}"),
@@ -274,6 +285,9 @@ fn interval(
             // The native property is ticks; pre-1.21.4 bow pull is duration / 20.
             for case in &mut cases {
                 case.runtime.insert("pull".into(), lower / 20.0);
+                if let Some(upper) = upper {
+                    case.runtime_max.insert("pull".into(), upper / 20.0);
+                }
             }
         }
         other => bail!("旧版模型无法表达数值属性 {other}"),

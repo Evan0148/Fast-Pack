@@ -289,9 +289,27 @@ fn gui_only_overlays_never_enter_legacy_hand_ground_or_frame_models() {
         report
             .warnings
             .iter()
-            .any(|text| text.contains("背包专用数字或标记未应用"))
+            .any(|text| text.contains("separate_transforms"))
     );
-    assert!(generated_rules(root).unwrap().is_empty());
+    let rules = generated_rules(root).unwrap();
+    assert_eq!(rules.len(), 1);
+    let rule = properties::parse(&disk::read(rules.first().unwrap()).unwrap()).unwrap();
+    let reference = rule["model"].strip_prefix("minecraft:").unwrap();
+    let model = crate::model_json::parse(
+        &disk::read(root.join(format!("assets/minecraft/models/{reference}.json"))).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(model["loader"], "forge:separate_transforms");
+    assert_eq!(
+        model["base"]["textures"]["layer0"],
+        "minecraft:item/diamond_sword"
+    );
+    assert!(model["base"]["textures"].get("layer1").is_none());
+    assert_eq!(
+        model["perspectives"]["gui"]["textures"]["layer1"],
+        "another_namespace:item/number"
+    );
+    assert!(model["perspectives"].get("ground").is_none());
     assert!(tree::compile(&original["model"]).is_err());
     let (node, removed) = tree::legacy_contexts(&original["model"]).unwrap();
     assert_eq!(removed, 1);
@@ -336,8 +354,10 @@ fn old_generated_gui_models_are_repaired_but_author_edits_are_preserved() {
                     .any(|text| text.contains("保留用户改动"))
             );
         } else {
-            assert!(generated_rules(root).unwrap().is_empty());
-            assert!(!path.exists());
+            assert_eq!(generated_rules(root).unwrap().len(), 1);
+            let state: State =
+                serde_json::from_slice(&disk::read(root.join(CACHE)).unwrap()).unwrap();
+            assert_eq!(state.generator, GENERATOR);
         }
         assert_ne!(original, scoped_definition());
     }
@@ -349,10 +369,14 @@ fn instant_potion_custom_effects_match_exact_type_and_amplifier_without_color_gu
     let variants = potions::variants(&base, 15, "minecraft:splash_potion");
     assert_eq!(variants.len(), 1);
     let variant = &variants[0].1;
-    assert_eq!(variant["nbt.CustomPotionEffects.count"], "1");
+    assert!(!variant.contains_key("nbt.CustomPotionEffects.count"));
+    assert!(!variant.contains_key("nbt.Potion"));
     assert_eq!(variant["nbt.CustomPotionEffects.0.Id"], "6");
     assert_eq!(variant["nbt.CustomPotionEffects.0.Amplifier"], "0");
     assert_eq!(variant["weight"], "199979");
+    let mut registered = base.clone();
+    potions::prioritize(&mut registered, 15, "minecraft:splash_potion");
+    assert_eq!(registered["weight"], "299979");
     assert!(!variant.contains_key("nbt.display.Name"));
     assert!(!variant.contains_key("nbt.CustomPotionColor"));
     let mut strong = base.clone();
@@ -363,7 +387,15 @@ fn instant_potion_custom_effects_match_exact_type_and_amplifier_without_color_gu
     );
     let mut other = base.clone();
     other.insert("nbt.Potion".into(), "minecraft:swiftness".into());
-    assert!(potions::variants(&other, 15, "minecraft:splash_potion").is_empty());
+    assert_eq!(
+        potions::variants(&other, 15, "minecraft:splash_potion")[0].1["nbt.CustomPotionEffects.0.Id"],
+        "1"
+    );
+    other.insert("nbt.Potion".into(), "minecraft:long_swiftness".into());
+    assert_eq!(
+        potions::variants(&other, 15, "minecraft:splash_potion")[0].1["nbt.CustomPotionEffects.0.Duration"],
+        "9600"
+    );
     assert!(potions::variants(&base, 32, "minecraft:splash_potion").is_empty());
 }
 
@@ -432,4 +464,101 @@ fn malformed_context_definition_does_not_abort_other_items_or_delete_old_generat
     disk::write(root.join(CACHE), serde_json::to_vec(&state).unwrap()).unwrap();
     migrate(root, 1, "1.8.9", &mut AssetReport::default()).unwrap();
     assert!(rules.iter().all(|path| path.exists()));
+}
+
+#[test]
+fn context_damage_ranges_intersect_without_reordering_gui_and_hand_priorities() {
+    let leaf =
+        |name: &str| json!({"type":"minecraft:model","model":format!("minecraft:item/{name}")});
+    let base = json!({"type":"minecraft:range_dispatch","property":"minecraft:damage","normalize":false,"entries":[{"threshold":2,"model":leaf("iron_sword")},{"threshold":4,"model":leaf("diamond_sword")}],"fallback":leaf("wooden_sword")});
+    let gui = json!({"type":"minecraft:range_dispatch","property":"minecraft:damage","normalize":false,"entries":[{"threshold":1,"model":leaf("golden_sword")},{"threshold":3,"model":leaf("stone_sword")}],"fallback":leaf("wooden_sword")});
+    let node = json!({"type":"minecraft:select","property":"minecraft:display_context","cases":[{"when":"gui","model":gui}],"fallback":base});
+    let (cases, scoped) = contexts::compile(&node).unwrap();
+    assert!(scoped);
+    for damage in 0..7 {
+        let chosen = cases
+            .iter()
+            .find(|case| {
+                case.tests.iter().all(|test| match test {
+                    tree::Atom::Damage { min, max, .. } => {
+                        damage >= *min && max.is_none_or(|max| damage <= max)
+                    }
+                    _ => panic!("unexpected predicate"),
+                })
+            })
+            .unwrap();
+        assert_eq!(
+            chosen.parts[0]["model"],
+            format!(
+                "minecraft:item/{}",
+                if damage >= 4 {
+                    "diamond_sword"
+                } else if damage >= 2 {
+                    "iron_sword"
+                } else {
+                    "wooden_sword"
+                }
+            )
+        );
+        assert_eq!(
+            chosen.perspectives["gui"][0]["model"],
+            format!(
+                "minecraft:item/{}",
+                if damage >= 3 {
+                    "stone_sword"
+                } else if damage >= 1 {
+                    "golden_sword"
+                } else {
+                    "wooden_sword"
+                }
+            )
+        );
+    }
+}
+
+#[test]
+fn context_textures_outside_item_directories_keep_pixels_animation_and_atlas_visibility() {
+    let work = tempfile::tempdir().unwrap();
+    let root = work.path();
+    fixture(root);
+    let image = root.join("assets/another_namespace/textures/gui/number.png");
+    disk::create_dir_all(image.parent().unwrap()).unwrap();
+    disk::copy(
+        root.join("assets/another_namespace/textures/item/number.png"),
+        &image,
+    )
+    .unwrap();
+    disk::write(
+        image.with_extension("png.mcmeta"),
+        br#"{"animation":{"frametime":2}}"#,
+    )
+    .unwrap();
+    json_file(
+        root,
+        "assets/another_namespace/models/item/number.json",
+        &json!({"parent":"minecraft:item/generated","textures":{"layer0":"another_namespace:gui/number"}}),
+    );
+    json_file(
+        root,
+        "assets/minecraft/items/diamond_sword.json",
+        &scoped_definition(),
+    );
+    down(root);
+    let rule =
+        properties::parse(&disk::read(generated_rules(root).unwrap().first().unwrap()).unwrap())
+            .unwrap();
+    let reference = rule["model"].strip_prefix("minecraft:").unwrap();
+    let model = crate::model_json::parse(
+        &disk::read(root.join(format!("assets/minecraft/models/{reference}.json"))).unwrap(),
+    )
+    .unwrap();
+    let texture = model["perspectives"]["gui"]["textures"]["layer1"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("minecraft:")
+        .unwrap();
+    assert!(texture.starts_with("item/fastpack_native_cit/"));
+    let generated = root.join(format!("assets/minecraft/textures/{texture}.png"));
+    assert_eq!(disk::read(&generated).unwrap(), disk::read(image).unwrap());
+    assert!(generated.with_extension("png.mcmeta").exists());
 }
