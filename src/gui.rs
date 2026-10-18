@@ -1,4 +1,6 @@
 use crate::motion::Tween;
+#[path = "builtin_overlay_controls.rs"]
+mod builtin_overlay_controls;
 #[path = "color_picker.rs"]
 mod color_picker;
 #[path = "item_editor.rs"]
@@ -29,6 +31,7 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 enum Message {
+    BuiltinOverlay(fast_pack::builtin_overlays::Feature, bool),
     Mode(bool),
     Overlay(overlay_editor::Event),
     PickColor(ColorTarget),
@@ -249,6 +252,7 @@ struct App {
     block_outline_width: f32,
     crosshair_tint: Option<[u8; 3]>,
     rainbow: fast_pack::compat::rainbow::Settings,
+    builtin_overlays: fast_pack::builtin_overlays::Settings,
     item_editor: item_editor::Editor,
     profile: Option<crate::ui_profile::Profile>,
     preview_pending: Option<u64>,
@@ -454,6 +458,7 @@ impl App {
                 .unwrap_or(preferences.block_outline_width),
             crosshair_tint: preferences.crosshair_tint,
             rainbow: preferences.rainbow,
+            builtin_overlays: preferences.builtin_overlays,
             profile: crate::ui_profile::Profile::load(),
             preview_pending: None,
             preview_request: None,
@@ -713,6 +718,13 @@ impl App {
                 fishing: Some(fishing),
                 outline: Some(outline),
             };
+        }
+        if app.capture.is_some()
+            && std::env::var("FAST_PACK_CAPTURE_BUILTINS").as_deref() == Ok("1")
+        {
+            app.advanced = true;
+            app.advanced_motion.set(1.0, now, true);
+            app.builtin_overlays.features = fast_pack::builtin_overlays::Feature::ALL.to_vec();
         }
         (app, task)
     }
@@ -1351,6 +1363,7 @@ impl App {
                     block_outline: self.block_outline,
                     crosshair_tint: self.crosshair_tint,
                     rainbow: self.rainbow,
+                    builtin_overlays: self.builtin_overlays.clone(),
                     fishing_line_color: self.fishing_line_color,
                     block_outline_color: self.block_outline_color,
                     line_widths: self.line_widths,
@@ -1603,6 +1616,7 @@ impl App {
             crosshair,
             show_attack_indicator: self.show_attack_indicator,
             custom_items: self.item_editor.applied(&self.target),
+            builtin_overlays: self.builtin_overlays.clone(),
             fishing_line_color: (target_format >= 7).then_some(self.fishing_line).flatten(),
             block_outline_color: (target_format >= 7).then_some(self.block_outline).flatten(),
             line_color_selection: (target_format >= 7).then_some(
@@ -2393,6 +2407,10 @@ impl App {
                 }
             }
             Message::PickColor(target) if !self.busy() => self.open_color_picker(target),
+            Message::BuiltinOverlay(feature, enabled) if !self.busy() => {
+                self.builtin_overlays.set(feature, enabled);
+                self.save_preferences();
+            }
             Message::RainbowColor(enabled) if !self.busy() => self.set_rainbow(enabled),
             Message::FishingLine(enabled) if !self.busy() => {
                 self.fishing_line = enabled.then_some(self.fishing_line_color);
@@ -4001,6 +4019,7 @@ impl App {
             self.line_color_controls(),
             self.crosshair_controls(),
             self.items_view(),
+            self.builtin_overlay_controls(),
             row![
                 self.action(
                     8,

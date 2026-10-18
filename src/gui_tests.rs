@@ -1,5 +1,31 @@
 use super::*;
 
+#[test]
+fn builtin_overlay_choices_are_independent_saved_and_locked_during_conversion() {
+    use fast_pack::builtin_overlays::{Feature, Settings};
+    let mut app = app();
+    assert!(!app.builtin_overlays.active());
+    let _ = app.update(Message::BuiltinOverlay(Feature::Sharpness, true));
+    let _ = app.update(Message::BuiltinOverlay(Feature::HighlightNames, true));
+    assert!(app.builtin_overlays.enabled(Feature::Sharpness));
+    assert!(app.builtin_overlays.enabled(Feature::HighlightNames));
+    assert!(!app.builtin_overlays.enabled(Feature::HeypixelPack));
+    let settings = crate::preferences::Preferences {
+        builtin_overlays: app.builtin_overlays.clone(),
+        ..Default::default()
+    };
+    let restored: crate::preferences::Preferences =
+        serde_json::from_slice(&serde_json::to_vec(&settings).unwrap()).unwrap();
+    assert_eq!(restored.builtin_overlays, app.builtin_overlays);
+    app.phase = Phase::Running;
+    let _ = app.update(Message::BuiltinOverlay(Feature::Sharpness, false));
+    assert!(app.builtin_overlays.enabled(Feature::Sharpness));
+    assert_eq!(
+        serde_json::from_str::<Settings>("{}").unwrap(),
+        Settings::default()
+    );
+}
+
 fn app() -> App {
     let (mut app, _) = App::boot();
     app.smoke = false;

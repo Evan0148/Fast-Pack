@@ -24,6 +24,7 @@ pub struct Preferences {
     pub fishing_line_width: f32,
     pub block_outline_width: f32,
     pub rainbow: fast_pack::compat::rainbow::Settings,
+    pub builtin_overlays: fast_pack::builtin_overlays::Settings,
     pub auto_save: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_version: Option<String>,
@@ -59,6 +60,7 @@ impl Default for Preferences {
             fishing_line_width: fast_pack::compat::line_colors::DEFAULT_WIDTH,
             block_outline_width: fast_pack::compat::line_colors::DEFAULT_WIDTH,
             rainbow: Default::default(),
+            builtin_overlays: Default::default(),
             auto_save: true,
             target_version: None,
             auto_save_path: true,

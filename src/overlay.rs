@@ -188,6 +188,7 @@ pub struct Options {
     pub show_attack_indicator: bool,
     pub custom_items: Vec<crate::compat::custom_items::Rule>,
     pub rainbow: crate::compat::rainbow::Settings,
+    pub builtin_overlays: crate::builtin_overlays::Settings,
 }
 
 impl Default for Options {
@@ -205,6 +206,7 @@ impl Default for Options {
             show_attack_indicator: true,
             custom_items: Vec::new(),
             rainbow: Default::default(),
+            builtin_overlays: Default::default(),
         }
     }
 }
@@ -246,6 +248,13 @@ pub fn build(
     let _memory = fs::Mount::new(work.path());
     fs::create_dir_all(&root)?;
     let mut assets = AssetReport::default();
+    progress("制作内置覆盖内容", 8);
+    crate::builtin_overlays::apply(
+        &root,
+        &options.version,
+        &options.builtin_overlays,
+        &mut assets,
+    )?;
     progress("制作附魔光效", 12);
     if options.rainbow.glint {
         crate::compat::glint::rainbow(&root, format, format, &mut assets)?;
@@ -253,17 +262,25 @@ pub fn build(
         crate::compat::glint::migrate(&root, format, format, options.glint_color, &mut assets)?;
     }
     progress("制作线条外观", 28);
+    let builtin_outline = options
+        .builtin_overlays
+        .enabled(crate::builtin_overlays::Feature::RainbowOutline)
+        && format >= 7;
     crate::compat::line_colors::apply_selected(
         &root,
         &options.version,
         options.fishing_line_color,
-        options.block_outline_color,
+        options
+            .block_outline_color
+            .or(builtin_outline.then_some([0; 3])),
         options.rainbow.fishing_line,
-        options.rainbow.block_outline,
+        options.rainbow.block_outline || (builtin_outline && options.block_outline_color.is_none()),
         options.line_widths,
         Some(crate::compat::line_colors::ColorSelection {
             fishing: options.fishing_line_color.is_some() || options.rainbow.fishing_line,
-            outline: options.block_outline_color.is_some() || options.rainbow.block_outline,
+            outline: options.block_outline_color.is_some()
+                || options.rainbow.block_outline
+                || builtin_outline,
         }),
         &mut assets,
     )?;

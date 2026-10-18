@@ -26,7 +26,7 @@ mod legacy_textures;
 pub mod line_colors;
 mod model_integrity;
 mod modern_gui;
-mod modern_items;
+pub(crate) mod modern_items;
 pub(crate) mod native_cit;
 mod netherite;
 mod players;

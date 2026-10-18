@@ -1,4 +1,5 @@
 pub mod batch;
+pub mod builtin_overlays;
 pub mod cli;
 pub mod client_audio;
 pub mod compat;

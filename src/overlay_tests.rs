@@ -1,4 +1,25 @@
 use super::*;
+
+#[test]
+fn builtin_name_highlight_overlay_needs_no_import_and_does_not_enable_other_effects() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("names.zip");
+    let options = Options {
+        version: "1.21.10".into(),
+        builtin_overlays: crate::builtin_overlays::Settings {
+            features: vec![crate::builtin_overlays::Feature::HighlightNames],
+        },
+        ..Default::default()
+    };
+    build(&output, &options, |_, _| {}).unwrap();
+    let files = unpack(&output);
+    assert!(files.contains_key("assets/minecraft/shaders/core/rendertype_text_see_through.fsh"));
+    assert!(!files.keys().any(|name| name.contains("swordhud")
+        || name.contains("rendertype_lines")
+        || name.contains("/gui/")
+        || name.contains("glint")));
+    assert!(files.contains_key("fastpack/builtin-overlays/NOTICE.txt"));
+}
 use std::collections::BTreeMap;
 use std::io::Read;
 

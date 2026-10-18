@@ -1,0 +1,13 @@
+Marlow - Putting together pack and general textures/concepts
+FEDPOL1 & xnihilist - Creation of the animated 3D Crystal & 2D variant in inventory, assistance with models
+Aspect - Texture Pack Logo & Smaller Transparent Potion Particles
+G4T0 - Animation Assistance
+DragonSpectral - Animated Tipped Arrows & Ender Pearl
+Oblivion - Texture Pack Background
+WADrio - Netherite Sword & Assisting with Fire Texture
+Cats - Used critical hit particles from their "Unobtrusive Particles" pack
+L-Cancel - Used some of their textures and ideas as a base for my own
+Fear - Used as a base for certain textures
+Faithful/Compliance - Used as a base for certain textures
+VanillaTweaks - Used as a base for certain textures
+There were some textures for which I could not find the original creators - thank you to anyone else who made textures used in this pack!

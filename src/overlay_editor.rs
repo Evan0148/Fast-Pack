@@ -535,6 +535,7 @@ impl App {
                 crosshair,
                 show_attack_indicator: self.show_attack_indicator,
                 custom_items: self.item_editor.applied(&self.target),
+                builtin_overlays: self.builtin_overlays.clone(),
                 rainbow: fast_pack::compat::rainbow::Settings {
                     glint: self.custom_glint && self.rainbow.glint,
                     crosshair: self.custom_crosshair && self.rainbow.crosshair,
@@ -708,7 +709,8 @@ impl App {
                 format >= 7 && (self.block_outline.is_some() || self.line_widths.outline.is_some()),
             )
             + self.item_editor.applied_count(&self.target)
-            + usize::from(format >= 2 && !self.show_attack_indicator);
+            + usize::from(format >= 2 && !self.show_attack_indicator)
+            + self.builtin_overlays.count();
         let mut body = column![
             column![
                 self.title("覆盖包制作", 28),
@@ -759,7 +761,7 @@ impl App {
         }
         body.push(self.panel(column![
             row![self.title("覆盖内容", 15), space().width(Length::Fill), self.label(format!("已选 {features} 项"))].align_y(Alignment::Center),
-            self.glint_controls(), self.line_color_controls(), self.crosshair_controls(), self.items_view(),
+            self.glint_controls(), self.line_color_controls(), self.crosshair_controls(), self.items_view(), self.builtin_overlay_controls(),
             self.label("物品自定义基于所选版本的原版资源制作。未勾选的功能不会写入覆盖包。"),
             if fast_pack::pack_format_of(&self.target).is_ok_and(|format| format < 18) {
                 self.label("1.20.1 及更早版本的准星与 HUD 共用图集，制作准星时会同时使用原版 HUD 底图。")

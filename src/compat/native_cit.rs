@@ -493,6 +493,82 @@ fn model_output(model: &Value, outputs: &mut BTreeMap<String, Vec<u8>>) -> Resul
     Ok(format!("minecraft:item/fastpack_native_cit/{name}"))
 }
 
+/// Compile built-in GUI layers in a separate output namespace. Do not replace
+/// the input pack's native-CIT provenance or its existing generated rules.
+pub(crate) fn install_builtin_hud(
+    root: &Path,
+    target: u32,
+    definitions: &BTreeMap<String, Value>,
+    report: &mut AssetReport,
+) -> Result<()> {
+    if target < 8 {
+        report.warnings.push("内置等级数字：此版本缺少可验证的背包独立图层接口，保留原物品外观；1.18–1.21.4 需要 CIT 与 Forge 场景模型，1.21.5+ 支持原版条件模型".into());
+        return Ok(());
+    }
+    let scratch = tempfile::tempdir()?;
+    let stage = scratch.path().join("hud");
+    let mut inputs = Vec::new();
+    // Use authored item models/textures when baking the GUI and hand branches.
+    for entry in WalkDir::new(root.join("assets")) {
+        let entry = entry?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let relative = entry.path().strip_prefix(root)?;
+        let text = relative.to_string_lossy().replace('\\', "/");
+        if text.contains("/models/")
+            || text.contains("/textures/item/")
+            || text.contains("/textures/items/")
+        {
+            inputs.push((relative.to_path_buf(), fs::read(entry.path())?));
+        }
+    }
+    let generated = {
+        let _memory = fs::Mount::new(scratch.path());
+        fs::create_dir_all(&stage)?;
+        for (relative, bytes) in inputs {
+            write(
+                &stage,
+                &relative.to_string_lossy().replace('\\', "/"),
+                &bytes,
+            )?;
+        }
+        let mut state = State::default();
+        for (item, definition) in definitions {
+            match contexts::compile(&definition["model"]) {
+                Ok((cases, _)) => {
+                    emit(&stage, target, item, &cases, &mut state, report)?;
+                }
+                Err(error) => report
+                    .warnings
+                    .push(format!("内置等级数字 {item}：{error:#}")),
+            }
+        }
+        state
+            .generated
+            .keys()
+            .map(|relative| Ok((relative.clone(), fs::read(stage.join(relative))?)))
+            .collect::<Result<Vec<_>>>()?
+    };
+    for (relative, bytes) in generated {
+        let destination = relative.replace("fastpack_native", "fastpack_builtin_hud");
+        let bytes = if relative.ends_with(".json") || relative.ends_with(".properties") {
+            String::from_utf8(bytes)?
+                .replace("fastpack_native", "fastpack_builtin_hud")
+                .into_bytes()
+        } else {
+            bytes
+        };
+        let output = root.join(&destination);
+        if output.pack_is_file() {
+            backup(root, &output)?;
+        }
+        write(root, &destination, &bytes)?;
+    }
+    report.warnings.push("内置背包等级数字在此版本需要兼容 CIT 和 Forge separate_transforms 的客户端；不支持该接口时使用正常基础外观，数字不会贴到手持物品上".into());
+    Ok(())
+}
+
 pub(super) fn generated_rules(root: &Path) -> Result<BTreeSet<PathBuf>> {
     if !root.join(CACHE).pack_is_file() {
         return Ok(BTreeSet::new());

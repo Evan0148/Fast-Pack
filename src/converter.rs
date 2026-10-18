@@ -42,6 +42,7 @@ pub struct ConversionOptions {
     pub line_color_selection: Option<crate::compat::line_colors::ColorSelection>,
     pub line_widths: crate::compat::line_colors::Widths,
     pub rainbow: crate::compat::rainbow::Settings,
+    pub builtin_overlays: crate::builtin_overlays::Settings,
 }
 
 impl Default for ConversionOptions {
@@ -69,6 +70,7 @@ impl Default for ConversionOptions {
             line_color_selection: None,
             line_widths: Default::default(),
             rainbow: Default::default(),
+            builtin_overlays: Default::default(),
         }
     }
 }
@@ -1302,6 +1304,8 @@ pub fn convert_pack(
     progress("扫描文件", 10);
     report.files_total = walk_files(&root)?.len();
     let model_json_notes = crate::model_json::normalize(&root)?;
+    let builtin_settings = crate::builtin_overlays::effective(&root, &options.builtin_overlays)?;
+    let builtin_notes = crate::builtin_overlays::prepare(&root)?;
     let native_cit_notes =
         crate::compat::native_cit::prepare(&root, src_format, options.tgt_format)?;
     let sky_notes = crate::compat::sky::prepare(&root)?;
@@ -1356,6 +1360,7 @@ pub fn convert_pack(
     report.assets.converted.extend(default_notes);
     report.assets.converted.extend(model_json_notes);
     report.assets.converted.extend(native_cit_notes);
+    report.assets.warnings.extend(builtin_notes);
     crate::compat::migrate_versioned_assets(
         &root,
         src_format,
@@ -1393,6 +1398,24 @@ pub fn convert_pack(
         )?;
     }
     report.compatibility.warnings.extend(sky_notes);
+    crate::builtin_overlays::apply(
+        &root,
+        options
+            .target_version
+            .as_deref()
+            .unwrap_or(&version_label_of(options.tgt_format)),
+        &builtin_settings,
+        &mut report.assets,
+    )?;
+    // Explicit line-color choices must not revive an inherited rainbow outline.
+    let outline_settings = if options.line_color_selection.is_some() {
+        &options.builtin_overlays
+    } else {
+        &builtin_settings
+    };
+    let builtin_outline = outline_settings
+        .enabled(crate::builtin_overlays::Feature::RainbowOutline)
+        && options.tgt_format >= 7;
     crate::compat::line_colors::apply_selected(
         &root,
         options
@@ -1400,11 +1423,16 @@ pub fn convert_pack(
             .as_deref()
             .unwrap_or(&version_label_of(options.tgt_format)),
         options.fishing_line_color,
-        options.block_outline_color,
+        options
+            .block_outline_color
+            .or(builtin_outline.then_some([0; 3])),
         options.rainbow.fishing_line,
-        options.rainbow.block_outline,
+        options.rainbow.block_outline || (builtin_outline && options.block_outline_color.is_none()),
         options.line_widths,
-        options.line_color_selection,
+        options.line_color_selection.map(|mut selection| {
+            selection.outline |= builtin_outline;
+            selection
+        }),
         &mut report.assets,
     )?;
     if !options.custom_items.is_empty() {

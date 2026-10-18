@@ -77,6 +77,13 @@ struct Arguments {
         help = "按目标版本应用物品改名、大小和贴图描边规则"
     )]
     custom_items: Option<PathBuf>,
+    #[arg(
+        long = "builtin",
+        value_enum,
+        value_name = "FEATURE",
+        help = "启用内置覆盖功能，可重复使用：sharpness、golden-durability、bow-enchantments、armor-protection、heypixel-pack、highlight-names、clear-tooltips、rainbow-outline"
+    )]
+    builtin: Vec<crate::builtin_overlays::Feature>,
     #[arg(long,value_parser=crate::compat::glint::parse_color,value_name="RRGGBB",help="自定义鱼竿线颜色，需要目标版本 1.17+")]
     fishing_line_color: Option<[u8; 3]>,
     #[arg(long,value_parser=crate::compat::glint::parse_color,value_name="RRGGBB",help="自定义瞄准方块边框颜色，需要目标版本 1.17+")]
@@ -183,6 +190,9 @@ pub fn run() -> Result<()> {
         convert_lang: !args.no_lang,
         fishing_line_color: args.fishing_line_color,
         block_outline_color: args.block_outline_color,
+        builtin_overlays: crate::builtin_overlays::Settings {
+            features: args.builtin,
+        },
         line_color_selection: (args.fishing_line_color.is_some()
             || args.block_outline_color.is_some()
             || args.rainbow_fishing_line

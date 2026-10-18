@@ -53,7 +53,7 @@ pub(super) fn model_reference(target: u32, reference: &str) -> Option<Value> {
         .cloned()
 }
 
-pub(super) fn definition_reference(target: u32, name: &str) -> Option<Value> {
+pub(crate) fn definition_reference(target: u32, name: &str) -> Option<Value> {
     profile(target)?.definitions.get(name).cloned()
 }
 
