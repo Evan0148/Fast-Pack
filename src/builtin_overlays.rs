@@ -50,7 +50,7 @@ impl Feature {
             Self::GoldenDurability => "背包显示 1–32 剩余耐久",
             Self::BowEnchantments => "力量 I–V、火矢与冲击，保留拉弓状态",
             Self::ArmorProtection => "背包显示保护 I–IV，保留染色与纹饰",
-            Self::HighlightNames => "提高粉色昵称清晰度，保留透明字形；需要 1.17+ 核心着色器",
+            Self::HighlightNames => "粉色背景、白色昵称；需要 1.17+ 核心着色器",
             Self::ClearTooltips => "移除原包提示框底色；需要 1.17+ 核心着色器",
             Self::RainbowOutline => "使用现有边框动态彩色，单独调色设置优先",
         }
@@ -534,9 +534,9 @@ fn shaders(
                 let original=&captures[0];
                 let multiplier=if original.contains("ColorModulator") {" * ColorModulator"}else{""};
                 let glyph_alpha=if original.contains(".rrrr") {"texture(Sampler0, texCoord0).r"}else if original.contains("texture(") {"texture(Sampler0, texCoord0).a"}else{"texColor.a"};
-                // The normal pass is drawn after see-through labels, so both
-                // must carry the tint. Keep GUI text and black backgrounds intact.
-                format!("{original}\n// Fast Pack: supplied name highlight; retain transparent glyph discard.\n{guard}if (fastpackWorldText > 0.5 && vertexColor.a > 0.0 && max(vertexColor.r, max(vertexColor.g, vertexColor.b)) > 0.0) {{\n    float fastpackOpacity = vertexColor.a < 0.5 ? 0.9 : vertexColor.a;\n    color = vec4(1.0, 0.6, 0.8, {glyph_alpha} * fastpackOpacity){multiplier};\n}}\n{end}")
+                // The label's black background quad gets the original pink tint;
+                // glyphs stay white in both passes, with atlas coverage intact.
+                format!("{original}\n// Fast Pack: supplied name highlight; retain transparent glyph discard.\n{guard}if (fastpackWorldText > 0.5 && vertexColor.a > 0.0) {{\n    bool fastpackBackground = max(vertexColor.r, max(vertexColor.g, vertexColor.b)) == 0.0;\n    vec3 fastpackTint = fastpackBackground ? vec3(1.0, 0.6, 0.8) : vec3(1.0);\n    float fastpackOpacity = fastpackBackground ? 0.7 : (vertexColor.a < 0.5 ? 0.9 : vertexColor.a);\n    color = vec4(fastpackTint, {glyph_alpha} * fastpackOpacity){multiplier};\n}}\n{end}")
             }).into_owned();
         }
         if tooltips && tooltip && name.ends_with(".vsh") {
