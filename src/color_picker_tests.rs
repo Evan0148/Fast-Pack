@@ -1,6 +1,49 @@
 use super::*;
 
 #[test]
+fn name_background_palette_saves_color_and_keeps_other_palettes_independent() {
+    use fast_pack::builtin_overlays::Feature;
+    let mut app = app();
+    app.target = "1.20.1".into();
+    let glint = app.glint_color;
+    let fishing = app.fishing_line_color;
+    let outline = app.block_outline_color;
+    app.open_color_picker(ColorTarget::NameBackground);
+    app.set_picker_color([17, 102, 204]);
+    app.close_glint_picker();
+    assert!(app.builtin_overlays.enabled(Feature::HighlightNames));
+    assert_eq!(app.builtin_overlays.name_background, [17, 102, 204]);
+    assert_eq!(app.glint_color, glint);
+    assert_eq!(app.fishing_line_color, fishing);
+    assert_eq!(app.block_outline_color, outline);
+    app.open_color_picker(ColorTarget::NameBackground);
+    app.set_rainbow(true);
+    assert!(app.rainbow_for(ColorTarget::NameBackground));
+    assert_eq!(
+        app.palette_caption(ColorTarget::NameBackground).as_deref(),
+        Some("动态彩色")
+    );
+    app.close_glint_picker();
+    let saved = crate::preferences::Preferences {
+        builtin_overlays: app.builtin_overlays.clone(),
+        ..Default::default()
+    };
+    let restored: crate::preferences::Preferences =
+        serde_json::from_slice(&serde_json::to_vec(&saved).unwrap()).unwrap();
+    assert_eq!(restored.builtin_overlays, app.builtin_overlays);
+    app.target = "1.21.10".into();
+    assert!(!app.rainbow_for(ColorTarget::NameBackground));
+    assert_eq!(
+        app.palette_color(ColorTarget::NameBackground),
+        [17, 102, 204]
+    );
+    app.target = "1.20.1".into();
+    assert!(app.rainbow_for(ColorTarget::NameBackground));
+    let _ = app.update(Message::BuiltinOverlay(Feature::HighlightNames, false));
+    assert!(!app.palette_rainbow(ColorTarget::NameBackground));
+}
+
+#[test]
 fn fishing_rainbow_does_not_enable_outline_and_unchecking_outline_is_authoritative() {
     let mut app = app();
     app.rainbow.block_outline = true; // previously saved palette choice, currently unchecked

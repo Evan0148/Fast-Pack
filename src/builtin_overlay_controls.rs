@@ -1,7 +1,7 @@
-use super::{App, Message};
+use super::{App, ColorTarget, Message};
 use fast_pack::builtin_overlays::Feature;
 use iced::widget::{checkbox, column, row, space};
-use iced::{Element, Length};
+use iced::{Alignment, Element, Length};
 
 impl App {
     pub(super) fn builtin_overlay_controls(&self) -> Element<'_, Message> {
@@ -16,19 +16,26 @@ impl App {
         .spacing(12);
         for feature in Feature::ALL {
             let enabled = !self.busy();
-            choices = choices.push(
-                column![
-                    checkbox(self.builtin_overlays.enabled(feature))
-                        .label(feature.title())
-                        .size(17)
-                        .text_size(13)
-                        .on_toggle_maybe(
-                            enabled.then_some(move |value| Message::BuiltinOverlay(feature, value))
-                        ),
-                    self.label(feature.description())
+            let choice: Element<'_, Message> = checkbox(self.builtin_overlays.enabled(feature))
+                .label(feature.title())
+                .size(17)
+                .text_size(13)
+                .on_toggle_maybe(
+                    enabled.then_some(move |value| Message::BuiltinOverlay(feature, value)),
+                )
+                .into();
+            let choice: Element<'_, Message> = if feature == Feature::HighlightNames {
+                row![
+                    choice,
+                    self.palette_button(156, ColorTarget::NameBackground, enabled)
                 ]
-                .spacing(4),
-            );
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .into()
+            } else {
+                choice
+            };
+            choices = choices.push(column![choice, self.label(feature.description())].spacing(4));
         }
         choices=choices.push(self.label("等级数字：1.21.5+ 原版支持；1.18–1.21.4 需要 CIT 与 Forge 场景模型。更低版本保留基础外观。昵称高亮也可能影响其他世界文字，光影或客户端覆盖可能使其不生效。"));
         self.panel(choices)

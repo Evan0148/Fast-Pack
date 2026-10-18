@@ -673,6 +673,7 @@ impl App {
                 "item" => Some(ColorTarget::ItemOutline),
                 "fishing" => Some(ColorTarget::FishingLine),
                 "outline" => Some(ColorTarget::BlockOutline),
+                "name-background" => Some(ColorTarget::NameBackground),
                 _ => None,
             };
             if let Some(target) = target {
@@ -3371,6 +3372,10 @@ impl App {
                     },
                 )
                 .into()
+            } else if target == ColorTarget::NameBackground
+                && !self.name_background_rainbow_supported()
+            {
+                self.label(self.rainbow_hint(target)).into()
             } else {
                 column![
                     checkbox(self.rainbow_for(target))
@@ -3491,6 +3496,27 @@ impl App {
                 .width(116)
                 .height(108),
                 self.label("颜色示意")
+            ]
+            .spacing(8)
+            .align_x(Alignment::Center)
+            .into()
+        } else if target == ColorTarget::NameBackground {
+            column![
+                container(text("玩家昵称").size(18).color(Color::WHITE))
+                    .padding([18, 8])
+                    .width(116)
+                    .height(108)
+                    .align_x(iced::alignment::Horizontal::Center)
+                    .align_y(iced::alignment::Vertical::Center)
+                    .style(move |_| container::Style {
+                        background: Some(Color { a: 0.7, ..color }.into()),
+                        border: Border {
+                            radius: 10.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }),
+                self.label("白字配色预览")
             ]
             .spacing(8)
             .align_x(Alignment::Center)

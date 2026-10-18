@@ -2,7 +2,65 @@ use super::*;
 fn settings(features: &[Feature]) -> Settings {
     Settings {
         features: features.to_vec(),
+        ..Default::default()
     }
+}
+
+#[test]
+fn name_background_defaults_and_saved_color_survive_old_settings_and_reconversion() {
+    let old: Settings = serde_json::from_str(r#"{"features":["highlight-names"]}"#).unwrap();
+    assert_eq!(old.name_background, DEFAULT_NAME_BACKGROUND);
+    assert!(!old.name_background_rainbow);
+    let selected = Settings {
+        name_background: [17, 102, 204],
+        name_background_rainbow: true,
+        ..old
+    };
+    let restored: Settings =
+        serde_json::from_slice(&serde_json::to_vec(&selected).unwrap()).unwrap();
+    assert_eq!(restored, selected);
+    let temp = tempfile::tempdir().unwrap();
+    let mut report = AssetReport::default();
+    apply(temp.path(), "1.20.1", &selected, &mut report).unwrap();
+    assert_eq!(
+        effective(temp.path(), &Settings::default()).unwrap(),
+        selected
+    );
+    for stem in [
+        "rendertype_text",
+        "rendertype_text_see_through",
+        "rendertype_text_background",
+        "rendertype_text_background_see_through",
+    ] {
+        let program = read(
+            temp.path(),
+            &format!("assets/minecraft/shaders/core/{stem}.json"),
+        );
+        assert_eq!(
+            program["uniforms"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|uniform| uniform["name"] == "GameTime")
+                .count(),
+            1
+        );
+    }
+    let mut newer = AssetReport::default();
+    apply(temp.path(), "1.21.10", &selected, &mut newer).unwrap();
+    assert!(
+        newer
+            .warnings
+            .iter()
+            .any(|note| note.contains("固定背景颜色"))
+    );
+    let shader = std::fs::read_to_string(
+        temp.path()
+            .join("assets/minecraft/shaders/core/rendertype_text_background_see_through.fsh"),
+    )
+    .unwrap();
+    assert!(!shader.contains("uniform float GameTime"));
+    assert!(shader.contains("0.066667, 0.400000, 0.800000"));
 }
 
 #[test]
@@ -340,7 +398,7 @@ fn every_supported_shader_profile_keeps_its_native_interface_and_glyph_discard()
                 assert!(
                     output.contains("color.a < 0.1")
                         && output.contains("discard;")
-                        && output.contains("vertexColor.a < 0.5"),
+                        && (name.contains("background") || output.contains("vertexColor.a < 0.5")),
                     "{version}"
                 );
                 text_found = true;

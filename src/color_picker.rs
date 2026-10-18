@@ -13,6 +13,7 @@ pub(super) enum ColorTarget {
     ItemOutline,
     FishingLine,
     BlockOutline,
+    NameBackground,
     Description,
     PackName,
 }
@@ -25,6 +26,7 @@ impl ColorTarget {
             Self::ItemOutline => "物品描边颜色",
             Self::FishingLine => "鱼竿线颜色",
             Self::BlockOutline => "瞄准方块边框颜色",
+            Self::NameBackground => "昵称背景颜色",
             Self::Description => "简介文字颜色",
             Self::PackName => "覆盖包名称颜色",
         }
@@ -32,6 +34,10 @@ impl ColorTarget {
 }
 
 impl App {
+    pub(super) fn name_background_rainbow_supported(&self) -> bool {
+        fast_pack::pack_format_of(&self.target)
+            .is_ok_and(fast_pack::builtin_overlays::supports_animated_background)
+    }
     pub(super) fn rainbow_for(&self, target: ColorTarget) -> bool {
         match target {
             ColorTarget::Glint => self.rainbow.glint,
@@ -39,6 +45,10 @@ impl App {
             ColorTarget::ItemOutline => self.item_editor.outline_rainbow(),
             ColorTarget::FishingLine => self.rainbow.fishing_line,
             ColorTarget::BlockOutline => self.rainbow.block_outline,
+            ColorTarget::NameBackground => {
+                self.builtin_overlays.name_background_rainbow
+                    && self.name_background_rainbow_supported()
+            }
             ColorTarget::Description | ColorTarget::PackName => false,
         }
     }
@@ -50,6 +60,9 @@ impl App {
                 ColorTarget::ItemOutline => self.item_editor.outline_palette_visible(),
                 ColorTarget::FishingLine => self.fishing_line.is_some(),
                 ColorTarget::BlockOutline => self.block_outline.is_some(),
+                ColorTarget::NameBackground => self
+                    .builtin_overlays
+                    .enabled(fast_pack::builtin_overlays::Feature::HighlightNames),
                 ColorTarget::Description | ColorTarget::PackName => false,
             }
     }
@@ -102,6 +115,7 @@ impl App {
             ColorTarget::ItemOutline,
             ColorTarget::FishingLine,
             ColorTarget::BlockOutline,
+            ColorTarget::NameBackground,
         ]
         .into_iter()
         .any(|target| self.palette_rainbow(target))
@@ -133,6 +147,16 @@ impl App {
                     self.block_outline = Some(self.block_outline_color);
                 }
             }
+            ColorTarget::NameBackground => {
+                if !self.name_background_rainbow_supported() {
+                    return;
+                }
+                self.builtin_overlays.name_background_rainbow = enabled;
+                if enabled {
+                    self.builtin_overlays
+                        .set(fast_pack::builtin_overlays::Feature::HighlightNames, true);
+                }
+            }
             ColorTarget::Description | ColorTarget::PackName => return,
         }
         self.glint_preview_started = self.now;
@@ -141,6 +165,9 @@ impl App {
     }
     pub(super) fn rainbow_hint(&self, target: ColorTarget) -> &'static str {
         match target {
+            ColorTarget::NameBackground if !self.name_background_rainbow_supported() => {
+                "此版本使用所选的固定背景颜色。动态背景支持 1.17–1.21.4 和 26.2+。"
+            }
             ColorTarget::Glint => "彩虹渐变随附魔光效流动；关闭后使用所选的固定颜色。",
             ColorTarget::Crosshair
                 if fast_pack::pack_format_of(&self.target).is_ok_and(|format| format < 18) =>
@@ -163,6 +190,7 @@ impl App {
             ColorTarget::ItemOutline => self.item_editor.outline_color(),
             ColorTarget::FishingLine => self.fishing_line_color,
             ColorTarget::BlockOutline => self.block_outline_color,
+            ColorTarget::NameBackground => self.builtin_overlays.name_background,
             ColorTarget::Description => self.overlay.ink,
             ColorTarget::PackName => self.overlay.name_ink,
         }
@@ -202,6 +230,11 @@ impl App {
             ColorTarget::BlockOutline => {
                 self.block_outline_color = color;
                 self.block_outline = Some(color);
+            }
+            ColorTarget::NameBackground => {
+                self.builtin_overlays.name_background = color;
+                self.builtin_overlays
+                    .set(fast_pack::builtin_overlays::Feature::HighlightNames, true);
             }
             ColorTarget::Description => self.overlay.set_color(color),
             ColorTarget::PackName => self.overlay.set_name_color(color),

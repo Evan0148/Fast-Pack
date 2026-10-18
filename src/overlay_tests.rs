@@ -11,6 +11,7 @@ fn full_builtin_overlay_1201_keeps_colored_description_and_only_real_runtime_not
         description,
         builtin_overlays: crate::builtin_overlays::Settings {
             features: crate::builtin_overlays::Feature::ALL.to_vec(),
+            ..Default::default()
         },
         ..Default::default()
     };
@@ -55,6 +56,7 @@ fn builtin_name_highlight_overlay_needs_no_import_and_does_not_enable_other_effe
         version: "1.21.10".into(),
         builtin_overlays: crate::builtin_overlays::Settings {
             features: vec![crate::builtin_overlays::Feature::HighlightNames],
+            ..Default::default()
         },
         ..Default::default()
     };
