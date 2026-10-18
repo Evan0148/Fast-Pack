@@ -120,6 +120,10 @@ pub fn crosshair_store() -> Result<fast_pack::crosshair::Store> {
     ))
 }
 
+pub(crate) fn state_directory() -> Result<PathBuf> {
+    Ok(config_path()?.parent().unwrap().to_owned())
+}
+
 fn supported(version: &str) -> bool {
     fast_pack::tables()
         .pack_formats

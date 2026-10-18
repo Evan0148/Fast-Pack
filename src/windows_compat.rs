@@ -47,6 +47,10 @@ pub fn initialize() {
     }
 }
 
+pub fn prefers_gpu() -> bool {
+    cfg!(feature = "gpu-renderer") && !legacy()
+}
+
 pub fn font_family() -> &'static str {
     if legacy() {
         "Microsoft YaHei"
