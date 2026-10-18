@@ -33,6 +33,18 @@ fn full_builtin_overlay_1201_keeps_colored_description_and_only_real_runtime_not
             .keys()
             .any(|name| name.contains("/cit/fastpack_builtin_hud/"))
     );
+    for name in files.keys() {
+        assert!(
+            !name.starts_with("assets/heypixel/")
+                && !name.starts_with("assets/minecraft/font/")
+                && !name.starts_with("assets/minecraft/textures/gui/")
+                && !name.starts_with("assets/minecraft/textures/block/")
+                && !name.starts_with("assets/minecraft/textures/entity/")
+                && !name.starts_with("assets/minecraft/sounds/")
+                && name != "assets/minecraft/sounds.json",
+            "unrelated appearance resource: {name}"
+        );
+    }
 }
 
 #[test]

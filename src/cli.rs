@@ -81,7 +81,7 @@ struct Arguments {
         long = "builtin",
         value_enum,
         value_name = "FEATURE",
-        help = "启用内置覆盖功能，可重复使用：sharpness、golden-durability、bow-enchantments、armor-protection、heypixel-pack、highlight-names、clear-tooltips、rainbow-outline"
+        help = "启用内置覆盖功能，可重复使用：sharpness、golden-durability、bow-enchantments、armor-protection、highlight-names、clear-tooltips、rainbow-outline"
     )]
     builtin: Vec<crate::builtin_overlays::Feature>,
     #[arg(long,value_parser=crate::compat::glint::parse_color,value_name="RRGGBB",help="自定义鱼竿线颜色，需要目标版本 1.17+")]
@@ -251,6 +251,28 @@ pub fn run() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn removed_appearance_flag_is_rejected_but_independent_compatibility_remains() {
+        assert!(
+            Arguments::try_parse_from(["fast-pack", "pack.zip", "--builtin", "heypixel-pack"])
+                .is_err()
+        );
+        let args = Arguments::try_parse_from([
+            "fast-pack",
+            "pack.zip",
+            "--builtin",
+            "sharpness",
+            "--no-heypixel",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.builtin,
+            vec![crate::builtin_overlays::Feature::Sharpness]
+        );
+        assert!(args.no_heypixel);
+    }
+
     #[test]
     fn width_arguments_accept_independent_values_and_reject_invalid_input() {
         let args = Arguments::try_parse_from([

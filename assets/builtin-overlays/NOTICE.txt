@@ -1,9 +1,9 @@
 Bundled user-provided Minecraft resource packs. These assets retain their original authors and licenses; the Fast Pack code license does not relicense them.
 
-Bow / armor / sword HUD original author: ????
+Bow / armor / sword HUD original author: 麦粒猫耳
 Author: https://space.bilibili.com/3461576271071978
 License: CC BY-NC-SA 4.0, https://creativecommons.org/licenses/by-nc-sa/4.0/
 See CC-BY-NC-SA-4.0.txt. Modified by Fast Pack to compose GUI-only indicators with the selected pack and adapt version formats.
 
-The supplied ???1.20.1????? (1).zip retains its original Credits.txt (see Credits-heypixel.txt); no additional licensing is asserted for those third-party assets. Assets/shaders preserve embedded author credits including SuperAnt_.
-All four original archive names and SHA-256 digests are listed in sources.json.
+Name highlight and transparent tooltip effects retain embedded shader author credits including SuperAnt_ and use target-version native shader profiles.
+The three HUD archive names and SHA-256 digests are listed in sources.json.

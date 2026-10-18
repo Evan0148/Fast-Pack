@@ -6,6 +6,72 @@ fn settings(features: &[Feature]) -> Settings {
 }
 
 #[test]
+fn removed_appearance_settings_keep_other_features_and_provenance() {
+    let mut legacy = serde_json::to_value(settings(&Feature::ALL)).unwrap();
+    legacy["features"]
+        .as_array_mut()
+        .unwrap()
+        .insert(2, json!("heypixel-pack"));
+    let restored: Settings = serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(restored, settings(&Feature::ALL));
+    assert!(
+        !serde_json::to_string(&restored)
+            .unwrap()
+            .contains("heypixel-pack")
+    );
+    assert!(
+        !serde_json::from_str::<Settings>(r#"{"features":["heypixel-pack"]}"#)
+            .unwrap()
+            .active()
+    );
+    assert!(serde_json::from_str::<Settings>(r#"{"features":["unknown-feature"]}"#).is_err());
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let path = "assets/minecraft/items/diamond_sword.json";
+    let base = json!({"model":{"type":"minecraft:model","model":"minecraft:item/diamond_sword"}});
+    let generated = json!({"model":{"type":"minecraft:empty"},"fastpack_builtin_hud":base});
+    let bytes = serde_json::to_vec(&generated).unwrap();
+    legacy["generated"] = json!({path:digest(&bytes)});
+    write(root, path, &bytes).unwrap();
+    write(root, STATE, &serde_json::to_vec(&legacy).unwrap()).unwrap();
+    assert_eq!(effective(root, &Settings::default()).unwrap(), restored);
+    assert!(prepare(root).unwrap().is_empty());
+    assert_eq!(read(root, path), base);
+}
+
+#[test]
+fn all_builtin_features_preserve_authored_appearance_assets() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let assets = [
+        "assets/minecraft/textures/gui/container/inventory.png",
+        "assets/minecraft/textures/block/stone.png",
+        "assets/minecraft/textures/item/diamond_sword.png",
+        "assets/minecraft/font/default.json",
+        "assets/minecraft/sounds.json",
+        "assets/heypixel/models/cosmetic/example.json",
+    ];
+    for name in assets {
+        write(root, name, b"authored appearance").unwrap();
+    }
+    apply(
+        root,
+        "1.20.1",
+        &settings(&Feature::ALL),
+        &mut AssetReport::default(),
+    )
+    .unwrap();
+    for name in assets {
+        assert_eq!(
+            std::fs::read(root.join(name)).unwrap(),
+            b"authored appearance",
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn reconversion_unwraps_only_owned_layers_and_preserves_edited_graphs() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();

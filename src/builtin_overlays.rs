@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read};
 use std::path::Path;
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::sync::LazyLock;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
@@ -19,18 +19,16 @@ pub enum Feature {
     GoldenDurability,
     BowEnchantments,
     ArmorProtection,
-    HeypixelPack,
     HighlightNames,
     ClearTooltips,
     RainbowOutline,
 }
 impl Feature {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 7] = [
         Self::Sharpness,
         Self::GoldenDurability,
         Self::BowEnchantments,
         Self::ArmorProtection,
-        Self::HeypixelPack,
         Self::HighlightNames,
         Self::ClearTooltips,
         Self::RainbowOutline,
@@ -41,7 +39,6 @@ impl Feature {
             Self::GoldenDurability => "显示金剑剩余耐久",
             Self::BowEnchantments => "显示弓的附魔等级",
             Self::ArmorProtection => "显示护甲保护等级",
-            Self::HeypixelPack => "布吉岛综合外观",
             Self::HighlightNames => "高亮玩家昵称",
             Self::ClearTooltips => "透明物品提示框",
             Self::RainbowOutline => "彩色方块边框",
@@ -53,8 +50,7 @@ impl Feature {
             Self::GoldenDurability => "背包显示 1–32 剩余耐久",
             Self::BowEnchantments => "力量 I–V、火矢与冲击，保留拉弓状态",
             Self::ArmorProtection => "背包显示保护 I–IV，保留染色与纹饰",
-            Self::HeypixelPack => "内含物品、方块、GUI、字体、粒子、音效、CIT 与布吉岛饰品模型",
-            Self::HighlightNames => "粉色昵称弱透明文字；需要 1.17+ 核心着色器",
+            Self::HighlightNames => "提高粉色昵称清晰度，保留透明字形；需要 1.17+ 核心着色器",
             Self::ClearTooltips => "移除原包提示框底色；需要 1.17+ 核心着色器",
             Self::RainbowOutline => "使用现有边框动态彩色，单独调色设置优先",
         }
@@ -63,7 +59,19 @@ impl Feature {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Settings {
+    #[serde(deserialize_with = "deserialize_features")]
     pub features: Vec<Feature>,
+}
+fn deserialize_features<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Vec<Feature>, D::Error> {
+    // Ignore only the removed option, including in old output provenance.
+    // Other invalid settings must still report an error.
+    Vec::<String>::deserialize(deserializer)?
+        .into_iter()
+        .filter(|name| name != "heypixel-pack")
+        .map(|name| serde_json::from_value(Value::String(name)).map_err(serde::de::Error::custom))
+        .collect()
 }
 impl Settings {
     pub fn enabled(&self, feature: Feature) -> bool {
@@ -200,50 +208,6 @@ fn write(root: &Path, name: &str, bytes: &[u8]) -> Result<()> {
     fs::create_dir_all(path.parent().unwrap())?;
     fs::write_atomic(&path, bytes)?;
     Ok(())
-}
-
-type Cached = Arc<OnceLock<std::result::Result<Arc<Files>, String>>>;
-static CONVERTED: LazyLock<Mutex<BTreeMap<String, Cached>>> =
-    LazyLock::new(|| Mutex::new(BTreeMap::new()));
-fn converted_server(version: &str) -> Result<Arc<Files>> {
-    let cache = CONVERTED
-        .lock()
-        .unwrap()
-        .entry(version.into())
-        .or_default()
-        .clone();
-    let value = cache.get_or_init(|| {
-        (|| -> Result<Arc<Files>> {
-            let temp = tempfile::tempdir()?;
-            let source = temp.path().join("source.zip");
-            let output = temp.path().join("converted.zip");
-            // The source retains all supplied assets; shader effects are installed
-            // separately using the target's own shader profile.
-            std::fs::write(
-                &source,
-                include_bytes!("../assets/builtin-overlays/heypixel.zip"),
-            )?;
-            crate::convert_pack(
-                &source,
-                &output,
-                &crate::ConversionOptions {
-                    tgt_format: crate::pack_format_of(version)?,
-                    target_version: Some(version.into()),
-                    heypixel_compat: false,
-                    auto_client_setup: false,
-                    auto_netherite: false,
-                    auto_netherite_sword: false,
-                    ..Default::default()
-                },
-                |_, _| {},
-            )?;
-            let mut files = archive(&std::fs::read(output)?)?;
-            files.retain(|name, _| name.starts_with("assets/") && !name.contains("/shaders/"));
-            Ok(Arc::new(files))
-        })()
-        .map_err(|error| format!("{error:#}"))
-    });
-    value.clone().map_err(anyhow::Error::msg)
 }
 
 fn gui(node: &Value) -> Option<Value> {
@@ -542,8 +506,12 @@ fn shaders(
             let end = if stem == "text" { "#endif\n" } else { "" };
             shader=pattern.replace_all(&shader,|captures:&regex::Captures| {
                 let original=&captures[0];
-                let multiplier=if original.contains("ColorModulator") {" * ColorModulator.rgb"}else{""};
-                format!("{original}\n// Fast Pack: supplied name highlight; retain transparent glyph discard.\n{guard}if (vertexColor.a > 0.0 && vertexColor.a < 0.5) {{ color.rgb = vec3(1.0, 0.6, 0.8){multiplier}; }}\n{end}")
+                let multiplier=if original.contains("ColorModulator") {" * ColorModulator"}else{""};
+                let glyph_alpha=if original.contains("texture(") {"texture(Sampler0, texCoord0).a"}else{"texColor.a"};
+                // The weak see-through text pass otherwise keeps the game's low
+                // label opacity. Lift glyph coverage independently of that pass,
+                // excluding its black background and retaining atlas transparency.
+                format!("{original}\n// Fast Pack: supplied name highlight; retain transparent glyph discard.\n{guard}if (vertexColor.a > 0.0 && vertexColor.a < 0.5 && max(vertexColor.r, max(vertexColor.g, vertexColor.b)) > 0.0) {{ color = vec4(1.0, 0.6, 0.8, {glyph_alpha} * 0.9){multiplier}; }}\n{end}")
             }).into_owned();
         }
         if tooltips && tooltip && name.ends_with(".vsh") {
@@ -569,26 +537,6 @@ pub(crate) fn apply(
     if !settings.active() {
         return Ok(());
     }
-    if settings.enabled(Feature::HeypixelPack)
-        && !provenance(root)?.settings.enabled(Feature::HeypixelPack)
-    {
-        for (name, bytes) in converted_server(version)?.iter() {
-            if name.contains("/lang/") && name.ends_with(".json") && root.join(name).pack_is_file()
-            {
-                let existing = crate::model_json::parse(&fs::read(root.join(name))?);
-                let incoming = serde_json::from_slice::<Value>(bytes)?;
-                if let Ok(Value::Object(mut map)) = existing {
-                    if let Value::Object(add) = incoming {
-                        map.extend(add);
-                        write(root, name, &serde_json::to_vec(&map)?)?;
-                        continue;
-                    }
-                }
-            }
-            write(root, name, bytes)?;
-        }
-        report.converted.push("内置布吉岛综合外观：应用全部物品、方块、GUI、字体、粒子、音效、CIT 与饰品模型；原包文件已备份".into());
-    }
     install_hud(root, version, settings, report)?;
     shaders(root, version, settings, report)?;
     write(
@@ -600,11 +548,6 @@ pub(crate) fn apply(
         root,
         "fastpack/builtin-overlays/CC-BY-NC-SA-4.0.txt",
         include_bytes!("../assets/builtin-overlays/CC-BY-NC-SA-4.0.txt"),
-    )?;
-    write(
-        root,
-        "fastpack/builtin-overlays/Credits-heypixel.txt",
-        include_bytes!("../assets/builtin-overlays/Credits-heypixel.txt"),
     )?;
     let mut generated = BTreeMap::new();
     for entry in crate::packfs::WalkDir::new(root.join("assets/minecraft")) {

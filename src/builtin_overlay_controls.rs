@@ -11,7 +11,7 @@ impl App {
                 space().width(Length::Fill),
                 self.label(format!("已选 {} 项", self.builtin_overlays.count()))
             ],
-            self.label("四个覆盖包已内嵌，无需再次导入。按需勾选，转换与覆盖包制作均可使用。")
+            self.label("内置功能无需导入，勾选后可用于转换或制作覆盖包。")
         ]
         .spacing(12);
         for feature in Feature::ALL {

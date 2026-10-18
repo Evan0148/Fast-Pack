@@ -9,7 +9,7 @@ fn builtin_overlay_choices_are_independent_saved_and_locked_during_conversion() 
     let _ = app.update(Message::BuiltinOverlay(Feature::HighlightNames, true));
     assert!(app.builtin_overlays.enabled(Feature::Sharpness));
     assert!(app.builtin_overlays.enabled(Feature::HighlightNames));
-    assert!(!app.builtin_overlays.enabled(Feature::HeypixelPack));
+    assert!(!app.builtin_overlays.enabled(Feature::ArmorProtection));
     let settings = crate::preferences::Preferences {
         builtin_overlays: app.builtin_overlays.clone(),
         ..Default::default()
