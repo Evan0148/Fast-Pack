@@ -27,6 +27,7 @@ pub(super) enum Event {
     ResetIcon,
     Zip(bool),
     OpenOutput,
+    ToggleWarnings,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +59,7 @@ pub(super) struct Composer {
     pub result: Option<overlay::Report>,
     pub error: Option<String>,
     pub edited: Option<Instant>,
+    pub warnings_expanded: bool,
 }
 
 impl Composer {
@@ -86,6 +88,7 @@ impl Composer {
             result: None,
             error: None,
             edited: None,
+            warnings_expanded: false,
         }
     }
 
@@ -462,6 +465,9 @@ impl App {
                         .spawn();
                 }
             }
+            Event::ToggleWarnings => {
+                self.overlay.warnings_expanded = !self.overlay.warnings_expanded
+            }
             Event::IconPicked(None) => {}
         }
         if changed {
@@ -561,6 +567,7 @@ impl App {
         self.overlay.running = true;
         self.overlay.error = None;
         self.overlay.result = None;
+        self.overlay.warnings_expanded = false;
         self.overlay.percent = 0;
         self.overlay.progress.set(0.0, self.now, true);
         self.overlay.step = "正在准备覆盖包".into();
@@ -754,7 +761,36 @@ impl App {
                 self.label(format!("{} 个文件 · 原有材质包未改动", result.files))
             ]
             .spacing(10);
-            for warning in &result.assets.warnings {
+            let warning_count = result.assets.warnings.len();
+            if warning_count > 2 {
+                result_view = result_view.push(
+                    row![
+                        self.label(format!("兼容提示：{warning_count} 项")),
+                        space().width(Length::Fill),
+                        self.action(
+                            124,
+                            if composer.warnings_expanded {
+                                "收起详情 ↑"
+                            } else {
+                                "查看详情 ↓"
+                            },
+                            Some(Message::Overlay(Event::ToggleWarnings)),
+                            false
+                        )
+                    ]
+                    .align_y(Alignment::Center),
+                );
+            }
+            for warning in result
+                .assets
+                .warnings
+                .iter()
+                .take(if composer.warnings_expanded {
+                    usize::MAX
+                } else {
+                    2
+                })
+            {
                 result_view = result_view.push(self.label(warning));
             }
             body = body.push(self.panel(result_view));

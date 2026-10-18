@@ -44,6 +44,108 @@ fn read(root: &Path, name: &str) -> Value {
 }
 
 #[test]
+fn bundled_armor_template_filters_future_trims_and_keeps_supported_materials() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    for item in ["diamond_chestplate", "leather_chestplate", "turtle_helmet"] {
+        let source: Value =
+            serde_json::from_slice(&ARMOR[&format!("assets/minecraft/items/{item}.json")]).unwrap();
+        for (version, resin) in [
+            ("1.20.1", false),
+            ("1.21.3", false),
+            ("1.21.4", true),
+            ("1.21.10", true),
+        ] {
+            let mut base = json!({"model":source["model"]["fallback"]});
+            target_trim_template(root, crate::pack_format_of(version).unwrap(), &mut base);
+            let text = base.to_string();
+            assert_eq!(text.contains("minecraft:resin"), resin, "{version}/{item}");
+            for material in [
+                "quartz",
+                "iron",
+                "netherite",
+                "redstone",
+                "copper",
+                "gold",
+                "emerald",
+                "diamond",
+                "lapis",
+                "amethyst",
+            ] {
+                assert!(
+                    text.contains(&format!("minecraft:{material}")),
+                    "{version}/{item}/{material}"
+                );
+            }
+            if item.starts_with("leather") {
+                assert!(text.contains("minecraft:dye"));
+            }
+        }
+    }
+}
+
+#[test]
+fn builtin_protection_1201_has_every_level_and_no_resin_warning_or_rule() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let mut report = AssetReport::default();
+    apply(
+        root,
+        "1.20.1",
+        &settings(&[Feature::ArmorProtection]),
+        &mut report,
+    )
+    .unwrap();
+    assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+    assert!(report.warnings[0].contains("CIT"));
+    let mut levels = BTreeMap::<String, BTreeSet<String>>::new();
+    for entry in
+        crate::packfs::WalkDir::new(root.join("assets/minecraft/optifine/cit/fastpack_builtin_hud"))
+    {
+        let entry = entry.unwrap();
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let bytes = std::fs::read(entry.path()).unwrap();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(!text.contains("resin"));
+        let rule = crate::compat::properties::parse(&bytes).unwrap();
+        if rule
+            .get("enchantments")
+            .is_some_and(|value| value == "minecraft:protection")
+        {
+            levels
+                .entry(rule["items"].clone())
+                .or_default()
+                .insert(rule["enchantmentLevels"].clone());
+        }
+    }
+    assert_eq!(levels.len(), 25);
+    for (item, available) in levels {
+        for level in ["1-", "2-", "3-", "4-"] {
+            assert!(available.contains(level), "{item}/{level}");
+        }
+    }
+}
+
+#[test]
+fn authored_modern_definition_retains_its_custom_trim_conditions() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let author = json!({"model":{"type":"minecraft:select","property":"minecraft:trim_material","cases":[{"when":"author:new_trim","model":{"type":"minecraft:model","model":"author:item/armor"}}],"fallback":{"type":"minecraft:model","model":"minecraft:item/diamond_chestplate"}}});
+    let path = "assets/minecraft/items/diamond_chestplate.json";
+    write(root, path, &serde_json::to_vec(&author).unwrap()).unwrap();
+    apply(
+        root,
+        "1.21.5",
+        &settings(&[Feature::ArmorProtection]),
+        &mut AssetReport::default(),
+    )
+    .unwrap();
+    assert_eq!(read(root, path)["model"]["fallback"], author["model"]);
+}
+
+#[test]
 fn disabled_features_leave_resources_and_settings_untouched() {
     let temp = tempfile::tempdir().unwrap();
     apply(

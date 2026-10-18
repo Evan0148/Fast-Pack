@@ -219,7 +219,7 @@ fn read_model(root: &Path, format: u32, reference: &str) -> Result<Value> {
     reference_model(format, reference).with_context(|| format!("未找到物品模型参考 {reference}"))
 }
 
-pub(super) fn cit_model(root: &Path, format: u32, reference: &str) -> Result<Value> {
+pub(crate) fn cit_model(root: &Path, format: u32, reference: &str) -> Result<Value> {
     let mut model = read_model(root, format, reference)?;
     model["textures"] = inherited(root, format, &model, "textures", &mut BTreeSet::new());
     model["display"] = inherited(root, format, &model, "display", &mut BTreeSet::new());

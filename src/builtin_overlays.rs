@@ -303,6 +303,57 @@ fn markers(node: &Value) -> Value {
         _ => node.clone(),
     }
 }
+fn template_branch_available(root: &Path, format: u32, value: &Value) -> bool {
+    if value["type"] == "minecraft:model" {
+        return value["model"].as_str().is_some_and(|reference| {
+            crate::compat::custom_items::cit_model(root, format, reference).is_ok()
+                || reference.strip_suffix("_trim").is_some_and(|base| {
+                    crate::compat::custom_items::cit_model(
+                        root,
+                        format,
+                        &format!("{base}_darker_trim"),
+                    )
+                    .is_ok()
+                })
+        });
+    }
+    match value {
+        Value::Object(map) => map
+            .values()
+            .all(|child| template_branch_available(root, format, child)),
+        Value::Array(array) => array
+            .iter()
+            .all(|child| template_branch_available(root, format, child)),
+        _ => true,
+    }
+}
+
+/// Only filter the bundled fallback template. Authored item definitions retain
+/// their conditions and the regular converter's diagnostics.
+fn target_trim_template(root: &Path, format: u32, value: &mut Value) {
+    if value["type"] == "minecraft:select" && value["property"] == "minecraft:trim_material" {
+        if let Some(cases) = value["cases"].as_array_mut() {
+            cases.retain(|case| template_branch_available(root, format, &case["model"]));
+        }
+        if value["cases"].as_array().is_some_and(Vec::is_empty) {
+            *value = value["fallback"].clone();
+        }
+    }
+    match value {
+        Value::Object(map) => {
+            for child in map.values_mut() {
+                target_trim_template(root, format, child);
+            }
+        }
+        Value::Array(array) => {
+            for child in array {
+                target_trim_template(root, format, child);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn install_hud(
     root: &Path,
     version: &str,
@@ -402,6 +453,7 @@ fn install_hud(
                 };
             }
             let path = root.join(name);
+            let authored_definition = format >= 46 && path.pack_is_file();
             let mut base = if format >= 46 && path.pack_is_file() {
                 crate::model_json::parse(&fs::read(&path)?)?
             } else if format < 15 && item != "bow" {
@@ -414,6 +466,9 @@ fn install_hud(
             };
             if let Some(original) = base.get("fastpack_builtin_hud").cloned() {
                 base = original;
+            }
+            if !authored_definition {
+                target_trim_template(root, format, &mut base);
             }
             let mut output = base.clone();
             output["fastpack_builtin_hud"] = base.clone();

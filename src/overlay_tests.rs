@@ -1,6 +1,41 @@
 use super::*;
 
 #[test]
+fn full_builtin_overlay_1201_keeps_colored_description_and_only_real_runtime_notice() {
+    let work = tempfile::tempdir().unwrap();
+    let output = work.path().join("overlay.zip");
+    let mut description = Description::plain("彩色覆盖包");
+    description.paint(0..2, Some([128, 64, 204]));
+    let options = Options {
+        version: "1.20.1".into(),
+        description,
+        builtin_overlays: crate::builtin_overlays::Settings {
+            features: crate::builtin_overlays::Feature::ALL.to_vec(),
+        },
+        ..Default::default()
+    };
+    let report = build(&output, &options, |_, _| {}).unwrap();
+    assert_eq!(
+        report.assets.warnings.len(),
+        1,
+        "{:?}",
+        report.assets.warnings
+    );
+    assert!(report.assets.warnings[0].contains("Forge"));
+    let files = unpack(&output);
+    let meta: Value = serde_json::from_slice(&files["pack.mcmeta"]).unwrap();
+    assert_eq!(
+        meta["pack"]["description"],
+        options.description.component("1.20.1")
+    );
+    assert!(
+        files
+            .keys()
+            .any(|name| name.contains("/cit/fastpack_builtin_hud/"))
+    );
+}
+
+#[test]
 fn builtin_name_highlight_overlay_needs_no_import_and_does_not_enable_other_effects() {
     let directory = tempfile::tempdir().unwrap();
     let output = directory.path().join("names.zip");

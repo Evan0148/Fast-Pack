@@ -1,6 +1,18 @@
 use super::*;
 use iced::advanced::text::editor::{Cursor, Position};
 
+#[test]
+fn result_warning_details_toggle_without_changing_the_saved_draft() {
+    let (mut app, _) = App::boot();
+    let before = serde_json::to_value(app.overlay.draft()).unwrap();
+    assert!(!app.overlay.warnings_expanded);
+    let _ = app.overlay_update(Event::ToggleWarnings);
+    assert!(app.overlay.warnings_expanded);
+    let _ = app.overlay_update(Event::ToggleWarnings);
+    assert!(!app.overlay.warnings_expanded);
+    assert_eq!(serde_json::to_value(app.overlay.draft()).unwrap(), before);
+}
+
 #[cfg(not(feature = "gpu-renderer"))]
 #[test]
 fn description_editor_draws_initial_text_before_any_input() {
