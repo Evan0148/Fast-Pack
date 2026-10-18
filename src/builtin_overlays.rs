@@ -483,23 +483,49 @@ fn shaders(
     let mut installed = 0;
     for (name, native) in profile {
         let stem = name.rsplit_once('.').unwrap().0;
-        let text = stem == "text" || stem == "rendertype_text_see_through";
+        let text = matches!(
+            stem,
+            "text"
+                | "rendertype_text"
+                | "rendertype_text_intensity"
+                | "rendertype_text_see_through"
+                | "rendertype_text_intensity_see_through"
+        );
         let tooltip = matches!(stem, "gui" | "rendertype_gui" | "position_color");
         if !(names && text || tooltips && tooltip) {
             continue;
         }
         let path = format!("assets/minecraft/shaders/core/{name}");
         let mut shader = native.clone();
+        if names && text && (name.ends_with(".vsh") || name.ends_with(".fsh")) {
+            let main = regex::Regex::new(r"void\s+main\s*\(\s*\)\s*\{")?;
+            ensure!(main.is_match(&shader), "目标文字着色器缺少入口");
+            let location = if native.contains("layout(location") {
+                "layout(location = 4) "
+            } else {
+                ""
+            };
+            let declaration = if name.ends_with(".vsh") {
+                // Labels have a perspective projection; GUI fonts use an
+                // orthographic projection even when they share the same program.
+                format!(
+                    "{location}out float fastpackWorldText;\nvoid main() {{\n    fastpackWorldText = ProjMat[3][3] == 0.0 ? 1.0 : 0.0;"
+                )
+            } else {
+                format!("{location}in float fastpackWorldText;\nvoid main() {{")
+            };
+            shader = main.replace(&shader, declaration).into_owned();
+        }
         if names && text && name.ends_with(".fsh") {
             let pattern = regex::Regex::new(
-                r"vec4\s+color\s*=\s*(?:texture\(Sampler0,\s*texCoord0\)|texColor)\s*\*\s*vertexColor\s*(?:\*\s*ColorModulator\s*)?;",
+                r"vec4\s+color\s*=\s*(?:texture\(Sampler0,\s*texCoord0\)(?:\.rrrr)?|texColor)\s*\*\s*vertexColor\s*(?:\*\s*ColorModulator\s*)?;",
             )?;
             ensure!(
                 pattern.is_match(&shader),
                 "目标文字着色器缺少可验证的颜色入口"
             );
             let guard = if stem == "text" {
-                "#ifdef IS_SEE_THROUGH\n"
+                "#ifndef IS_GUI\n"
             } else {
                 ""
             };
@@ -507,11 +533,10 @@ fn shaders(
             shader=pattern.replace_all(&shader,|captures:&regex::Captures| {
                 let original=&captures[0];
                 let multiplier=if original.contains("ColorModulator") {" * ColorModulator"}else{""};
-                let glyph_alpha=if original.contains("texture(") {"texture(Sampler0, texCoord0).a"}else{"texColor.a"};
-                // The weak see-through text pass otherwise keeps the game's low
-                // label opacity. Lift glyph coverage independently of that pass,
-                // excluding its black background and retaining atlas transparency.
-                format!("{original}\n// Fast Pack: supplied name highlight; retain transparent glyph discard.\n{guard}if (vertexColor.a > 0.0 && vertexColor.a < 0.5 && max(vertexColor.r, max(vertexColor.g, vertexColor.b)) > 0.0) {{ color = vec4(1.0, 0.6, 0.8, {glyph_alpha} * 0.9){multiplier}; }}\n{end}")
+                let glyph_alpha=if original.contains(".rrrr") {"texture(Sampler0, texCoord0).r"}else if original.contains("texture(") {"texture(Sampler0, texCoord0).a"}else{"texColor.a"};
+                // The normal pass is drawn after see-through labels, so both
+                // must carry the tint. Keep GUI text and black backgrounds intact.
+                format!("{original}\n// Fast Pack: supplied name highlight; retain transparent glyph discard.\n{guard}if (fastpackWorldText > 0.5 && vertexColor.a > 0.0 && max(vertexColor.r, max(vertexColor.g, vertexColor.b)) > 0.0) {{\n    float fastpackOpacity = vertexColor.a < 0.5 ? 0.9 : vertexColor.a;\n    color = vec4(1.0, 0.6, 0.8, {glyph_alpha} * fastpackOpacity){multiplier};\n}}\n{end}")
             }).into_owned();
         }
         if tooltips && tooltip && name.ends_with(".vsh") {

@@ -30,7 +30,7 @@ impl App {
                 .spacing(4),
             );
         }
-        choices=choices.push(self.label("等级数字：1.21.5+ 原版支持；1.18–1.21.4 需要 CIT 与 Forge 场景模型。更低版本保留基础外观。昵称效果沿用游戏已有文字绘制，光影或客户端覆盖可能使其不生效。"));
+        choices=choices.push(self.label("等级数字：1.21.5+ 原版支持；1.18–1.21.4 需要 CIT 与 Forge 场景模型。更低版本保留基础外观。昵称高亮也可能影响其他世界文字，光影或客户端覆盖可能使其不生效。"));
         self.panel(choices)
     }
 }

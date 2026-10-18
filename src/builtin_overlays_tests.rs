@@ -345,7 +345,7 @@ fn every_supported_shader_profile_keeps_its_native_interface_and_glyph_discard()
                 );
                 text_found = true;
                 if name == "text.fsh" {
-                    assert!(output.contains("#ifdef IS_SEE_THROUGH"));
+                    assert!(output.contains("#ifndef IS_GUI"));
                 }
             }
             for line in native.lines().filter(|line| {
@@ -360,6 +360,38 @@ fn every_supported_shader_profile_keeps_its_native_interface_and_glyph_discard()
             }
         }
         assert!(text_found, "{version}");
+        let stems = if profile.contains_key("text.vsh") {
+            vec!["text"]
+        } else {
+            vec![
+                "rendertype_text",
+                "rendertype_text_intensity",
+                "rendertype_text_see_through",
+                "rendertype_text_intensity_see_through",
+            ]
+        };
+        for stem in stems {
+            let vertex = std::fs::read_to_string(
+                root.join(format!("assets/minecraft/shaders/core/{stem}.vsh")),
+            )
+            .unwrap();
+            let fragment = std::fs::read_to_string(
+                root.join(format!("assets/minecraft/shaders/core/{stem}.fsh")),
+            )
+            .unwrap();
+            assert!(
+                vertex.contains("fastpackWorldText") && vertex.contains("ProjMat[3][3]"),
+                "{version}/{stem}"
+            );
+            assert!(
+                fragment.contains("fastpackWorldText > 0.5"),
+                "{version}/{stem}"
+            );
+            assert!(
+                !fragment.contains("vertexColor.a > 0.0 && vertexColor.a < 0.5 &&"),
+                "opaque label pass must also be highlighted: {version}/{stem}"
+            );
+        }
     }
 }
 
