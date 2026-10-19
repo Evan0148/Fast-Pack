@@ -81,9 +81,16 @@ struct Arguments {
         long = "builtin",
         value_enum,
         value_name = "FEATURE",
-        help = "启用内置覆盖功能，可重复使用：sharpness、golden-durability、bow-enchantments、armor-protection、heypixel-pack、highlight-names、clear-tooltips、rainbow-outline"
+        help = "启用内置覆盖功能，可重复使用：sharpness、golden-durability、bow-enchantments、armor-protection、highlight-names、clear-tooltips、rainbow-outline"
     )]
     builtin: Vec<crate::builtin_overlays::Feature>,
+    #[arg(long, value_parser=crate::compat::glint::parse_color, value_name="RRGGBB", help="昵称高亮背景颜色，例如 #FF99CC；自动启用昵称高亮")]
+    name_background_color: Option<[u8; 3]>,
+    #[arg(
+        long,
+        help = "动态彩色昵称背景，支持 1.17–1.21.4 和 26.2+；其余版本使用固定背景色"
+    )]
+    rainbow_name_background: bool,
     #[arg(long,value_parser=crate::compat::glint::parse_color,value_name="RRGGBB",help="自定义鱼竿线颜色，需要目标版本 1.17+")]
     fishing_line_color: Option<[u8; 3]>,
     #[arg(long,value_parser=crate::compat::glint::parse_color,value_name="RRGGBB",help="自定义瞄准方块边框颜色，需要目标版本 1.17+")]
@@ -163,6 +170,16 @@ pub fn run() -> Result<()> {
     } else {
         !args.folder && !output.is_dir()
     };
+    let mut builtin_overlays = crate::builtin_overlays::Settings {
+        features: args.builtin,
+        name_background: args
+            .name_background_color
+            .unwrap_or(crate::builtin_overlays::DEFAULT_NAME_BACKGROUND),
+        name_background_rainbow: args.rainbow_name_background,
+    };
+    if args.name_background_color.is_some() || args.rainbow_name_background {
+        builtin_overlays.set(crate::builtin_overlays::Feature::HighlightNames, true);
+    }
     let options = ConversionOptions {
         src_format: if args.source_version == "auto" {
             None
@@ -190,9 +207,7 @@ pub fn run() -> Result<()> {
         convert_lang: !args.no_lang,
         fishing_line_color: args.fishing_line_color,
         block_outline_color: args.block_outline_color,
-        builtin_overlays: crate::builtin_overlays::Settings {
-            features: args.builtin,
-        },
+        builtin_overlays,
         line_color_selection: (args.fishing_line_color.is_some()
             || args.block_outline_color.is_some()
             || args.rainbow_fishing_line
@@ -251,6 +266,52 @@ pub fn run() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn name_background_arguments_validate_hex_and_preserve_independent_options() {
+        let args = Arguments::try_parse_from([
+            "fast-pack",
+            "source.zip",
+            "--name-background-color",
+            "#123",
+            "--rainbow-name-background",
+        ])
+        .unwrap();
+        assert_eq!(args.name_background_color, Some([17, 34, 51]));
+        assert!(args.rainbow_name_background);
+        assert!(args.fishing_line_color.is_none() && args.block_outline_color.is_none());
+        assert!(
+            Arguments::try_parse_from([
+                "fast-pack",
+                "source.zip",
+                "--name-background-color",
+                "broken"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn removed_appearance_flag_is_rejected_but_independent_compatibility_remains() {
+        assert!(
+            Arguments::try_parse_from(["fast-pack", "pack.zip", "--builtin", "heypixel-pack"])
+                .is_err()
+        );
+        let args = Arguments::try_parse_from([
+            "fast-pack",
+            "pack.zip",
+            "--builtin",
+            "sharpness",
+            "--no-heypixel",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.builtin,
+            vec![crate::builtin_overlays::Feature::Sharpness]
+        );
+        assert!(args.no_heypixel);
+    }
+
     #[test]
     fn width_arguments_accept_independent_values_and_reject_invalid_input() {
         let args = Arguments::try_parse_from([

@@ -2,6 +2,130 @@ use super::*;
 fn settings(features: &[Feature]) -> Settings {
     Settings {
         features: features.to_vec(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn name_background_defaults_and_saved_color_survive_old_settings_and_reconversion() {
+    let old: Settings = serde_json::from_str(r#"{"features":["highlight-names"]}"#).unwrap();
+    assert_eq!(old.name_background, DEFAULT_NAME_BACKGROUND);
+    assert!(!old.name_background_rainbow);
+    let selected = Settings {
+        name_background: [17, 102, 204],
+        name_background_rainbow: true,
+        ..old
+    };
+    let restored: Settings =
+        serde_json::from_slice(&serde_json::to_vec(&selected).unwrap()).unwrap();
+    assert_eq!(restored, selected);
+    let temp = tempfile::tempdir().unwrap();
+    let mut report = AssetReport::default();
+    apply(temp.path(), "1.20.1", &selected, &mut report).unwrap();
+    assert_eq!(
+        effective(temp.path(), &Settings::default()).unwrap(),
+        selected
+    );
+    for stem in [
+        "rendertype_text",
+        "rendertype_text_see_through",
+        "rendertype_text_background",
+        "rendertype_text_background_see_through",
+    ] {
+        let program = read(
+            temp.path(),
+            &format!("assets/minecraft/shaders/core/{stem}.json"),
+        );
+        assert_eq!(
+            program["uniforms"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|uniform| uniform["name"] == "GameTime")
+                .count(),
+            1
+        );
+    }
+    let mut newer = AssetReport::default();
+    apply(temp.path(), "1.21.10", &selected, &mut newer).unwrap();
+    assert!(
+        newer
+            .warnings
+            .iter()
+            .any(|note| note.contains("固定背景颜色"))
+    );
+    let shader = std::fs::read_to_string(
+        temp.path()
+            .join("assets/minecraft/shaders/core/rendertype_text_background_see_through.fsh"),
+    )
+    .unwrap();
+    assert!(!shader.contains("uniform float GameTime"));
+    assert!(shader.contains("0.066667, 0.400000, 0.800000"));
+}
+
+#[test]
+fn removed_appearance_settings_keep_other_features_and_provenance() {
+    let mut legacy = serde_json::to_value(settings(&Feature::ALL)).unwrap();
+    legacy["features"]
+        .as_array_mut()
+        .unwrap()
+        .insert(2, json!("heypixel-pack"));
+    let restored: Settings = serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(restored, settings(&Feature::ALL));
+    assert!(
+        !serde_json::to_string(&restored)
+            .unwrap()
+            .contains("heypixel-pack")
+    );
+    assert!(
+        !serde_json::from_str::<Settings>(r#"{"features":["heypixel-pack"]}"#)
+            .unwrap()
+            .active()
+    );
+    assert!(serde_json::from_str::<Settings>(r#"{"features":["unknown-feature"]}"#).is_err());
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let path = "assets/minecraft/items/diamond_sword.json";
+    let base = json!({"model":{"type":"minecraft:model","model":"minecraft:item/diamond_sword"}});
+    let generated = json!({"model":{"type":"minecraft:empty"},"fastpack_builtin_hud":base});
+    let bytes = serde_json::to_vec(&generated).unwrap();
+    legacy["generated"] = json!({path:digest(&bytes)});
+    write(root, path, &bytes).unwrap();
+    write(root, STATE, &serde_json::to_vec(&legacy).unwrap()).unwrap();
+    assert_eq!(effective(root, &Settings::default()).unwrap(), restored);
+    assert!(prepare(root).unwrap().is_empty());
+    assert_eq!(read(root, path), base);
+}
+
+#[test]
+fn all_builtin_features_preserve_authored_appearance_assets() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let assets = [
+        "assets/minecraft/textures/gui/container/inventory.png",
+        "assets/minecraft/textures/block/stone.png",
+        "assets/minecraft/textures/item/diamond_sword.png",
+        "assets/minecraft/font/default.json",
+        "assets/minecraft/sounds.json",
+        "assets/heypixel/models/cosmetic/example.json",
+    ];
+    for name in assets {
+        write(root, name, b"authored appearance").unwrap();
+    }
+    apply(
+        root,
+        "1.20.1",
+        &settings(&Feature::ALL),
+        &mut AssetReport::default(),
+    )
+    .unwrap();
+    for name in assets {
+        assert_eq!(
+            std::fs::read(root.join(name)).unwrap(),
+            b"authored appearance",
+            "{name}"
+        );
     }
 }
 
@@ -274,12 +398,12 @@ fn every_supported_shader_profile_keeps_its_native_interface_and_glyph_discard()
                 assert!(
                     output.contains("color.a < 0.1")
                         && output.contains("discard;")
-                        && output.contains("vertexColor.a < 0.5"),
+                        && (name.contains("background") || output.contains("vertexColor.a < 0.5")),
                     "{version}"
                 );
                 text_found = true;
                 if name == "text.fsh" {
-                    assert!(output.contains("#ifdef IS_SEE_THROUGH"));
+                    assert!(output.contains("#ifndef IS_GUI"));
                 }
             }
             for line in native.lines().filter(|line| {
@@ -294,6 +418,38 @@ fn every_supported_shader_profile_keeps_its_native_interface_and_glyph_discard()
             }
         }
         assert!(text_found, "{version}");
+        let stems = if profile.contains_key("text.vsh") {
+            vec!["text"]
+        } else {
+            vec![
+                "rendertype_text",
+                "rendertype_text_intensity",
+                "rendertype_text_see_through",
+                "rendertype_text_intensity_see_through",
+            ]
+        };
+        for stem in stems {
+            let vertex = std::fs::read_to_string(
+                root.join(format!("assets/minecraft/shaders/core/{stem}.vsh")),
+            )
+            .unwrap();
+            let fragment = std::fs::read_to_string(
+                root.join(format!("assets/minecraft/shaders/core/{stem}.fsh")),
+            )
+            .unwrap();
+            assert!(
+                vertex.contains("fastpackWorldText") && vertex.contains("ProjMat[3][3]"),
+                "{version}/{stem}"
+            );
+            assert!(
+                fragment.contains("fastpackWorldText > 0.5"),
+                "{version}/{stem}"
+            );
+            assert!(
+                !fragment.contains("vertexColor.a > 0.0 && vertexColor.a < 0.5 &&"),
+                "opaque label pass must also be highlighted: {version}/{stem}"
+            );
+        }
     }
 }
 

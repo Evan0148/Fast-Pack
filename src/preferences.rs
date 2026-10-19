@@ -120,6 +120,10 @@ pub fn crosshair_store() -> Result<fast_pack::crosshair::Store> {
     ))
 }
 
+pub(crate) fn state_directory() -> Result<PathBuf> {
+    Ok(config_path()?.parent().unwrap().to_owned())
+}
+
 fn supported(version: &str) -> bool {
     fast_pack::tables()
         .pack_formats
@@ -200,6 +204,41 @@ pub fn save(preferences: &Preferences) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn removed_appearance_option_does_not_reset_saved_preferences() {
+        use fast_pack::builtin_overlays::Feature;
+        let restored: Preferences = serde_json::from_value(serde_json::json!({
+            "dark":false,
+            "target_version":"1.20.1",
+            "export_directory":"D:\\My Packs",
+            "block_outline_color":[12,34,56],
+            "fishing_line_width":3.5,
+            "heypixel_compat":true,
+            "heypixel_settings_version":1,
+            "builtin_overlays":{"features":["sharpness","heypixel-pack","highlight-names"]}
+        }))
+        .unwrap();
+        assert!(!restored.dark);
+        assert_eq!(restored.target_version.as_deref(), Some("1.20.1"));
+        assert_eq!(
+            restored.export_directory,
+            Some(PathBuf::from(r"D:\My Packs"))
+        );
+        assert_eq!(restored.block_outline_color, [12, 34, 56]);
+        assert_eq!(restored.fishing_line_width, 3.5);
+        assert!(restored.heypixel_compat);
+        assert_eq!(restored.heypixel_settings_version, 1);
+        assert_eq!(
+            restored.builtin_overlays.features,
+            vec![Feature::Sharpness, Feature::HighlightNames]
+        );
+        assert!(
+            !serde_json::to_string(&restored)
+                .unwrap()
+                .contains("heypixel-pack")
+        );
+    }
 
     #[test]
     fn line_widths_restore_enabled_options_and_remember_disabled_values() {

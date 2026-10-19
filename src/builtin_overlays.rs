@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read};
 use std::path::Path;
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::sync::LazyLock;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
@@ -19,18 +19,16 @@ pub enum Feature {
     GoldenDurability,
     BowEnchantments,
     ArmorProtection,
-    HeypixelPack,
     HighlightNames,
     ClearTooltips,
     RainbowOutline,
 }
 impl Feature {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 7] = [
         Self::Sharpness,
         Self::GoldenDurability,
         Self::BowEnchantments,
         Self::ArmorProtection,
-        Self::HeypixelPack,
         Self::HighlightNames,
         Self::ClearTooltips,
         Self::RainbowOutline,
@@ -41,7 +39,6 @@ impl Feature {
             Self::GoldenDurability => "显示金剑剩余耐久",
             Self::BowEnchantments => "显示弓的附魔等级",
             Self::ArmorProtection => "显示护甲保护等级",
-            Self::HeypixelPack => "布吉岛综合外观",
             Self::HighlightNames => "高亮玩家昵称",
             Self::ClearTooltips => "透明物品提示框",
             Self::RainbowOutline => "彩色方块边框",
@@ -53,17 +50,47 @@ impl Feature {
             Self::GoldenDurability => "背包显示 1–32 剩余耐久",
             Self::BowEnchantments => "力量 I–V、火矢与冲击，保留拉弓状态",
             Self::ArmorProtection => "背包显示保护 I–IV，保留染色与纹饰",
-            Self::HeypixelPack => "内含物品、方块、GUI、字体、粒子、音效、CIT 与布吉岛饰品模型",
-            Self::HighlightNames => "粉色昵称弱透明文字；需要 1.17+ 核心着色器",
+            Self::HighlightNames => "自定义背景颜色、白色昵称；需要 1.17+ 核心着色器",
             Self::ClearTooltips => "移除原包提示框底色；需要 1.17+ 核心着色器",
             Self::RainbowOutline => "使用现有边框动态彩色，单独调色设置优先",
         }
     }
 }
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub const DEFAULT_NAME_BACKGROUND: [u8; 3] = [255, 153, 204];
+
+// Legacy text programs bind GameTime; the Globals binding returns in 26.2.
+// Font pipelines from 1.21.5 through 26.1 have neither time source.
+pub fn supports_animated_background(format: u32) -> bool {
+    (7..55).contains(&format) || format >= 88
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Settings {
+    #[serde(deserialize_with = "deserialize_features")]
     pub features: Vec<Feature>,
+    pub name_background: [u8; 3],
+    pub name_background_rainbow: bool,
+}
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            features: Vec::new(),
+            name_background: DEFAULT_NAME_BACKGROUND,
+            name_background_rainbow: false,
+        }
+    }
+}
+fn deserialize_features<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Vec<Feature>, D::Error> {
+    // Ignore only the removed option, including in old output provenance.
+    // Other invalid settings must still report an error.
+    Vec::<String>::deserialize(deserializer)?
+        .into_iter()
+        .filter(|name| name != "heypixel-pack")
+        .map(|name| serde_json::from_value(Value::String(name)).map_err(serde::de::Error::custom))
+        .collect()
 }
 impl Settings {
     pub fn enabled(&self, feature: Feature) -> bool {
@@ -200,50 +227,6 @@ fn write(root: &Path, name: &str, bytes: &[u8]) -> Result<()> {
     fs::create_dir_all(path.parent().unwrap())?;
     fs::write_atomic(&path, bytes)?;
     Ok(())
-}
-
-type Cached = Arc<OnceLock<std::result::Result<Arc<Files>, String>>>;
-static CONVERTED: LazyLock<Mutex<BTreeMap<String, Cached>>> =
-    LazyLock::new(|| Mutex::new(BTreeMap::new()));
-fn converted_server(version: &str) -> Result<Arc<Files>> {
-    let cache = CONVERTED
-        .lock()
-        .unwrap()
-        .entry(version.into())
-        .or_default()
-        .clone();
-    let value = cache.get_or_init(|| {
-        (|| -> Result<Arc<Files>> {
-            let temp = tempfile::tempdir()?;
-            let source = temp.path().join("source.zip");
-            let output = temp.path().join("converted.zip");
-            // The source retains all supplied assets; shader effects are installed
-            // separately using the target's own shader profile.
-            std::fs::write(
-                &source,
-                include_bytes!("../assets/builtin-overlays/heypixel.zip"),
-            )?;
-            crate::convert_pack(
-                &source,
-                &output,
-                &crate::ConversionOptions {
-                    tgt_format: crate::pack_format_of(version)?,
-                    target_version: Some(version.into()),
-                    heypixel_compat: false,
-                    auto_client_setup: false,
-                    auto_netherite: false,
-                    auto_netherite_sword: false,
-                    ..Default::default()
-                },
-                |_, _| {},
-            )?;
-            let mut files = archive(&std::fs::read(output)?)?;
-            files.retain(|name, _| name.starts_with("assets/") && !name.contains("/shaders/"));
-            Ok(Arc::new(files))
-        })()
-        .map_err(|error| format!("{error:#}"))
-    });
-    value.clone().map_err(anyhow::Error::msg)
 }
 
 fn gui(node: &Value) -> Option<Value> {
@@ -524,35 +507,126 @@ fn shaders(
         return Ok(());
     }
     let profile = &SHADERS.profiles[&SHADERS.versions[version]];
+    let [red, green, blue] = settings
+        .name_background
+        .map(|value| f64::from(value) / 255.0);
+    let animated = names
+        && settings.name_background_rainbow
+        && supports_animated_background(crate::pack_format_of(version)?);
+    if names && settings.name_background_rainbow && !animated {
+        report
+            .warnings
+            .push("此版本的文字管线没有可用的游戏时间接口，昵称背景使用所选固定背景颜色".into());
+    }
+    let name_background = if animated {
+        "clamp(abs(fract(vec3(GameTime * 200.0) + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0)".into()
+    } else {
+        format!("vec3({red:.6}, {green:.6}, {blue:.6})")
+    };
     let mut installed = 0;
     for (name, native) in profile {
         let stem = name.rsplit_once('.').unwrap().0;
-        let text = stem == "text" || stem == "rendertype_text_see_through";
+        let text = matches!(
+            stem,
+            "text"
+                | "rendertype_text"
+                | "rendertype_text_intensity"
+                | "rendertype_text_see_through"
+                | "rendertype_text_intensity_see_through"
+        );
+        let background = matches!(
+            stem,
+            "rendertype_text_background"
+                | "rendertype_text_background_see_through"
+                | "text_background"
+        );
         let tooltip = matches!(stem, "gui" | "rendertype_gui" | "position_color");
-        if !(names && text || tooltips && tooltip) {
+        if !(names && (text || background) || tooltips && tooltip) {
             continue;
         }
         let path = format!("assets/minecraft/shaders/core/{name}");
         let mut shader = native.clone();
-        if names && text && name.ends_with(".fsh") {
-            let pattern = regex::Regex::new(
-                r"vec4\s+color\s*=\s*(?:texture\(Sampler0,\s*texCoord0\)|texColor)\s*\*\s*vertexColor\s*(?:\*\s*ColorModulator\s*)?;",
-            )?;
+        if names && (text || background) && (name.ends_with(".vsh") || name.ends_with(".fsh")) {
+            let main = regex::Regex::new(r"void\s+main\s*\(\s*\)\s*\{")?;
+            ensure!(main.is_match(&shader), "目标文字着色器缺少入口");
+            let location = if native.contains("layout(location") {
+                "layout(location = 4) "
+            } else {
+                ""
+            };
+            let declaration = if name.ends_with(".vsh") {
+                // Labels have a perspective projection; GUI fonts use an
+                // orthographic projection even when they share the same program.
+                format!(
+                    "{location}out float fastpackWorldText;\nvoid main() {{\n    fastpackWorldText = ProjMat[3][3] == 0.0 ? 1.0 : 0.0;"
+                )
+            } else {
+                format!("{location}in float fastpackWorldText;\nvoid main() {{")
+            };
+            shader = main.replace(&shader, declaration).into_owned();
+        }
+        if names && (text || background) && name.ends_with(".fsh") {
+            if animated {
+                let position = shader
+                    .split_inclusive('\n')
+                    .take_while(|line| {
+                        line.trim().is_empty()
+                            || line.trim_start().starts_with("#version")
+                            || line.trim_start().starts_with("#extension")
+                    })
+                    .map(str::len)
+                    .sum();
+                if crate::pack_format_of(version)? >= 88 {
+                    let import = if native.contains("#include") {
+                        "#include"
+                    } else {
+                        "#moj_import"
+                    };
+                    shader.insert_str(position, &format!("\n{import} <minecraft:globals.glsl>\n"));
+                } else {
+                    shader.insert_str(position, "\nuniform float GameTime;\n");
+                }
+            }
+            let pattern = regex::Regex::new(if background {
+                r"vec4\s+color\s*=\s*vertexColor\s*(?:\*\s*ColorModulator\s*)?;"
+            } else {
+                r"vec4\s+color\s*=\s*(?:texture\(Sampler0,\s*texCoord0\)(?:\.rrrr)?|texColor)\s*\*\s*vertexColor\s*(?:\*\s*ColorModulator\s*)?;"
+            })?;
             ensure!(
                 pattern.is_match(&shader),
                 "目标文字着色器缺少可验证的颜色入口"
             );
-            let guard = if stem == "text" {
-                "#ifdef IS_SEE_THROUGH\n"
+            let guard = if stem == "text" || stem == "text_background" {
+                "#ifndef IS_GUI\n"
             } else {
                 ""
             };
-            let end = if stem == "text" { "#endif\n" } else { "" };
+            let end = if stem == "text" || stem == "text_background" {
+                "#endif\n"
+            } else {
+                ""
+            };
             shader=pattern.replace_all(&shader,|captures:&regex::Captures| {
                 let original=&captures[0];
-                let multiplier=if original.contains("ColorModulator") {" * ColorModulator.rgb"}else{""};
-                format!("{original}\n// Fast Pack: supplied name highlight; retain transparent glyph discard.\n{guard}if (vertexColor.a > 0.0 && vertexColor.a < 0.5) {{ color.rgb = vec3(1.0, 0.6, 0.8){multiplier}; }}\n{end}")
+                let multiplier=if original.contains("ColorModulator") {" * ColorModulator"}else{""};
+                if background {
+                    return format!("{original}\n// Fast Pack: selected nameplate background.\n{guard}if (fastpackWorldText > 0.5 && vertexColor.a > 0.0) {{ color = vec4({name_background}, 0.7){multiplier}; }}\n{end}");
+                }
+                let glyph_alpha=if original.contains(".rrrr") {"texture(Sampler0, texCoord0).r"}else if original.contains("texture(") {"texture(Sampler0, texCoord0).a"}else{"texColor.a"};
+                // The label's black background quad gets the selected tint;
+                // glyphs stay white in both passes, with atlas coverage intact.
+                format!("{original}\n// Fast Pack: supplied name highlight; retain transparent glyph discard.\n{guard}if (fastpackWorldText > 0.5 && vertexColor.a > 0.0) {{\n    bool fastpackBackground = max(vertexColor.r, max(vertexColor.g, vertexColor.b)) == 0.0;\n    vec3 fastpackTint = fastpackBackground ? {name_background} : vec3(1.0);\n    float fastpackOpacity = fastpackBackground ? 0.7 : (vertexColor.a < 0.5 ? 0.9 : vertexColor.a);\n    color = vec4(fastpackTint, {glyph_alpha} * fastpackOpacity){multiplier};\n}}\n{end}")
             }).into_owned();
+        }
+        if names && (text || background) && animated && name.ends_with(".json") {
+            let mut program: Value = serde_json::from_str(&shader)?;
+            let uniforms = program["uniforms"]
+                .as_array_mut()
+                .context("文字程序缺少 uniforms")?;
+            if !uniforms.iter().any(|uniform| uniform["name"] == "GameTime") {
+                uniforms.push(json!({"name":"GameTime","type":"float","count":1,"values":[0.0]}));
+            }
+            shader = serde_json::to_string(&program)?;
         }
         if tooltips && tooltip && name.ends_with(".vsh") {
             ensure!(
@@ -577,26 +651,6 @@ pub(crate) fn apply(
     if !settings.active() {
         return Ok(());
     }
-    if settings.enabled(Feature::HeypixelPack)
-        && !provenance(root)?.settings.enabled(Feature::HeypixelPack)
-    {
-        for (name, bytes) in converted_server(version)?.iter() {
-            if name.contains("/lang/") && name.ends_with(".json") && root.join(name).pack_is_file()
-            {
-                let existing = crate::model_json::parse(&fs::read(root.join(name))?);
-                let incoming = serde_json::from_slice::<Value>(bytes)?;
-                if let Ok(Value::Object(mut map)) = existing {
-                    if let Value::Object(add) = incoming {
-                        map.extend(add);
-                        write(root, name, &serde_json::to_vec(&map)?)?;
-                        continue;
-                    }
-                }
-            }
-            write(root, name, bytes)?;
-        }
-        report.converted.push("内置布吉岛综合外观：应用全部物品、方块、GUI、字体、粒子、音效、CIT 与饰品模型；原包文件已备份".into());
-    }
     install_hud(root, version, settings, report)?;
     shaders(root, version, settings, report)?;
     write(
@@ -608,11 +662,6 @@ pub(crate) fn apply(
         root,
         "fastpack/builtin-overlays/CC-BY-NC-SA-4.0.txt",
         include_bytes!("../assets/builtin-overlays/CC-BY-NC-SA-4.0.txt"),
-    )?;
-    write(
-        root,
-        "fastpack/builtin-overlays/Credits-heypixel.txt",
-        include_bytes!("../assets/builtin-overlays/Credits-heypixel.txt"),
     )?;
     let mut generated = BTreeMap::new();
     for entry in crate::packfs::WalkDir::new(root.join("assets/minecraft")) {

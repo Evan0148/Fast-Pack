@@ -265,6 +265,7 @@ struct App {
     batch_pool: Option<fast_pack::batch::Pool>,
     batch_options: Option<ConversionOptions>,
     startup_frame: bool,
+    renderer_ready_at: Option<Instant>,
     phase: Phase,
     source: Option<PathBuf>,
     info: Option<PackInfo>,
@@ -470,6 +471,7 @@ impl App {
             batch_pool: None,
             batch_options: None,
             startup_frame: true,
+            renderer_ready_at: None,
             phase: Phase::Empty,
             source: None,
             info: None,
@@ -673,6 +675,7 @@ impl App {
                 "item" => Some(ColorTarget::ItemOutline),
                 "fishing" => Some(ColorTarget::FishingLine),
                 "outline" => Some(ColorTarget::BlockOutline),
+                "name-background" => Some(ColorTarget::NameBackground),
                 _ => None,
             };
             if let Some(target) = target {
@@ -803,6 +806,7 @@ impl App {
             || self.glint_picker && !self.reduced
             || self.capture.is_some()
             || self.smoke
+            || self.renderer_ready_at.is_some()
         {
             let mut subscriptions = vec![
                 events,
@@ -1729,6 +1733,9 @@ impl App {
                 if self.startup_frame {
                     self.startup_frame = false;
                     crate::startup::record("first_frame");
+                    if crate::renderer_guard::pending() {
+                        self.renderer_ready_at = Some(now + Duration::from_millis(500));
+                    }
                 }
                 if let Some(profile) = &mut self.profile {
                     let (delta, action, done) = profile.frame(now);
@@ -1759,6 +1766,13 @@ impl App {
                 }
             }
             Message::Tick(now) => {
+                if self
+                    .renderer_ready_at
+                    .is_some_and(|deadline| now >= deadline)
+                {
+                    self.renderer_ready_at = None;
+                    crate::renderer_guard::ready();
+                }
                 self.now = now;
                 if self.overlay.edited.is_some_and(|edited| {
                     now.saturating_duration_since(edited) >= Duration::from_millis(350)
@@ -3371,6 +3385,10 @@ impl App {
                     },
                 )
                 .into()
+            } else if target == ColorTarget::NameBackground
+                && !self.name_background_rainbow_supported()
+            {
+                self.label(self.rainbow_hint(target)).into()
             } else {
                 column![
                     checkbox(self.rainbow_for(target))
@@ -3491,6 +3509,27 @@ impl App {
                 .width(116)
                 .height(108),
                 self.label("颜色示意")
+            ]
+            .spacing(8)
+            .align_x(Alignment::Center)
+            .into()
+        } else if target == ColorTarget::NameBackground {
+            column![
+                container(text("玩家昵称").size(18).color(Color::WHITE))
+                    .padding([18, 8])
+                    .width(116)
+                    .height(108)
+                    .align_x(iced::alignment::Horizontal::Center)
+                    .align_y(iced::alignment::Vertical::Center)
+                    .style(move |_| container::Style {
+                        background: Some(Color { a: 0.7, ..color }.into()),
+                        border: Border {
+                            radius: 10.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }),
+                self.label("白字配色预览")
             ]
             .spacing(8)
             .align_x(Alignment::Center)
