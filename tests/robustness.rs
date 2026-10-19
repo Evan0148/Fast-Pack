@@ -77,6 +77,7 @@ fn malformed_item_definition_returns_object_error_with_builtin_overlay() {
         as_zip: false,
         builtin_overlays: Settings {
             features: vec![Feature::Sharpness],
+            ..Default::default()
         },
         ..Default::default()
     };
